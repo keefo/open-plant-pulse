@@ -178,7 +178,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 @media (max-width: 440px) {
   .topbar, main { width: min(100% - 24px, 1180px); }
   .metric { min-height: 126px; padding: 14px; }
-  .metric strong { font-size: 27px; }
+  .metric strong { font-size: 1.1em; }
   .moisture-heading strong { font-size: 36px; }
   .moisture-vessel { min-height: 220px; }
   .care-log, .chemistry, .watering-calendar, .plant-journey { padding: 16px; }

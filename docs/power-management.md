@@ -81,6 +81,25 @@ slow clock, RTC timer, and wake controller
 
 There is no separate RTC battery in the reference prototype. Removing or fully
 disconnecting the 18650 stops the timer as well as the rest of the sensor.
+It also invalidates the retained clock state. Deep sleep retains ESP-IDF system
+time because the RTC slow clock remains powered.
+
+### Wall-clock synchronization
+
+The firmware validates wall-clock time by value rather than inferring validity
+from reset reason. Dates from 2024-01-01 through 2099-12-31 are plausible. Once a
+configured Wi-Fi connection has an address, an invalid clock receives a bounded
+SNTP synchronization attempt. Failure leaves sampling available and marks those
+samples as sequence-relative rather than assigning fabricated calendar dates.
+When the development web UI is disabled, firmware skips Wi-Fi while the clock is
+current and limits a required clock-only Wi-Fi session to 30 seconds by default.
+
+The internal RC slow clock is corrected opportunistically every 12 hours by
+default, configurable from 6 to 24 hours. Forward and backward corrections do
+not rewrite timestamps already captured. Each sample retains a sequence number
+and monotonic offset, so samples remain ordered across deep-sleep cycles even
+when UTC is unavailable. Removing the battery resets that retained sequence and
+clock state; the hub remains responsible for durable history and receipt time.
 
 The low-power clock may be less accurate than the main crystal. Wake interval
 drift should be measured on the real board, but modest drift is acceptable for
@@ -162,6 +181,8 @@ wiring:
 
 - If its breakout is connected to an always-on 3.3 V rail, it remains powered
   in its low-power idle state while the ESP32-C3 sleeps.
+- The persisted web-console SHT45 toggle suppresses I2C probing and measurement
+  and releases the bus, but cannot remove this always-on standby current.
 - If it is supplied through a verified load switch, firmware can remove its
   power between measurement cycles.
 

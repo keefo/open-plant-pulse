@@ -40,11 +40,19 @@
           <span class="updated" id="last-updated">Waiting for device</span>
         </div>
 
-        <div class="metric-grid">
+        <section class="chip-overview" aria-labelledby="chip-overview-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Controller</p>
+              <h2 id="chip-overview-title">ESP32-C3</h2>
+            </div>
+          </div>
+          <div class="metric-grid">
           <article class="metric primary" data-card-id="device">
             <span class="metric-label">Device</span>
             <strong id="device-state">Connecting</strong>
             <small id="device-address">No address yet</small>
+            <small class="device-mac" id="device-mac">MAC unavailable</small>
           </article>
           <article class="metric" data-card-id="uptime">
             <span class="metric-label">Uptime</span>
@@ -56,17 +64,48 @@
             <strong id="heap">--</strong>
             <small>Available memory</small>
           </article>
-          <article class="metric" data-card-id="mac">
-            <span class="metric-label">Station MAC</span>
-            <strong class="compact" id="mac">--</strong>
-            <small>Wi-Fi identity</small>
-          </article>
           <article class="metric" data-card-id="chip_temperature">
             <span class="metric-label">Chip temperature</span>
             <strong id="chip-temperature">--</strong>
-            <small>Internal die, not ambient</small>
+            <small></small>
           </article>
-        </div>
+          <article class="metric" data-card-id="date_time">
+            <span class="metric-label">Date &amp; time</span>
+            <strong class="compact" id="date-time">--</strong>
+            <small id="date-time-zone">System wall clock · UTC</small>
+          </article>
+          <article class="metric" data-card-id="rtc">
+            <span class="metric-label">RTC</span>
+            <strong id="rtc-status">--</strong>
+            <small id="rtc-detail">Clock status unavailable</small>
+          </article>
+          </div>
+        </section>
+
+        <section class="overview-sensor" id="overview-sht45" aria-labelledby="overview-sht45-title" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Ambient sensor</p>
+              <h2 id="overview-sht45-title">SHT45</h2>
+            </div>
+            <div class="overview-sensor-status">
+              <span class="updated" id="overview-sht45-age">Latest sample</span>
+              <span class="state available">Online</span>
+            </div>
+          </div>
+          <div class="ambient-grid">
+            <article class="ambient-metric">
+              <span class="metric-label">Air temperature</span>
+              <strong id="overview-air-temperature">--</strong>
+              <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Relative humidity</span>
+              <strong id="overview-air-humidity">--</strong>
+              <small></small>
+            </article>
+          </div>
+        </section>
 
         <section class="activity" aria-labelledby="activity-title">
           <div class="section-heading">
@@ -87,14 +126,28 @@
         <div class="sensor-list">
           <article class="sensor-row">
             <div><span class="sensor-name">SHT45</span><small>Air temperature and humidity</small></div>
-            <span class="state unavailable">Not implemented</span>
+            <div class="sensor-controls">
+              <span class="state unavailable" id="sht45-state">Unavailable</span>
+              <label class="sensor-toggle">
+                <input id="sht45-enabled" type="checkbox" role="switch" disabled>
+                <span class="toggle-track" aria-hidden="true"></span>
+                <span>Enabled</span>
+              </label>
+            </div>
           </article>
           <article class="sensor-row">
             <div><span class="sensor-name">NPKPHCTH-S</span><small>RS-485 soil probe</small></div>
-            <span class="state unavailable">Not implemented</span>
+            <div class="sensor-controls">
+              <span class="state unavailable" id="soil-probe-state">Not implemented</span>
+              <label class="sensor-toggle">
+                <input id="soil-probe-enabled" type="checkbox" role="switch" disabled>
+                <span class="toggle-track" aria-hidden="true"></span>
+                <span>Enabled</span>
+              </label>
+            </div>
           </article>
         </div>
-        <p class="empty-note">Sensor values will appear here after their bounded hardware drivers are integrated.</p>
+        <p class="empty-note" id="sensor-config-state" aria-live="polite">Loading sensor settings</p>
       </section>
 
       <section class="view" id="logs" aria-labelledby="logs-title" hidden>
@@ -117,7 +170,7 @@
         </div>
         <section class="settings-panel" aria-labelledby="appearance-title">
           <div class="section-heading">
-            <h2 id="appearance-title">Appearance</h2>
+            <h2 id="appearance-title">Interface settings</h2>
             <span class="config-state" id="config-state" aria-live="polite">Loading</span>
           </div>
           <form id="ui-config-form">
@@ -141,6 +194,12 @@
                 <label><input type="radio" name="density" value="comfortable"><span>Comfortable</span></label>
                 <label><input type="radio" name="density" value="compact"><span>Compact</span></label>
               </div>
+
+              <label class="field-label" for="timezone">Time zone</label>
+              <div class="field-control">
+                <select id="timezone" name="timezone" aria-describedby="timezone-help"></select>
+                <small id="timezone-help">Used for Overview dates and times</small>
+              </div>
             </div>
 
             <div class="dashboard-settings">
@@ -149,7 +208,6 @@
             </div>
 
             <div class="form-actions">
-              <button class="primary-action" type="submit">Save changes</button>
               <button class="secondary-action" id="reset-config" type="button">Reset</button>
               <button class="secondary-action" id="export-config" type="button">Export</button>
               <label class="secondary-action file-action">Import<input id="import-config" type="file" accept="application/json,.json"></label>

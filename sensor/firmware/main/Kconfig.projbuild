@@ -7,7 +7,15 @@ config OPP_WEB_UI_ENABLED
         Join a Wi-Fi network and serve a webpage that mirrors ESP logs.
         Disable this for battery-powered deployments.
 
-if OPP_WEB_UI_ENABLED
+config OPP_CLOCK_SYNC_ENABLED
+    bool "Enable SNTP clock synchronization"
+    default y
+    help
+        Validate the wall clock and synchronize it over Wi-Fi when invalid or
+        stale. The retained RTC clock continues across deep sleep but not loss
+        of power.
+
+if OPP_WEB_UI_ENABLED || OPP_CLOCK_SYNC_ENABLED
 
 config OPP_WIFI_SSID
     string "Wi-Fi SSID"
@@ -20,6 +28,65 @@ config OPP_WIFI_PASSWORD
         Stored only in the generated, git-ignored sdkconfig file.
 
 endif
+
+if OPP_CLOCK_SYNC_ENABLED
+
+config OPP_SNTP_SERVER
+    string "SNTP server"
+    default "pool.ntp.org"
+
+config OPP_CLOCK_SYNC_TIMEOUT_SECONDS
+    int "SNTP synchronization timeout in seconds"
+    range 3 60
+    default 15
+
+config OPP_CLOCK_WIFI_WINDOW_SECONDS
+    int "Clock-only Wi-Fi window in seconds"
+    range 5 120
+    default 30
+    help
+        Total time Wi-Fi may remain active for clock synchronization when the
+        development web UI is disabled. This bounds connection and SNTP time.
+
+config OPP_CLOCK_SYNC_RETRY_MINUTES
+    int "Failed synchronization retry delay in minutes"
+    range 1 1440
+    default 15
+
+config OPP_CLOCK_RESYNC_INTERVAL_HOURS
+    int "Clock drift correction interval in hours"
+    range 6 24
+    default 12
+
+config OPP_CLOCK_JUMP_WARNING_SECONDS
+    int "Clock correction warning threshold in seconds"
+    range 1 3600
+    default 300
+
+endif
+
+config OPP_SHT45_SDA_GPIO
+    int "SHT45 SDA GPIO"
+    range 0 21
+    default 6
+    help
+        I2C data pin. GPIO6 is D4 on the Seeed Studio XIAO ESP32-C3.
+
+config OPP_SHT45_SCL_GPIO
+    int "SHT45 SCL GPIO"
+    range 0 21
+    default 7
+    help
+        I2C clock pin. GPIO7 is D5 on the Seeed Studio XIAO ESP32-C3.
+
+config OPP_SHT45_SAMPLE_INTERVAL_SECONDS
+    int "SHT45 bench sampling interval in seconds"
+    range 1 3600
+    default 5
+    help
+        Interval between one-shot SHT45 measurements while the development
+        firmware remains awake. Production deep-sleep sampling will use the
+        sensor-node sampling interval instead.
 
 config OPP_SENSOR_MODBUS_ADDRESS
     int "Sensor Modbus address"

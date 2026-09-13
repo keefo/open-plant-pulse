@@ -54,6 +54,16 @@ development values, not proof of a sensor's register map:
 | `OPP_WEB_UI_ENABLED` | enabled | Development Wi-Fi log webpage |
 | `OPP_WIFI_SSID` | empty | 2.4 GHz Wi-Fi network name |
 | `OPP_WIFI_PASSWORD` | empty | Wi-Fi password stored in ignored `sdkconfig` |
+| `OPP_CLOCK_SYNC_ENABLED` | enabled | Validate and synchronize the system clock over SNTP |
+| `OPP_SNTP_SERVER` | `pool.ntp.org` | SNTP server used after DHCP succeeds |
+| `OPP_CLOCK_SYNC_TIMEOUT_SECONDS` | 15 | Maximum duration of one SNTP attempt |
+| `OPP_CLOCK_WIFI_WINDOW_SECONDS` | 30 | Total clock-only Wi-Fi connection window |
+| `OPP_CLOCK_SYNC_RETRY_MINUTES` | 15 | Delay after a failed SNTP attempt |
+| `OPP_CLOCK_RESYNC_INTERVAL_HOURS` | 12 | Opportunistic RTC drift-correction interval (6–24 hours) |
+| `OPP_CLOCK_JUMP_WARNING_SECONDS` | 300 | Log threshold for a forward or backward correction |
+| `OPP_SHT45_SDA_GPIO` | 6 | SHT45 I2C data pin (XIAO D4) |
+| `OPP_SHT45_SCL_GPIO` | 7 | SHT45 I2C clock pin (XIAO D5) |
+| `OPP_SHT45_SAMPLE_INTERVAL_SECONDS` | 5 | Awake development sampling interval |
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
 | `OPP_SAMPLE_INTERVAL_MINUTES` | 30 | Delay between wake cycles |
 
@@ -71,14 +81,47 @@ Under **Open Plant Pulse**, set the Wi-Fi SSID and password, then build and flas
 with the canonical scripts. The serial log prints the DHCP address after the
 ESP32-C3 connects. Open `http://<board-ip>/` for the live console,
 `http://<board-ip>/logs` for plain text, or `http://<board-ip>/status` for JSON.
-The status document includes the compiled `firmware_version`. The page mirrors
-the newest 16 KiB of logs while preserving USB serial output.
+The status document includes the compiled `firmware_version`, Wi-Fi SSID, IP and
+station MAC, clock/RTC state, SHT45 enabled state and availability, latest ambient values, sample
+sequence, timestamp validity, and sample age. The Overview ESP32-C3 section shows
+the SSID, IP, and MAC together on the Device card, alongside UTC date/time and RTC
+synchronization details. The page mirrors the newest 16 KiB of logs while preserving
+USB serial output.
 
-The Maintenance view can persist the website color mode, accent, density, and
-Overview card order, visibility, and width. Configuration is stored as a
+### Clock and sample timestamps
+
+Firmware reads wall-clock time through `time()`/`gettimeofday()`. A Unix time from
+2024-01-01 through 2099-12-31 is considered plausible. The ESP32-C3 RTC-backed
+system clock and the last-successful-sync marker are retained through deep sleep;
+power loss clears the marker and normally leaves the clock invalid.
+
+After Wi-Fi receives an address, an invalid clock or a clock last synchronized at
+least 12 hours ago starts one bounded SNTP attempt. With the web UI disabled, the
+firmware skips Wi-Fi entirely while the clock is current and limits a required
+clock-only Wi-Fi session to 30 seconds by default. Failed attempts do not block
+sampling and are retried after the configured delay on an available Wi-Fi
+session or later wake. A correction records and logs the measured clock
+adjustment; existing sample timestamps are never rewritten.
+
+Each SHT45 sample receives a retained sequence number and monotonic offset. It
+also receives an immutable UTC timestamp only when the wall clock is plausible at
+acquisition time. `/status` exposes `air_sample_sequence`,
+`air_sample_monotonic_ms`, and nullable `air_sample_time_utc`, allowing a consumer
+to retain and order samples collected before synchronization. Persistent sensor
+history is intentionally not added here because durable history remains owned by
+the hub. When valid, `air_sample_unix_ms` preserves the full acquisition
+timestamp represented by `air_sample_time_utc`.
+
+The Sensors view can enable or disable each sensor, and the Maintenance view can
+persist the website color mode, accent, density, IANA timezone, and Overview card
+order, visibility, and width. The Overview
+clock and RTC synchronization timestamp are converted from device-supplied UTC
+by the browser, including daylight-saving transitions for the selected timezone.
+Existing configurations migrate to `UTC` with sensors enabled. Configuration is stored as a
 versioned, validated JSON document in the `web_ui` NVS namespace, so it survives
-power loss and firmware flashing unless NVS is explicitly erased. The current
-API is:
+power loss and firmware flashing unless NVS is explicitly erased. Control
+changes are previewed immediately and saved automatically after a short debounce.
+The current API is:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -88,8 +131,10 @@ API is:
 | `POST` | `/api/v1/restart` | Schedule a device restart after validating `{"confirm":"restart"}` |
 
 Request bodies are limited to 1535 bytes. Unknown fields, duplicate or unknown
-card IDs, unsupported values, invalid spans, and configurations with no visible
-cards are rejected. The page also supports JSON import and export. This data is
+card IDs, unsupported values, invalid timezone syntax, invalid spans, and
+configurations with no visible cards are rejected. The timezone control lists
+the IANA zones supported by the current browser. The page also supports JSON
+import and export. This data is
 small enough for NVS; a filesystem should be introduced only if future UI data
 grows beyond bounded settings into larger user-authored documents.
 
@@ -102,9 +147,8 @@ bench network. Restart request bodies are limited to 63 bytes.
 Wi-Fi is intended for powered bench diagnostics. Disable `OPP_WEB_UI_ENABLED`
 before battery-life testing or production deep-sleep builds.
 
-UART pins, SHT45 I2C settings, register addresses, stabilization delay, and
-power-enable polarity will be added only after the hardware checklist records
-verified values.
+UART pins, probe register addresses, stabilization delay, and power-enable
+polarity will be added only after the hardware checklist records verified values.
 
 The selected soil probe is the seven-parameter ComWinTop `NPKPHCTH-S`. The
 existing parser implements only the candidate moisture, soil-temperature, and
@@ -113,22 +157,36 @@ revision's register addresses, types, scaling, ranges, and response lengths are
 captured in fixtures and tests. Never infer register order solely from the model
 name or another vendor's compatible-looking manual.
 
-## Planned SHT45 integration
+## SHT45 integration
 
-The SHT45 uses I2C and reports ambient air temperature plus relative humidity.
-The firmware must use the sensor's CRC-protected commands, bound every operation
-with a timeout, and distinguish `air_temperature` from the probe's
-`soil_temperature` throughout internal types and logs. D4/GPIO6 SDA and
-D5/GPIO7 SCL are candidate pins pending assembled-hardware verification.
+The SHT45 driver uses I2C port 0 at address `0x44`, 100 kHz, and configurable
+D4/GPIO6 SDA and D5/GPIO7 SCL defaults. It probes with a 100 ms timeout and uses
+the high-precision, no-heater `0xFD` command. Both returned words must pass the
+SHT4x CRC-8 check before the reading is published. Humidity is clamped to 0-100%.
+
+The awake development firmware takes one-shot readings every five seconds. Valid
+samples are logged as `air_temperature_c` and `air_humidity_percent`, exposed by
+`/status`, and displayed in an automatic Overview section. The Sensors view shows
+only the SHT45 status badge and its persisted enable switch.
+The Overview section is hidden when the SHT45 has no valid reading. A failed
+transaction immediately invalidates the latest sample so stale values are not
+served. Probe failures are retried without preventing the Wi-Fi diagnostics
+console from starting.
+
+Disabling SHT45 sampling updates the versioned JSON configuration in NVS,
+invalidates its latest reading, releases the I2C bus, and prevents further probe
+and measurement transactions. Re-enabling it wakes the monitor immediately. This
+reduces controller activity and avoids measurement energy, but it does not remove
+power from a breakout wired directly to the always-on 3.3 V rail; eliminating its
+standby current requires a verified switched sensor rail.
 
 Use the [XIAO ESP32-C3 and SHT45 first-node guide](sht45-first-node.md) for
 wiring, measurement commands, CRC handling, BLE bring-up, and the required hub
 changes for an air-only prototype.
 
-Sampling frequency should remain low enough to avoid self-heating. The failure
-policy must state whether a cycle with valid probe data but a failed SHT45 read
-is omitted entirely or advertised with only valid fields; stale values are not
-allowed.
+Sampling frequency should remain low enough to avoid self-heating. BLE publication
+and the production deep-sleep lifecycle remain pending; a failed SHT45 read must
+not produce an ambient measurement advertisement when they are implemented.
 
 ## Planned deep-sleep lifecycle
 
@@ -152,7 +210,8 @@ and the exact BTHome service-data bytes.
 
 ## Implementation status
 
-The current target application provides a development Wi-Fi log console but no
-sensor acquisition yet. Add target code in this order: SHT45 and UART reads with
-fixture data, GPIO power control, BLE advertisement lifecycle, guaranteed
-cleanup, then deep sleep. See [the roadmap](roadmap.md) for acceptance criteria.
+The current target application provides a development Wi-Fi log console and
+bounded SHT45 ambient acquisition. Add remaining target code in this order: UART
+reads with fixture data, GPIO power control, BLE advertisement lifecycle,
+guaranteed cleanup, then deep sleep. See [the roadmap](roadmap.md) for acceptance
+criteria.

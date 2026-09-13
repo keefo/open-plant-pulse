@@ -103,7 +103,7 @@ commands.
 | Sensor Modbus parser and BTHome encoder | Host tested |
 | Simulated sensor to hub to web dashboard | Runnable and integration tested |
 | Hub BTHome decoder and shared fixture | Host tested; BLE scanner planned |
-| ESP-IDF target application | Scaffolded; hardware transport planned |
+| ESP-IDF target application | SHT45 acquisition implemented; soil transport planned |
 | Hub BLE scanner and SQLite persistence | Planned |
 | Hub API, UI, MQTT, notifications, predictions | Planned |
 | Electrical design and enclosure | Needs prototype validation |

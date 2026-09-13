@@ -14,7 +14,21 @@
 - Added `docs/sht45-first-node.md` with wiring, command, CRC, integration, and bring-up guidance.
 - Selected GPIO6 for SDA and GPIO7 for SCL as candidate SHT45 pins, pending assembled-hardware verification.
 - Preserved the distinction between SHT45 ambient temperature and the ESP32-C3 internal die temperature.
-- Left SHT45 and RS-485 soil-probe acquisition unimplemented until hardware behavior and register details are validated.
+- Left RS-485 soil-probe acquisition unimplemented until hardware behavior and register details are validated.
+
+### SHT45 firmware support
+
+- Added a dedicated ESP-IDF SHT45 component using I2C port 0, address `0x44`,
+  100 kHz, and configurable GPIO6 SDA/GPIO7 SCL defaults.
+- Added the high-precision no-heater `0xFD` measurement, bounded 100 ms bus
+  transactions, CRC-8 validation for both words, conversion, and humidity clamping.
+- Added a five-second development monitor that invalidates stale data on failures
+  and retries an absent sensor without blocking the web console.
+- Exposed SHT45 availability, ambient temperature, humidity, and sample age in
+  `/status`, added live values to the Sensors view, and added an Overview section
+  that appears automatically while the sensor has a valid reading.
+- Added host tests for the documented CRC fixture, decoded values, corrupted CRC,
+  and 0-100% humidity clamping.
 
 ### Mechanical enclosure
 
@@ -73,7 +87,7 @@
   - Comfortable or compact density.
   - Overview card order, visibility, and one- or two-column width.
   - JSON import, export, and reset to defaults.
-- Added immediate browser previews while keeping persistence behind an explicit Save action.
+- Added immediate browser previews with debounced automatic persistence after each control change.
 - Documented storage behavior and the API in `docs/firmware.md`.
 
 ### Defects found and corrected
@@ -117,9 +131,20 @@
 - Added the live firmware version to the web console browser title and header
   subtitle, including on narrow screens.
 
+### RTC clock synchronization
+
+- Added plausible-date validation for 2024 through 2099 and bounded SNTP startup
+  after DHCP when the clock is invalid or due for drift correction.
+- Added configurable 15-second attempts, 15-minute failure retries, 12-hour
+  correction cadence, and clock-jump logging without rewriting prior samples.
+- Added retained SHT45 sample sequence numbers, monotonic offsets, and nullable
+  acquisition-time UTC values so unsynchronized samples remain orderable.
+- Added UTC date/time and RTC status cards to the Overview ESP32-C3 section, with
+  automatic migration of existing dashboard schema-v1 layouts.
+
 ### Remaining work
 
-- Implement and validate the SHT45 driver and ambient temperature/humidity display.
+- Validate SHT45 readings and failure recovery on the connected physical board.
 - Validate the purchased RS-485 soil probe register map and implement bounded acquisition.
 - Add battery voltage, charge state, Wi-Fi signal, reset reason, and stale-reading health indicators.
 - Complete versioned status/log APIs and log controls described in the web UI proposal.

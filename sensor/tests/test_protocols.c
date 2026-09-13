@@ -3,7 +3,9 @@
 #include <string.h>
 
 #include "bthome_payload.h"
+#include "clock_policy.h"
 #include "sensor_protocol.h"
+#include "sht45_decode.h"
 
 static void test_modbus_request(void)
 {
@@ -46,10 +48,59 @@ static void test_bthome_payload(void)
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
 }
 
+static void test_sht45_response(void)
+{
+    const uint8_t crc_fixture[] = {0xbe, 0xef};
+    const uint8_t response[] = {0x66, 0x66, 0x93, 0x80, 0x00, 0xa2};
+    opp_sht45_sample_t sample;
+
+    assert(opp_sht45_crc8(crc_fixture, sizeof(crc_fixture)) == 0x92);
+    assert(opp_sht45_crc8(response, 2) == 0x93);
+    assert(opp_sht45_decode_response(response, &sample));
+    assert(sample.air_temperature_c > 24.99f && sample.air_temperature_c < 25.01f);
+    assert(sample.air_humidity_percent > 56.49f && sample.air_humidity_percent < 56.51f);
+
+    uint8_t corrupted_response[sizeof(response)];
+    memcpy(corrupted_response, response, sizeof(response));
+    corrupted_response[5] ^= 0xff;
+    assert(!opp_sht45_decode_response(corrupted_response, &sample));
+}
+
+static void test_sht45_humidity_clamping(void)
+{
+    const uint8_t dry_response[] = {0x66, 0x66, 0x93, 0x00, 0x00, 0x81};
+    const uint8_t wet_response[] = {0x66, 0x66, 0x93, 0xff, 0xff, 0xac};
+    opp_sht45_sample_t sample;
+
+    assert(opp_sht45_decode_response(dry_response, &sample));
+    assert(sample.air_humidity_percent == 0.0f);
+    assert(opp_sht45_decode_response(wet_response, &sample));
+    assert(sample.air_humidity_percent == 100.0f);
+}
+
+static void test_clock_policy(void)
+{
+    assert(!opp_clock_epoch_is_plausible(OPP_CLOCK_EARLIEST_UNIX_SECONDS - 1));
+    assert(opp_clock_epoch_is_plausible(OPP_CLOCK_EARLIEST_UNIX_SECONDS));
+    assert(!opp_clock_epoch_is_plausible(OPP_CLOCK_LATEST_UNIX_SECONDS));
+
+    const int64_t last_sync = OPP_CLOCK_EARLIEST_UNIX_SECONDS + 100;
+    assert(!opp_clock_resync_is_due(last_sync + 43199, last_sync, 43200));
+    assert(opp_clock_resync_is_due(last_sync + 43200, last_sync, 43200));
+    assert(opp_clock_resync_is_due(last_sync - 1, last_sync, 43200));
+    assert(opp_clock_resync_is_due(last_sync, 0, 43200));
+
+    assert(opp_clock_adjustment_ms(100000, 250000, 100300) == 50);
+    assert(opp_clock_adjustment_ms(100000, 250000, 100100) == -150);
+}
+
 int main(void)
 {
     test_modbus_request();
     test_modbus_response();
     test_bthome_payload();
+    test_sht45_response();
+    test_sht45_humidity_clamping();
+    test_clock_policy();
     return 0;
 }

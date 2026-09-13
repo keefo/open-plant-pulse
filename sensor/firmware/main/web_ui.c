@@ -5,8 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cJSON.h"
+#include "clock_sync.h"
 #include "driver/temperature_sensor.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
@@ -21,7 +23,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "lwip/ip4_addr.h"
-#include "nvs_flash.h"
+#include "sht45_monitor.h"
 #include "web_ui_config.h"
 
 #define LOG_RING_SIZE (16 * 1024)
@@ -38,9 +40,14 @@ static vprintf_like_t console_vprintf;
 static httpd_handle_t http_server;
 static char station_ip[IP4ADDR_STRLEN_MAX] = "disconnected";
 static char station_mac[18] = "unknown";
+static char station_ssid[33] = "unknown";
 static bool station_connected;
 static temperature_sensor_handle_t chip_temperature_sensor;
 static esp_timer_handle_t restart_timer;
+#if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
+static esp_timer_handle_t clock_wifi_timer;
+static bool clock_wifi_window_open;
+#endif
 
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
@@ -125,6 +132,52 @@ static char *snapshot_logs(void)
     return snapshot;
 }
 
+static bool json_escape(const char *input, char *output, size_t output_size)
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t output_index = 0;
+
+    for (size_t input_index = 0; input[input_index] != '\0'; input_index++) {
+        const unsigned char character = (unsigned char)input[input_index];
+        const char *escape = NULL;
+        switch (character) {
+        case '\"': escape = "\\\""; break;
+        case '\\': escape = "\\\\"; break;
+        case '\b': escape = "\\b"; break;
+        case '\f': escape = "\\f"; break;
+        case '\n': escape = "\\n"; break;
+        case '\r': escape = "\\r"; break;
+        case '\t': escape = "\\t"; break;
+        default: break;
+        }
+
+        if (escape != NULL) {
+            if (output_index + 2 >= output_size) {
+                return false;
+            }
+            output[output_index++] = escape[0];
+            output[output_index++] = escape[1];
+        } else if (character < 0x20) {
+            if (output_index + 6 >= output_size) {
+                return false;
+            }
+            output[output_index++] = '\\';
+            output[output_index++] = 'u';
+            output[output_index++] = '0';
+            output[output_index++] = '0';
+            output[output_index++] = hex[character >> 4];
+            output[output_index++] = hex[character & 0x0f];
+        } else {
+            if (output_index + 1 >= output_size) {
+                return false;
+            }
+            output[output_index++] = (char)character;
+        }
+    }
+    output[output_index] = '\0';
+    return true;
+}
+
 static esp_err_t asset_handler(httpd_req_t *request)
 {
     const web_asset_t *asset = request->user_ctx;
@@ -153,6 +206,17 @@ static void restart_timer_callback(void *argument)
     ESP_LOGW(TAG, "Restarting device after web request");
     esp_restart();
 }
+
+#if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
+static void clock_wifi_timer_callback(void *argument)
+{
+    (void)argument;
+    clock_wifi_window_open = false;
+    opp_clock_sync_set_network_available(false);
+    ESP_LOGI(TAG, "Clock-only Wi-Fi window ended");
+    esp_wifi_stop();
+}
+#endif
 
 static esp_err_t restart_handler(httpd_req_t *request)
 {
@@ -243,14 +307,112 @@ static esp_err_t status_handler(httpd_req_t *request)
         strlcpy(temperature, "null", sizeof(temperature));
     }
 
+    opp_sht45_sample_record_t air_sample;
+    int64_t air_sample_age_ms;
+    const bool air_sample_valid = opp_sht45_monitor_get_latest(
+        &air_sample, &air_sample_age_ms);
+    char air_temperature[24];
+    char air_humidity[24];
+    char air_sample_age[24];
+    if (air_sample_valid) {
+        snprintf(air_temperature, sizeof(air_temperature), "%.2f",
+                 air_sample.values.air_temperature_c);
+        snprintf(air_humidity, sizeof(air_humidity), "%.2f",
+                 air_sample.values.air_humidity_percent);
+        snprintf(air_sample_age, sizeof(air_sample_age), "%lld", air_sample_age_ms);
+    } else {
+        strlcpy(air_temperature, "null", sizeof(air_temperature));
+        strlcpy(air_humidity, "null", sizeof(air_humidity));
+        strlcpy(air_sample_age, "null", sizeof(air_sample_age));
+    }
+
+    opp_clock_status_t clock_status;
+    opp_clock_get_status(&clock_status);
+    char date_time_utc[32] = "null";
+    char last_sync_utc[32] = "null";
+    char sample_time_utc[32] = "null";
+    char unix_time[24] = "null";
+    char last_sync_time[24] = "null";
+    char clock_adjustment[24] = "null";
+    char sample_sequence[24] = "null";
+    char sample_monotonic[24] = "null";
+    char sample_unix_time[24] = "null";
+    if (clock_status.time_valid) {
+        time_t now = (time_t)clock_status.unix_time_s;
+        struct tm utc;
+        gmtime_r(&now, &utc);
+        strftime(date_time_utc, sizeof(date_time_utc), "\"%Y-%m-%dT%H:%M:%SZ\"", &utc);
+        snprintf(unix_time, sizeof(unix_time), "%lld",
+                 (long long)clock_status.unix_time_s);
+    }
+    if (clock_status.last_sync_unix_s > 0) {
+        struct tm utc;
+        time_t last_sync = (time_t)clock_status.last_sync_unix_s;
+        gmtime_r(&last_sync, &utc);
+        strftime(last_sync_utc, sizeof(last_sync_utc), "\"%Y-%m-%dT%H:%M:%SZ\"", &utc);
+        snprintf(last_sync_time, sizeof(last_sync_time), "%lld",
+                 (long long)clock_status.last_sync_unix_s);
+    }
+    if (clock_status.adjustment_known) {
+        snprintf(clock_adjustment, sizeof(clock_adjustment), "%lld",
+                 (long long)clock_status.last_adjustment_ms);
+    }
+    if (air_sample_valid) {
+        snprintf(sample_sequence, sizeof(sample_sequence), "%llu",
+                 (unsigned long long)air_sample.sequence);
+        snprintf(sample_monotonic, sizeof(sample_monotonic), "%lld",
+                 (long long)air_sample.monotonic_ms);
+        if (air_sample.time_valid) {
+            snprintf(sample_unix_time, sizeof(sample_unix_time), "%lld",
+                     (long long)air_sample.unix_time_ms);
+            time_t sample_seconds = (time_t)(air_sample.unix_time_ms / 1000);
+            struct tm utc;
+            gmtime_r(&sample_seconds, &utc);
+            strftime(sample_time_utc, sizeof(sample_time_utc),
+                     "\"%Y-%m-%dT%H:%M:%SZ\"", &utc);
+        }
+    }
+
+    const char *sync_state = "unsynchronized";
+    if (clock_status.sync_in_progress) {
+        sync_state = "synchronizing";
+    } else if (clock_status.time_valid && clock_status.sync_due) {
+        sync_state = "correction due";
+    } else if (clock_status.time_valid && clock_status.rtc_retained) {
+        sync_state = "synchronized";
+    } else if (clock_status.time_valid) {
+        sync_state = "plausible";
+    }
+
     const esp_app_desc_t *app = esp_app_get_description();
-    char status[288];
+    char escaped_ssid[sizeof(station_ssid) * 6];
+    if (!json_escape(station_ssid, escaped_ssid, sizeof(escaped_ssid))) {
+        strlcpy(escaped_ssid, "unknown", sizeof(escaped_ssid));
+    }
+    char status[1280];
     snprintf(status, sizeof(status),
-             "{\"firmware_version\":\"%s\",\"connected\":%s,\"ip\":\"%s\",\"mac\":\"%s\","
-             "\"uptime_s\":%lld,\"free_heap\":%lu,\"chip_temperature_c\":%s}",
-             app->version, station_connected ? "true" : "false", station_ip, station_mac,
+             "{\"firmware_version\":\"%s\",\"connected\":%s,\"ssid\":\"%s\","
+             "\"ip\":\"%s\",\"mac\":\"%s\","
+             "\"uptime_s\":%lld,\"free_heap\":%lu,\"chip_temperature_c\":%s,"
+             "\"clock_valid\":%s,\"clock_sync_state\":\"%s\",\"date_time_utc\":%s,"
+             "\"unix_time_s\":%s,\"rtc_clock_source\":\"internal RC slow clock\","
+             "\"rtc_retained\":%s,\"last_clock_sync_utc\":%s,\"last_clock_sync_unix_s\":%s,"
+             "\"last_clock_adjustment_ms\":%s,\"clock_sync_failures\":%lu,"
+             "\"sht45_enabled\":%s,\"sht45_available\":%s,\"air_temperature_c\":%s,"
+             "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
+             "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
+             "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s}",
+             app->version, station_connected ? "true" : "false", escaped_ssid,
+             station_ip, station_mac,
              esp_timer_get_time() / 1000000,
-             (unsigned long)esp_get_free_heap_size(), temperature);
+             (unsigned long)esp_get_free_heap_size(), temperature,
+             clock_status.time_valid ? "true" : "false", sync_state, date_time_utc,
+             unix_time, clock_status.rtc_retained ? "true" : "false", last_sync_utc,
+             last_sync_time, clock_adjustment, (unsigned long)clock_status.sync_failures,
+             opp_sht45_monitor_is_enabled() ? "true" : "false",
+             air_sample_valid ? "true" : "false", air_temperature,
+             air_humidity, air_sample_age, sample_sequence, sample_monotonic,
+             sample_unix_time, sample_time_utc);
     httpd_resp_set_type(request, "application/json");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     return httpd_resp_sendstr(request, status);
@@ -321,6 +483,7 @@ static esp_err_t config_put_handler(httpd_req_t *request)
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
                                    validation_error);
     }
+    opp_sht45_monitor_set_enabled(web_ui_config_sht45_enabled());
     ESP_LOGI(TAG, "UI configuration updated");
     return config_get_handler(request);
 }
@@ -331,6 +494,7 @@ static esp_err_t config_reset_handler(httpd_req_t *request)
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
                                    "Could not reset configuration");
     }
+    opp_sht45_monitor_set_enabled(web_ui_config_sht45_enabled());
     ESP_LOGI(TAG, "UI configuration reset to defaults");
     return config_get_handler(request);
 }
@@ -377,48 +541,66 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         station_connected = false;
+        opp_clock_sync_set_network_available(false);
         strlcpy(station_ip, "disconnected", sizeof(station_ip));
+#if CONFIG_OPP_WEB_UI_ENABLED
         ESP_LOGW(TAG, "Wi-Fi disconnected; reconnecting");
         esp_wifi_connect();
+#else
+        if (clock_wifi_window_open) {
+            ESP_LOGW(TAG, "Wi-Fi disconnected during clock synchronization; reconnecting");
+            esp_wifi_connect();
+        }
+#endif
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = event_data;
         station_connected = true;
+        opp_clock_sync_set_network_available(true);
         snprintf(station_ip, sizeof(station_ip), IPSTR, IP2STR(&event->ip_info.ip));
+#if CONFIG_OPP_WEB_UI_ENABLED
         if (start_http_server() == ESP_OK) {
             ESP_LOGI(TAG, "Web diagnostics ready at http://%s", station_ip);
         }
+#endif
     }
-}
-
-static esp_err_t initialise_nvs(void)
-{
-    esp_err_t error = nvs_flash_init();
-    if (error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_RETURN_ON_ERROR(nvs_flash_erase(), TAG, "Failed to erase NVS");
-        error = nvs_flash_init();
-    }
-    return error;
 }
 
 esp_err_t web_ui_start(void)
 {
-#if !CONFIG_OPP_WEB_UI_ENABLED
+#if !CONFIG_OPP_WEB_UI_ENABLED && !CONFIG_OPP_CLOCK_SYNC_ENABLED
     return ESP_OK;
 #else
+#if CONFIG_OPP_WEB_UI_ENABLED
     console_vprintf = esp_log_set_vprintf(web_ui_vprintf);
+#endif
     if (CONFIG_OPP_WIFI_SSID[0] == '\0') {
-        ESP_LOGW(TAG, "Web diagnostics disabled: configure OPP_WIFI_SSID in menuconfig");
+        ESP_LOGW(TAG, "Wi-Fi disabled: configure OPP_WIFI_SSID in menuconfig");
         return ESP_OK;
     }
+#if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
+    if (!opp_clock_sync_needed()) {
+        ESP_LOGI(TAG, "Clock is current; clock-only Wi-Fi remains off");
+        return ESP_OK;
+    }
+    clock_wifi_window_open = true;
+#endif
 
-    ESP_RETURN_ON_ERROR(initialise_nvs(), TAG, "Failed to initialise NVS");
-    ESP_RETURN_ON_ERROR(web_ui_config_load(), TAG, "Failed to load UI configuration");
+#if CONFIG_OPP_WEB_UI_ENABLED
     const esp_timer_create_args_t restart_timer_args = {
         .callback = restart_timer_callback,
         .name = "web_restart",
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&restart_timer_args, &restart_timer), TAG,
                         "Failed to create restart timer");
+#endif
+#if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
+    const esp_timer_create_args_t clock_wifi_timer_args = {
+        .callback = clock_wifi_timer_callback,
+        .name = "clock_wifi",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&clock_wifi_timer_args, &clock_wifi_timer), TAG,
+                        "Failed to create clock Wi-Fi timer");
+#endif
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "Failed to initialise network interface");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "Failed to create event loop");
     esp_netif_create_default_wifi_sta();
@@ -440,6 +622,7 @@ esp_err_t web_ui_start(void)
     };
     strlcpy((char *)wifi_config.sta.ssid, CONFIG_OPP_WIFI_SSID,
             sizeof(wifi_config.sta.ssid));
+    strlcpy(station_ssid, CONFIG_OPP_WIFI_SSID, sizeof(station_ssid));
     strlcpy((char *)wifi_config.sta.password, CONFIG_OPP_WIFI_PASSWORD,
             sizeof(wifi_config.sta.password));
 
@@ -448,6 +631,7 @@ esp_err_t web_ui_start(void)
                         "Failed to configure Wi-Fi");
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "Failed to disable Wi-Fi power save");
 
+#if CONFIG_OPP_WEB_UI_ENABLED
     temperature_sensor_config_t temperature_config =
         TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
     ESP_RETURN_ON_ERROR(
@@ -455,8 +639,15 @@ esp_err_t web_ui_start(void)
         TAG, "Failed to install chip temperature sensor");
     ESP_RETURN_ON_ERROR(temperature_sensor_enable(chip_temperature_sensor), TAG,
                         "Failed to enable chip temperature sensor");
+#endif
 
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "Failed to start Wi-Fi");
+#if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
+    ESP_RETURN_ON_ERROR(
+        esp_timer_start_once(clock_wifi_timer,
+                             (uint64_t)CONFIG_OPP_CLOCK_WIFI_WINDOW_SECONDS * 1000000),
+        TAG, "Failed to start clock Wi-Fi timer");
+#endif
 
     uint8_t mac[6];
     ESP_RETURN_ON_ERROR(esp_wifi_get_mac(WIFI_IF_STA, mac), TAG, "Failed to read Wi-Fi MAC");
