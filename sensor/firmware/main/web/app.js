@@ -24,6 +24,7 @@ const cardLabels = {
 const CONFIG_SAVE_DELAY_MS = 300;
 const CLOCK_RENDER_INTERVAL_MS = 1000;
 const CLOCK_REANCHOR_THRESHOLD_MS = 1500;
+const DEFAULT_STATUS_REFRESH_INTERVAL_MS = 2000;
 let activeView = 'overview';
 let uiConfig;
 let configRevision = 0;
@@ -33,6 +34,8 @@ let latestStatus;
 let clockAnchorUnixMs;
 let clockAnchorMonotonicMs;
 let clockRenderTimer;
+let statusRefreshTimer;
+let activeStatusRefreshIntervalMs;
 
 function browserTimezones() {
   const zones = typeof Intl.supportedValuesOf === 'function'
@@ -94,6 +97,7 @@ function applyUiConfig(config) {
   const soilProbeState = document.getElementById('soil-probe-state');
   soilProbeState.className = `state ${soilProbeEnabled.checked ? 'unavailable' : 'disabled'}`;
   soilProbeState.textContent = soilProbeEnabled.checked ? 'Not implemented' : 'Disabled';
+  setStatusRefreshInterval(config.polling.status_refresh_interval_ms);
   if (latestStatus) {
     renderClock(latestStatus);
     renderSht45(latestStatus);
@@ -113,6 +117,8 @@ function renderConfigForm() {
   configForm.elements.accent.value = uiConfig.theme.accent;
   configForm.elements.density.value = uiConfig.dashboard.density;
   populateTimezoneSelect(uiConfig.clock.timezone);
+  configForm.elements['status-refresh-interval'].value =
+    String(uiConfig.polling.status_refresh_interval_ms);
 
   const cardSettings = document.getElementById('card-settings');
   cardSettings.replaceChildren();
@@ -165,6 +171,8 @@ function readConfigForm() {
   uiConfig.theme.accent = configForm.elements.accent.value;
   uiConfig.dashboard.density = configForm.elements.density.value;
   uiConfig.clock.timezone = configForm.elements.timezone.value;
+  uiConfig.polling.status_refresh_interval_ms =
+    Number(configForm.elements['status-refresh-interval'].value);
   return uiConfig;
 }
 
@@ -237,6 +245,7 @@ async function loadUiConfig() {
     showConfigState('Stored on device');
   } catch (error) {
     showConfigState('Configuration unavailable', 'error');
+    setStatusRefreshInterval(DEFAULT_STATUS_REFRESH_INTERVAL_MS);
   }
 }
 
@@ -261,7 +270,7 @@ soilProbeEnabled.addEventListener('change', () => {
 });
 
 document.getElementById('reset-config').addEventListener('click', async () => {
-  if (!confirm('Reset appearance and dashboard layout?')) return;
+  if (!confirm('Reset all saved settings to defaults?')) return;
   clearTimeout(configSaveTimer);
   configSaveTimer = undefined;
   const revision = ++configRevision;
@@ -361,6 +370,15 @@ function formatBytes(bytes) {
   return `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
+function calculateAbsoluteHumidity(temperatureC, relativeHumidityPercent) {
+  if (!Number.isFinite(temperatureC) || !Number.isFinite(relativeHumidityPercent)
+      || temperatureC <= -243.5) return null;
+  const humidityFraction = Math.min(100, Math.max(0, relativeHumidityPercent)) / 100;
+  const saturationVaporPressureHpa =
+    6.112 * Math.exp((17.67 * temperatureC) / (temperatureC + 243.5));
+  return 216.7 * humidityFraction * saturationVaporPressureHpa / (temperatureC + 273.15);
+}
+
 function renderSht45(status) {
   const enabled = uiConfig?.sensors?.sht45?.enabled ?? Boolean(status?.sht45_enabled);
   const available = enabled && Boolean(status?.sht45_available)
@@ -379,6 +397,12 @@ function renderSht45(status) {
     `${status.air_temperature_c.toFixed(2)} C`;
   document.getElementById('overview-air-humidity').textContent =
     `${status.air_humidity_percent.toFixed(2)}% RH`;
+  const absoluteHumidity = calculateAbsoluteHumidity(
+    status.air_temperature_c,
+    status.air_humidity_percent,
+  );
+  document.getElementById('overview-absolute-humidity').textContent =
+    Number.isFinite(absoluteHumidity) ? `${absoluteHumidity.toFixed(2)} g/m³` : 'Unavailable';
   document.getElementById('overview-sht45-age').textContent =
     Number.isFinite(status.air_sample_age_ms)
       ? `Sampled ${Math.max(0, Math.floor(status.air_sample_age_ms / 1000))}s ago`
@@ -444,6 +468,7 @@ function updateClockAnchor(status) {
 
 function renderDateTime(status) {
   let dateTime = status.date_time_utc;
+  const timezone = uiConfig?.clock?.timezone || 'UTC';
   if (status.clock_valid
       && Number.isFinite(clockAnchorUnixMs)
       && Number.isFinite(clockAnchorMonotonicMs)) {
@@ -451,15 +476,13 @@ function renderDateTime(status) {
   }
 
   document.getElementById('date-time').textContent = status.clock_valid
-    ? formatDateTime(dateTime, '\n')
+    ? `${formatDateTime(dateTime, '\n')} ${timezoneName(timezone)}`
     : 'Unsynchronized';
 }
 
 function renderClock(status) {
   const timezone = uiConfig?.clock?.timezone || 'UTC';
   renderDateTime(status);
-  document.getElementById('date-time-zone').textContent =
-    `System wall clock · ${timezoneName(timezone)}`;
   document.getElementById('rtc-status').textContent = status.clock_sync_state || 'Unknown';
 
   const details = [];
@@ -517,6 +540,16 @@ async function refreshStatus() {
   }
 }
 
+function setStatusRefreshInterval(intervalMs) {
+  if (intervalMs === activeStatusRefreshIntervalMs) return;
+  clearInterval(statusRefreshTimer);
+  statusRefreshTimer = undefined;
+  activeStatusRefreshIntervalMs = intervalMs;
+  if (intervalMs > 0) {
+    statusRefreshTimer = setInterval(refreshStatus, intervalMs);
+  }
+}
+
 async function refreshLogs() {
   try {
     const response = await fetch('/logs', { cache: 'no-store' });
@@ -535,5 +568,4 @@ async function refreshLogs() {
 refreshStatus();
 refreshLogs();
 loadUiConfig();
-setInterval(refreshStatus, 2000);
 setInterval(refreshLogs, 1000);

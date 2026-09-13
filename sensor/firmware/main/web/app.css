@@ -158,7 +158,7 @@ h2 { font-size: 19px; }
 .overview-sensor { margin-top: 36px; }
 .overview-sensor[hidden] { display: none; }
 .overview-sensor-status { display: flex; align-items: center; gap: 10px; }
-.ambient-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--line); }
+.ambient-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--line); }
 .ambient-metric { min-height: 126px; padding: 20px; background: linear-gradient(145deg, var(--green-dim), var(--surface)); }
 .ambient-metric .metric-label { margin-bottom: 18px; }
 .ambient-metric strong { display: block; font-size: 28px; font-weight: 600; }

@@ -77,7 +77,6 @@
           <article class="metric" data-card-id="date_time">
             <span class="metric-label">Date &amp; time</span>
             <strong class="compact" id="date-time">--</strong>
-            <small id="date-time-zone">System wall clock · UTC</small>
           </article>
           <article class="metric" data-card-id="rtc">
             <span class="metric-label">RTC</span>
@@ -108,6 +107,11 @@
               <span class="metric-label">Relative humidity</span>
               <strong id="overview-air-humidity">--</strong>
               <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Absolute humidity</span>
+              <strong id="overview-absolute-humidity">--</strong>
+              <small>Derived from temperature and RH</small>
             </article>
           </div>
         </section>
@@ -204,6 +208,24 @@
               <div class="field-control">
                 <select id="timezone" name="timezone" aria-describedby="timezone-help"></select>
                 <small id="timezone-help">Used for Overview dates and times</small>
+              </div>
+
+              <label class="field-label" for="status-refresh-interval">Status refresh interval</label>
+              <div class="field-control">
+                <select id="status-refresh-interval" name="status-refresh-interval" aria-describedby="status-refresh-help">
+                  <option value="1000">1 second</option>
+                  <option value="2000">2 seconds</option>
+                  <option value="5000">5 seconds</option>
+                  <option value="10000">10 seconds</option>
+                  <option value="30000">30 seconds</option>
+                  <option value="60000">1 minute</option>
+                  <option value="300000">5 minutes</option>
+                  <option value="600000">10 minutes</option>
+                  <option value="1800000">30 minutes</option>
+                  <option value="3600000">1 hour</option>
+                  <option value="0">No automatic refresh</option>
+                </select>
+                <small id="status-refresh-help">How often this browser requests /status. Off loads once.</small>
               </div>
             </div>
 

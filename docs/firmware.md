@@ -124,12 +124,15 @@ the hub. When valid, `air_sample_unix_ms` preserves the full acquisition
 timestamp represented by `air_sample_time_utc`.
 
 The Sensors view can enable or disable each sensor, and the Maintenance view can
-persist the website color mode, accent, density, IANA timezone, and Overview card
-order, visibility, and width. The Overview
+persist the website color mode, accent, density, IANA timezone, `/status` refresh
+interval, and Overview card order, visibility, and width. The refresh choices range
+from one second to one hour, or Off; Off still permits the page's initial status
+request. The Overview
 clock and RTC synchronization timestamp are converted from device-supplied UTC
 by the browser, including daylight-saving transitions for the selected timezone.
-Existing configurations migrate to `UTC` with sensors enabled and the Power card
-visible. Configuration is stored as a versioned, validated JSON document in the
+Existing configurations migrate to `UTC` with sensors enabled, the Power card
+visible, and the prior two-second status refresh interval. Configuration is stored
+as a versioned, validated JSON document in the
 `web_ui` NVS namespace, so it survives power loss and firmware flashing unless
 NVS is explicitly erased. Control changes are previewed immediately and saved
 automatically after a short debounce.
@@ -179,7 +182,9 @@ SHT4x CRC-8 check before the reading is published. Humidity is clamped to 0-100%
 The awake development firmware takes one-shot readings every five seconds. Valid
 samples are logged as `air_temperature_c` and `air_humidity_percent`, exposed by
 `/status`, and displayed in an automatic Overview section. The Sensors view shows
-only the SHT45 status badge and its persisted enable switch.
+only the SHT45 status badge and its persisted enable switch. The Overview derives
+absolute humidity in g/m³ from each temperature and relative-humidity sample using
+the Magnus saturation-vapor-pressure approximation.
 The Overview section is hidden when the SHT45 has no valid reading. A failed
 transaction immediately invalidates the latest sample so stale values are not
 served. Probe failures are retried without preventing the Wi-Fi diagnostics

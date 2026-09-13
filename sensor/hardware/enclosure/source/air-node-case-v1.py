@@ -47,7 +47,7 @@ FIT_CLEARANCE = 0.4
 WALL = 3.0
 FLOOR = 2.0
 BASE_HEIGHT = 27.0
-LID_HEIGHT = 2.4
+LID_HEIGHT = 2.8
 BOARD_SUPPORT_HEIGHT = 2.0
 BOARD_SUPPORT_WIDTH = 1.6
 WIRE_CHANNEL_FLOOR_HEIGHT = 1.2
@@ -130,6 +130,48 @@ def cube(name, size, location, collection, mat=None, bevel=0.0):
     for owner in list(obj.users_collection):
         owner.objects.unlink(obj)
     collection.objects.link(obj)
+    return obj
+
+
+def extruded_profile(name, length, profile, location, collection, mat=None, bevel=0.0):
+    """Create a watertight prism by extruding a clockwise Y/Z profile along X."""
+    half_length = length / 2.0
+    vertices = [
+        (x, y, z)
+        for x in (-half_length, half_length)
+        for y, z in profile
+    ]
+    profile_size = len(profile)
+    faces = [
+        tuple(range(profile_size)),
+        tuple(range(profile_size * 2 - 1, profile_size - 1, -1)),
+    ]
+    for index in range(profile_size):
+        next_index = (index + 1) % profile_size
+        faces.append(
+            (
+                index,
+                index + profile_size,
+                next_index + profile_size,
+                next_index,
+            )
+        )
+
+    mesh = bpy.data.meshes.new(f"{name} mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.validate()
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    obj.location = location
+    collection.objects.link(obj)
+    if mat:
+        obj.data.materials.append(mat)
+    if bevel:
+        modifier = obj.modifiers.new("Edge radius", "BEVEL")
+        modifier.width = bevel
+        modifier.segments = 3
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
     return obj
 
 
@@ -427,27 +469,30 @@ def create_base(collection):
 
 def create_lid(collection):
     lid_x = OUTER_LENGTH + 8.0
-    lid = cube(
-        "Sliding Lid",
-        (LID_LENGTH - LID_FIT_CLEARANCE, INNER_WIDTH - LID_FIT_CLEARANCE * 2.0, LID_HEIGHT),
-        (lid_x, 0.0, LID_HEIGHT / 2.0),
-        collection,
-        CASE_MATERIAL,
-        0.35,
-    )
-
+    panel_width = INNER_WIDTH - LID_FIT_CLEARANCE * 2.0
     tongue_width = LID_TONGUE_OVERLAP + LID_FIT_CLEARANCE + LID_TONGUE_ENGAGEMENT
     tongue_y = INNER_WIDTH / 2.0 - LID_FIT_CLEARANCE - LID_TONGUE_OVERLAP + tongue_width / 2.0
-    for side in (-1.0, 1.0):
-        tongue = cube(
-            f"Sliding lid {'left' if side < 0 else 'right'} tongue",
-            (LID_LENGTH - LID_FIT_CLEARANCE, tongue_width, LID_TONGUE_HEIGHT),
-            (lid_x, side * tongue_y, LID_HEIGHT - LID_TONGUE_HEIGHT / 2.0 + LID_VERTICAL_CLEARANCE),
-            collection,
-            CASE_MATERIAL,
-            0.15,
-        )
-        unite(lid, tongue)
+    overall_width = (tongue_y + tongue_width / 2.0) * 2.0
+    tongue_floor_z = LID_HEIGHT - LID_TONGUE_HEIGHT
+    profile = (
+        (-overall_width / 2.0, tongue_floor_z),
+        (-overall_width / 2.0, LID_HEIGHT),
+        (overall_width / 2.0, LID_HEIGHT),
+        (overall_width / 2.0, tongue_floor_z),
+        (panel_width / 2.0, tongue_floor_z),
+        (panel_width / 2.0, 0.0),
+        (-panel_width / 2.0, 0.0),
+        (-panel_width / 2.0, tongue_floor_z),
+    )
+    lid = extruded_profile(
+        "Sliding Lid",
+        LID_LENGTH - LID_FIT_CLEARANCE,
+        profile,
+        (lid_x, 0.0, 0.0),
+        collection,
+        CASE_MATERIAL,
+        0.15,
+    )
 
     thumb_notch = cylinder(
         "Sliding lid thumb notch cutter",
@@ -720,7 +765,7 @@ def main():
     scene["electronics_rail_service_clearance_mm"] = ELECTRONICS_RAIL_SERVICE_CLEARANCE
     scene["stack_usb_end_inset_mm"] = STACK_USB_END_INSET
     scene["probe_cable_hole_mm"] = PROBE_CABLE_HOLE_DIAMETER
-    scene["lid_fit"] = "Flush sliding panel; 0.4 mm clearance; 1.2 mm tongues and upper rails"
+    scene["lid_fit"] = "Flat 2.8 mm sliding panel; 0.4 mm clearance; 1.2 mm tongues and upper rails"
     scene["board_edge_gap_mm"] = BOARD_EDGE_GAP
     scene["battery_configuration"] = "Dual 18650 holder; 77.0 x 39.5 x 18.3 mm measured envelope"
     scene["lid_fasteners"] = "None; captured sliding rails with closed far-end stop"

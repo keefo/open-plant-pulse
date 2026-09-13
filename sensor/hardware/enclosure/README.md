@@ -69,7 +69,7 @@ the top of the script.
 | Battery-holder pocket | 77.8 x 40.3 mm; 0.4 mm clearance per side |
 | Electronics compartment width | 35.0 mm; 3.0 mm service space outside each RS-485 rail |
 | Nominal outside size | 83.8 x 83.3 x 27.0 mm |
-| Wall / floor / lid | 3.0 / 2.0 / 2.4 mm |
+| Wall / floor / lid | 3.0 / 2.0 / 2.8 mm |
 | Per-side board clearance | 0.4 mm |
 | USB-C opening | 11.5 x 6.5 mm prototype clearance, elevated for stack |
 | USB-C position | Approximately 0.15 mm inside outer wall; stack shifted 1.4 mm toward USB opening |
@@ -112,13 +112,14 @@ holder, contacts, leads, and connector before printing.
 
 The screwless lid slides in from the USB end and finishes flush with the top of
 the rounded shell. Stepped tongues on both long edges run beneath retaining lips,
-and the uncut far end wall provides the insertion stop. A semicircular thumb
-notch at the entry edge allows removal without an external tab. The four former
-lid M3 bosses and matching lid holes are removed; the four RS-485 board
+and the uncut far end wall provides the insertion stop. The 2.8 mm panel embeds
+the tongues within its thickness so both broad faces are planar. A semicircular
+thumb notch at the entry edge allows removal without an external tab. The four
+former lid M3 bosses and matching lid holes are removed; the four RS-485 board
 standoffs remain. The lid STL is oriented with its broad outer face on the build
-plate so the rail tongues print upward without support. Print a short rail-fit
-coupon before the full enclosure and adjust the nominal 0.4 mm clearance for
-the selected material and printer.
+plate so the rail tongues expand laterally in the upper layers without support.
+Print a short rail-fit coupon before the full enclosure and adjust the nominal
+0.4 mm clearance for the selected material and printer.
 
 The first fit test places the adhesive BLE antenna outside on the USB end wall,
 using the battery-side portion so it does not obstruct USB-C. Feed the U.FL plug

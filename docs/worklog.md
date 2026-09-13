@@ -153,8 +153,31 @@
 - Built and flashed firmware 0.1.5, then validated the USB state and schema-v5 to
   schema-v6 migration on the connected ESP32-C3.
 
+### Configurable status polling
+
+- Added a Maintenance setting for `/status` refresh intervals from one second to
+  one hour, including Off while retaining the initial page-load request.
+- Persisted the interval in the NVS-backed UI configuration and migrated existing
+  schema-v6 configurations to the prior two-second default.
+- Bumped firmware to 0.1.6, passed the repository checks and ESP-IDF build, flashed
+  the connected ESP32-C3, and verified 0.1.6 in its serial startup log.
+- Verified through the live device APIs that the retained configuration migrated
+  to schema v7 with the two-second interval and seven-card layout.
+
+### Absolute humidity dashboard metric
+
+- Added browser-side absolute humidity derivation from SHT45 temperature and
+  relative humidity readings using the Magnus approximation.
+- Added the AH value to the Overview ambient-sensor grid and documented that it
+  is derived rather than supplied by the sensor protocol.
+- Bumped firmware to 0.1.7, passed the repository checks and ESP-IDF build,
+  flashed the connected ESP32-C3, and verified 0.1.7 and the AH card through the
+  live device APIs.
+
 ### Remaining work
 
+- Validate every status-polling choice and Off behavior in a browser, including
+  continued clock rendering while automatic `/status` polling is disabled.
 - Validate SHT45 readings and failure recovery on the connected physical board.
 - Validate the inferred battery transition while the node remains battery-powered
   after its USB data connection is removed.

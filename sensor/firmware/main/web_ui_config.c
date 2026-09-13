@@ -1,6 +1,7 @@
 #include "web_ui_config.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +14,9 @@
 
 #define CONFIG_NAMESPACE "web_ui"
 #define CONFIG_KEY "ui_config"
-#define CONFIG_SCHEMA_VERSION 6
+#define CONFIG_SCHEMA_VERSION 7
+#define SCHEMA_VERSION_WITH_POLLING 7
+#define SCHEMA_VERSION_WITH_POWER_CARD 6
 #define SCHEMA_VERSION_WITH_SENSORS 5
 #define SCHEMA_VERSION_WITH_CLOCK 4
 #define SCHEMA_VERSION_WITH_CURRENT_CARDS 3
@@ -37,6 +40,7 @@ typedef struct {
     char accent[8];
     char density[12];
     char timezone[64];
+    uint32_t status_refresh_interval_ms;
     bool sht45_enabled;
     bool soil_probe_enabled;
     dashboard_card_t cards[CONFIG_CARD_COUNT];
@@ -47,6 +51,7 @@ static const ui_config_t default_config = {
     .accent = "green",
     .density = "comfortable",
     .timezone = "UTC",
+    .status_refresh_interval_ms = 2000,
     .sht45_enabled = true,
     .soil_probe_enabled = true,
     .cards = {
@@ -127,10 +132,29 @@ static bool is_valid_timezone(const char *timezone)
     return true;
 }
 
+static bool is_valid_status_refresh_interval(int interval_ms)
+{
+    const int intervals[] = {
+        0, 1000, 2000, 5000, 10000, 30000,
+        60000, 300000, 600000, 1800000, 3600000,
+    };
+    for (size_t index = 0; index < sizeof(intervals) / sizeof(intervals[0]); index++) {
+        if (interval_ms == intervals[index]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool parse_config(const char *json, size_t length, ui_config_t *config,
                          char *error_message, size_t error_message_size)
 {
-    const char *const root_keys[] = {"schema_version", "theme", "dashboard", "clock", "sensors"};
+    const char *const root_keys[] = {
+        "schema_version", "theme", "dashboard", "clock", "sensors", "polling",
+    };
+    const char *const sensor_root_keys[] = {
+        "schema_version", "theme", "dashboard", "clock", "sensors",
+    };
     const char *const clock_root_keys[] = {"schema_version", "theme", "dashboard", "clock"};
     const char *const legacy_root_keys[] = {"schema_version", "theme", "dashboard"};
     const char *const theme_keys[] = {"mode", "accent"};
@@ -138,6 +162,7 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
     const char *const clock_keys[] = {"timezone"};
     const char *const sensor_keys[] = {"sht45", "soil_probe"};
     const char *const sensor_config_keys[] = {"enabled"};
+    const char *const polling_keys[] = {"status_refresh_interval_ms"};
     const char *const card_keys[] = {"id", "visible", "span"};
     const char *const theme_modes[] = {"dark", "light", "system"};
     const char *const accents[] = {"green", "blue", "amber"};
@@ -155,18 +180,24 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
     const cJSON *dashboard = cJSON_GetObjectItemCaseSensitive(root, "dashboard");
     const cJSON *clock = cJSON_GetObjectItemCaseSensitive(root, "clock");
     const cJSON *sensors = cJSON_GetObjectItemCaseSensitive(root, "sensors");
+    const cJSON *polling = cJSON_GetObjectItemCaseSensitive(root, "polling");
     const int schema = cJSON_IsNumber(schema_version) ? schema_version->valueint : 0;
-    const char *const *accepted_root_keys = schema >= SCHEMA_VERSION_WITH_SENSORS
+    const char *const *accepted_root_keys = schema >= SCHEMA_VERSION_WITH_POLLING
         ? root_keys
-        : (schema == SCHEMA_VERSION_WITH_CLOCK ? clock_root_keys : legacy_root_keys);
-    const size_t accepted_root_key_count = schema >= SCHEMA_VERSION_WITH_SENSORS
+        : (schema >= SCHEMA_VERSION_WITH_SENSORS
+               ? sensor_root_keys
+               : (schema == SCHEMA_VERSION_WITH_CLOCK ? clock_root_keys : legacy_root_keys));
+    const size_t accepted_root_key_count = schema >= SCHEMA_VERSION_WITH_POLLING
         ? sizeof(root_keys) / sizeof(root_keys[0])
-        : (schema == SCHEMA_VERSION_WITH_CLOCK
-               ? sizeof(clock_root_keys) / sizeof(clock_root_keys[0])
-               : sizeof(legacy_root_keys) / sizeof(legacy_root_keys[0]));
+        : (schema >= SCHEMA_VERSION_WITH_SENSORS
+               ? sizeof(sensor_root_keys) / sizeof(sensor_root_keys[0])
+               : (schema == SCHEMA_VERSION_WITH_CLOCK
+                      ? sizeof(clock_root_keys) / sizeof(clock_root_keys[0])
+                      : sizeof(legacy_root_keys) / sizeof(legacy_root_keys[0])));
     if (!cJSON_IsNumber(schema_version) ||
         schema_version->valuedouble != schema_version->valueint ||
         (schema_version->valueint != CONFIG_SCHEMA_VERSION &&
+         schema_version->valueint != SCHEMA_VERSION_WITH_POWER_CARD &&
          schema_version->valueint != SCHEMA_VERSION_WITH_SENSORS &&
          schema_version->valueint != SCHEMA_VERSION_WITH_CLOCK &&
          schema_version->valueint != SCHEMA_VERSION_WITH_CURRENT_CARDS &&
@@ -182,7 +213,11 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
           !has_only_keys(clock, clock_keys, sizeof(clock_keys) / sizeof(clock_keys[0])))) ||
         (schema >= SCHEMA_VERSION_WITH_SENSORS &&
          (!cJSON_IsObject(sensors) ||
-          !has_only_keys(sensors, sensor_keys, sizeof(sensor_keys) / sizeof(sensor_keys[0]))))) {
+          !has_only_keys(sensors, sensor_keys, sizeof(sensor_keys) / sizeof(sensor_keys[0])))) ||
+        (schema >= SCHEMA_VERSION_WITH_POLLING &&
+         (!cJSON_IsObject(polling) ||
+          !has_only_keys(polling, polling_keys,
+                         sizeof(polling_keys) / sizeof(polling_keys[0]))))) {
         set_error(error_message, error_message_size, "Unsupported or incomplete configuration");
         cJSON_Delete(root);
         return false;
@@ -197,6 +232,8 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
     const cJSON *soil_probe = cJSON_GetObjectItemCaseSensitive(sensors, "soil_probe");
     const cJSON *sht45_enabled = cJSON_GetObjectItemCaseSensitive(sht45, "enabled");
     const cJSON *soil_probe_enabled = cJSON_GetObjectItemCaseSensitive(soil_probe, "enabled");
+    const cJSON *status_refresh_interval =
+        cJSON_GetObjectItemCaseSensitive(polling, "status_refresh_interval_ms");
     if (!cJSON_IsString(mode) ||
         !is_one_of(mode->valuestring, theme_modes, sizeof(theme_modes) / sizeof(theme_modes[0])) ||
         !cJSON_IsString(accent) ||
@@ -225,10 +262,19 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
         cJSON_Delete(root);
         return false;
     }
+    if (schema >= SCHEMA_VERSION_WITH_POLLING &&
+        (!cJSON_IsNumber(status_refresh_interval) ||
+         status_refresh_interval->valuedouble != status_refresh_interval->valueint ||
+         !is_valid_status_refresh_interval(status_refresh_interval->valueint))) {
+        set_error(error_message, error_message_size, "Invalid polling settings");
+        cJSON_Delete(root);
+        return false;
+    }
 
     const size_t input_card_count = (size_t)cJSON_GetArraySize(cards);
     size_t expected_card_count = CONFIG_CARD_COUNT;
-    if (schema >= SCHEMA_VERSION_WITH_CURRENT_CARDS && schema < CONFIG_SCHEMA_VERSION) {
+    if (schema >= SCHEMA_VERSION_WITH_CURRENT_CARDS &&
+        schema < SCHEMA_VERSION_WITH_POWER_CARD) {
         expected_card_count = SCHEMA_V3_TO_V5_CARD_COUNT;
     } else if (schema_version->valueint == SCHEMA_VERSION_WITH_CLOCK_CARDS) {
         expected_card_count = SCHEMA_V2_CARD_COUNT;
@@ -249,6 +295,9 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
             schema >= SCHEMA_VERSION_WITH_CLOCK ? timezone->valuestring
                                                 : default_config.timezone,
             sizeof(candidate.timezone));
+    candidate.status_refresh_interval_ms = schema >= SCHEMA_VERSION_WITH_POLLING
+        ? (uint32_t)status_refresh_interval->valueint
+        : default_config.status_refresh_interval_ms;
     candidate.sht45_enabled = schema >= SCHEMA_VERSION_WITH_SENSORS
         ? cJSON_IsTrue(sht45_enabled)
         : default_config.sht45_enabled;
@@ -323,16 +372,19 @@ static esp_err_t serialize_config(const ui_config_t *config, char *output, size_
     cJSON *dashboard = cJSON_CreateObject();
     cJSON *clock = cJSON_CreateObject();
     cJSON *sensors = cJSON_CreateObject();
+    cJSON *polling = cJSON_CreateObject();
     cJSON *sht45 = cJSON_CreateObject();
     cJSON *soil_probe = cJSON_CreateObject();
     cJSON *cards = cJSON_CreateArray();
     if (root == NULL || theme == NULL || dashboard == NULL || clock == NULL ||
-        sensors == NULL || sht45 == NULL || soil_probe == NULL || cards == NULL) {
+        sensors == NULL || polling == NULL || sht45 == NULL || soil_probe == NULL ||
+        cards == NULL) {
         cJSON_Delete(root);
         cJSON_Delete(theme);
         cJSON_Delete(dashboard);
         cJSON_Delete(clock);
         cJSON_Delete(sensors);
+        cJSON_Delete(polling);
         cJSON_Delete(sht45);
         cJSON_Delete(soil_probe);
         cJSON_Delete(cards);
@@ -353,6 +405,9 @@ static esp_err_t serialize_config(const ui_config_t *config, char *output, size_
     cJSON_AddBoolToObject(soil_probe, "enabled", config->soil_probe_enabled);
     cJSON_AddItemToObject(sensors, "soil_probe", soil_probe);
     cJSON_AddItemToObject(root, "sensors", sensors);
+    cJSON_AddNumberToObject(polling, "status_refresh_interval_ms",
+                           config->status_refresh_interval_ms);
+    cJSON_AddItemToObject(root, "polling", polling);
 
     for (size_t index = 0; index < CONFIG_CARD_COUNT; index++) {
         cJSON *card = cJSON_CreateObject();
