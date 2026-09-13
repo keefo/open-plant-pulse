@@ -1,0 +1,37 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "monstera",
+  "name": "Monstera",
+  "scientific_name": "Monstera deliciosa",
+  "root_zone": {
+    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
+    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
+    "conductivity_us_cm": {"label": "Conductivity", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Keep lightly moist, then partly dry",
+    "refill_below": 40,
+    "post_water_target": [60, 75],
+    "comfortable_cycle": [40, 75],
+    "concern_below": 25,
+    "concern_above": 85
+  },
+  "drainage": {
+    "label": "Airy mix that drains freely without drying immediately",
+    "preferred_response": "balanced",
+    "acceptable_responses": ["fast", "balanced"],
+    "maximum_settle_minutes": 20
+  },
+  "climate": {
+    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 30], "scale": [10, 35]},
+    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [50, 70], "scale": [20, 90]}
+  },
+  "chemistry": {
+    "soil_ph": {"label": "pH", "unit": "", "ideal": [5.5, 7.0], "scale": [4.0, 9.0]},
+    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [70, 130], "scale": [0, 200]},
+    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [30, 70], "scale": [0, 140]},
+    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [90, 170], "scale": [0, 240]}
+  }
+}

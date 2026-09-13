@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#18221c">
+  <title>Open Plant Pulse</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <strong>Open Plant Pulse</strong>
+        <span id="firmware-version">Sensor console · Firmware --</span>
+      </div>
+    </div>
+    <div class="connection" id="connection">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="connection-label">Connecting</span>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <nav class="navigation" aria-label="Device console">
+      <button class="nav-item active" type="button" data-view="overview">Overview</button>
+      <button class="nav-item" type="button" data-view="sensors">Sensors</button>
+      <button class="nav-item" type="button" data-view="logs">Logs</button>
+      <button class="nav-item" type="button" data-view="maintenance">Maintenance</button>
+    </nav>
+
+    <main>
+      <section class="view active" id="overview" aria-labelledby="overview-title">
+        <div class="view-heading">
+          <div>
+            <p class="eyebrow">Live device state</p>
+            <h1 id="overview-title">Overview</h1>
+          </div>
+          <span class="updated" id="last-updated">Waiting for device</span>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric primary" data-card-id="device">
+            <span class="metric-label">Device</span>
+            <strong id="device-state">Connecting</strong>
+            <small id="device-address">No address yet</small>
+          </article>
+          <article class="metric" data-card-id="uptime">
+            <span class="metric-label">Uptime</span>
+            <strong id="uptime">--</strong>
+            <small>Since last reset</small>
+          </article>
+          <article class="metric" data-card-id="heap">
+            <span class="metric-label">Free heap</span>
+            <strong id="heap">--</strong>
+            <small>Available memory</small>
+          </article>
+          <article class="metric" data-card-id="mac">
+            <span class="metric-label">Station MAC</span>
+            <strong class="compact" id="mac">--</strong>
+            <small>Wi-Fi identity</small>
+          </article>
+          <article class="metric" data-card-id="chip_temperature">
+            <span class="metric-label">Chip temperature</span>
+            <strong id="chip-temperature">--</strong>
+            <small>Internal die, not ambient</small>
+          </article>
+        </div>
+
+        <section class="activity" aria-labelledby="activity-title">
+          <div class="section-heading">
+            <h2 id="activity-title">Recent activity</h2>
+            <button class="text-action" type="button" data-open-view="logs">Open logs</button>
+          </div>
+          <pre class="log-preview" id="log-preview">Waiting for logs...</pre>
+        </section>
+      </section>
+
+      <section class="view" id="sensors" aria-labelledby="sensors-title" hidden>
+        <div class="view-heading">
+          <div>
+            <p class="eyebrow">Acquisition hardware</p>
+            <h1 id="sensors-title">Sensors</h1>
+          </div>
+        </div>
+        <div class="sensor-list">
+          <article class="sensor-row">
+            <div><span class="sensor-name">SHT45</span><small>Air temperature and humidity</small></div>
+            <span class="state unavailable">Not implemented</span>
+          </article>
+          <article class="sensor-row">
+            <div><span class="sensor-name">NPKPHCTH-S</span><small>RS-485 soil probe</small></div>
+            <span class="state unavailable">Not implemented</span>
+          </article>
+        </div>
+        <p class="empty-note">Sensor values will appear here after their bounded hardware drivers are integrated.</p>
+      </section>
+
+      <section class="view" id="logs" aria-labelledby="logs-title" hidden>
+        <div class="view-heading log-heading">
+          <div>
+            <p class="eyebrow">ESP-IDF output</p>
+            <h1 id="logs-title">Live logs</h1>
+          </div>
+          <span class="live-label"><span class="pulse" aria-hidden="true"></span>Polling every second</span>
+        </div>
+        <pre class="log-console" id="log-console">Waiting for logs...</pre>
+      </section>
+
+      <section class="view" id="maintenance" aria-labelledby="maintenance-title" hidden>
+        <div class="view-heading">
+          <div>
+            <p class="eyebrow">Development build</p>
+            <h1 id="maintenance-title">Maintenance</h1>
+          </div>
+        </div>
+        <section class="settings-panel" aria-labelledby="appearance-title">
+          <div class="section-heading">
+            <h2 id="appearance-title">Appearance</h2>
+            <span class="config-state" id="config-state" aria-live="polite">Loading</span>
+          </div>
+          <form id="ui-config-form">
+            <div class="settings-grid">
+              <label class="field-label" for="theme-mode">Color mode</label>
+              <select id="theme-mode" name="theme-mode">
+                <option value="system">System</option>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+
+              <span class="field-label">Accent</span>
+              <div class="swatch-group" role="radiogroup" aria-label="Accent color">
+                <label class="swatch green" title="Green"><input type="radio" name="accent" value="green" aria-label="Green"><span></span></label>
+                <label class="swatch blue" title="Blue"><input type="radio" name="accent" value="blue" aria-label="Blue"><span></span></label>
+                <label class="swatch amber" title="Amber"><input type="radio" name="accent" value="amber" aria-label="Amber"><span></span></label>
+              </div>
+
+              <span class="field-label">Density</span>
+              <div class="segmented">
+                <label><input type="radio" name="density" value="comfortable"><span>Comfortable</span></label>
+                <label><input type="radio" name="density" value="compact"><span>Compact</span></label>
+              </div>
+            </div>
+
+            <div class="dashboard-settings">
+              <h2>Overview cards</h2>
+              <div id="card-settings"></div>
+            </div>
+
+            <div class="form-actions">
+              <button class="primary-action" type="submit">Save changes</button>
+              <button class="secondary-action" id="reset-config" type="button">Reset</button>
+              <button class="secondary-action" id="export-config" type="button">Export</button>
+              <label class="secondary-action file-action">Import<input id="import-config" type="file" accept="application/json,.json"></label>
+            </div>
+          </form>
+        </section>
+
+        <div class="maintenance-list">
+          <div class="maintenance-row"><span>Configuration storage</span><strong>Device NVS</strong></div>
+          <div class="maintenance-row">
+            <div><span>Device restart</span><small>Restart firmware without erasing configuration</small></div>
+            <div class="maintenance-action">
+              <span class="action-state" id="restart-state" aria-live="polite">Ready</span>
+              <button class="danger-action" id="restart-device" type="button">Restart</button>
+            </div>
+          </div>
+          <div class="maintenance-row"><span>Firmware update</span><strong>Not enabled</strong></div>
+        </div>
+        <p class="empty-note warning">Restart is available for trusted bench networks only. Authentication and physical-presence controls are not implemented.</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

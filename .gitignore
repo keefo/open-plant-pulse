@@ -1,0 +1,23 @@
+# ESP-IDF and host-test output
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# Editors and operating systems
+.DS_Store
+.vscode/settings.json
+*.blend1
+*.swp
+*~
+
+# Python hub
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.db
+*.db-shm
+*.db-wal

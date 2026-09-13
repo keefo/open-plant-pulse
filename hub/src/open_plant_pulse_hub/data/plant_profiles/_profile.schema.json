@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openplantpulse.org/schema/plant-profile-v1.json",
+  "title": "Open Plant Pulse plant profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "name", "scientific_name", "root_zone", "watering", "drainage", "climate", "chemistry"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "name": {"type": "string", "minLength": 1},
+    "scientific_name": {"type": "string", "minLength": 1},
+    "root_zone": {"$ref": "#/$defs/metricGroup"},
+    "watering": {"$ref": "#/$defs/watering"},
+    "drainage": {"$ref": "#/$defs/drainage"},
+    "climate": {"$ref": "#/$defs/metricGroup"},
+    "chemistry": {"$ref": "#/$defs/metricGroup"}
+  },
+  "$defs": {
+    "numberPair": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "unit", "scale"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "unit": {"type": "string"},
+        "ideal": {"$ref": "#/$defs/numberPair"},
+        "scale": {"$ref": "#/$defs/numberPair"}
+      }
+    },
+    "metricGroup": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/metric"}
+    },
+    "watering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "label", "refill_below", "post_water_target", "comfortable_cycle", "concern_below", "concern_above"],
+      "properties": {
+        "strategy": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "refill_below": {"type": "number", "minimum": 0, "maximum": 100},
+        "post_water_target": {"$ref": "#/$defs/numberPair"},
+        "comfortable_cycle": {"$ref": "#/$defs/numberPair"},
+        "concern_below": {"type": "number", "minimum": 0, "maximum": 100},
+        "concern_above": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "drainage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "preferred_response", "acceptable_responses", "maximum_settle_minutes"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "preferred_response": {"enum": ["fast", "balanced", "retaining"]},
+        "acceptable_responses": {
+          "type": "array",
+          "items": {"enum": ["fast", "balanced", "retaining"]},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "maximum_settle_minutes": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

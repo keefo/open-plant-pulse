@@ -1,0 +1,27 @@
+automation:
+  - alias: "Plant monitor: sustained low moisture"
+    id: open_plant_pulse_low_moisture
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.open_plant_pulse_moisture
+        below: 18
+        for: "06:00:00"
+    actions:
+      - action: notify.notify
+        data:
+          title: "Plant moisture is low"
+          message: "Deep-soil moisture has remained below the configured threshold."
+
+  - alias: "Plant monitor: high conductivity"
+    id: open_plant_pulse_high_conductivity
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.open_plant_pulse_conductivity
+        above: 2500
+    actions:
+      - action: notify.notify
+        data:
+          title: "Plant conductivity is high"
+          message: "Soil conductivity exceeded the configured threshold; inspect before fertilizing."

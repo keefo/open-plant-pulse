@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "default_profile": "strelitzia",
+  "assessment_policy": {
+    "levels": [
+      {"status": "Thriving", "max_deviation": 0.0},
+      {"status": "Watch", "max_deviation": 0.15},
+      {"status": "Stressed", "max_deviation": 0.3},
+      {"status": "Critical", "max_deviation": null}
+    ]
+  },
+  "guidance": "Starter comparison ranges for the simulator, not fertilization instructions. NPK values depend on substrate and test method; validate against a suitable lab test.",
+  "climate_guidance": "Comfort ranges are broad starter guidance. Brief excursions are not automatically harmful; airflow, light, season, and acclimation also affect plant response."
+}

@@ -1,0 +1,37 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "strelitzia",
+  "name": "Bird of paradise",
+  "scientific_name": "Strelitzia spp.",
+  "root_zone": {
+    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
+    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
+    "conductivity_us_cm": {"label": "Conductivity", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Let the upper soil partly dry",
+    "refill_below": 35,
+    "post_water_target": [55, 70],
+    "comfortable_cycle": [35, 70],
+    "concern_below": 20,
+    "concern_above": 85
+  },
+  "drainage": {
+    "label": "Free draining with moderate moisture retention",
+    "preferred_response": "balanced",
+    "acceptable_responses": ["fast", "balanced"],
+    "maximum_settle_minutes": 20
+  },
+  "climate": {
+    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 29], "scale": [10, 35]},
+    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 60], "scale": [20, 90]}
+  },
+  "chemistry": {
+    "soil_ph": {"label": "pH", "unit": "", "ideal": [5.5, 7.0], "scale": [4.0, 9.0]},
+    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [60, 120], "scale": [0, 200]},
+    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [30, 70], "scale": [0, 140]},
+    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [80, 160], "scale": [0, 240]}
+  }
+}

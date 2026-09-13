@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Plant Pulse</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="plant-identity">
+      <p class="eyebrow">OPEN PLANT PULSE</p>
+      <input id="plant-label" class="plant-label" value="White bird of paradise" aria-label="Plant label">
+      <div class="profile-control">
+        <label for="plant-profile">Plant profile</label>
+        <select id="plant-profile" aria-label="Plant profile"></select>
+        <span id="scientific-name"></span>
+      </div>
+    </div>
+    <div class="connection" aria-live="polite">
+      <div class="clock-display">
+        <div id="simulation-clock" class="simulation-clock" role="img" aria-label="Waiting for simulation time">
+          <i id="clock-hour" class="clock-hand hour"></i>
+          <i id="clock-minute" class="clock-hand minute"></i>
+          <i id="clock-second" class="clock-hand second"></i>
+          <b class="clock-pin"></b>
+        </div>
+        <span id="time-scale">Syncing</span>
+      </div>
+      <span id="status-dot" class="status-dot"></span>
+      <div class="connection-copy"><strong id="status">Waiting for sensor</strong><span id="updated">No samples yet</span></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="plant-journey" aria-labelledby="plant-journey-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
+        <span id="journey-started">Waiting for sensor history</span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="journey-days">--</strong><span>Days monitored</span></div>
+        <div><strong id="journey-waterings">--</strong><span>Waterings detected</span></div>
+        <div><strong id="journey-fertilizing">--</strong><span>Likely fertilizations</span></div>
+        <div><strong id="journey-missed">--</strong><span>Missed watering windows</span></div>
+      </div>
+      <div id="plant-assessment" class="plant-assessment" data-level="waiting" aria-live="polite">
+        <div>
+          <p class="eyebrow">CURRENT HEALTH</p>
+          <strong id="plant-status">Waiting</strong>
+        </div>
+        <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
+      </div>
+    </section>
+
+    <section class="primary-grid" aria-label="Primary plant measurements">
+      <article class="metric hero-metric moisture">
+        <div class="moisture-heading">
+          <span>Soil moisture index</span>
+          <strong><b id="moisture">--</b><small>%</small></strong>
+        </div>
+        <div class="moisture-pot-shell">
+          <div id="moisture-vessel" class="moisture-vessel" role="img" aria-label="Waiting for soil moisture">
+            <div class="moisture-cycle-band"></div>
+            <div class="moisture-target-band"><span id="moisture-target-label">After watering</span></div>
+            <div class="moisture-fill"><i></i></div>
+            <div class="moisture-refill-line"><span id="moisture-refill-label">Water below</span></div>
+          </div>
+        </div>
+        <div class="moisture-caption">
+          <b id="moisture-phase">Waiting for reading</b>
+          <span id="moisture-strategy">Plant watering cycle</span>
+        </div>
+      </article>
+      <article class="metric soil-temp root-zone-gauge" data-metric="soil_temperature_c">
+        <span>Soil temperature</span><strong><b id="soil-temp">--</b><small>°C</small></strong>
+        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+        <p class="range-status">Waiting for reading</p>
+      </article>
+      <article class="metric conductivity root-zone-gauge" data-metric="conductivity_us_cm">
+        <span>Conductivity</span><strong><b id="conductivity">--</b><small>µS/cm</small></strong>
+        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+        <p class="range-status">Waiting for reading</p>
+      </article>
+      <article class="metric air-temp climate-gauge" data-metric="air_temperature_c">
+        <span>Air temperature</span><strong><b id="air-temp">--</b><small>°C</small></strong>
+        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+        <p class="range-status">Waiting for reading</p>
+      </article>
+      <article class="metric humidity climate-gauge" data-metric="air_humidity_percent">
+        <span>Air humidity</span><strong><b id="humidity">--</b><small>%</small></strong>
+        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+        <p class="range-status">Waiting for reading</p>
+      </article>
+    </section>
+
+    <section id="drainage-assessment" class="drainage-assessment" data-level="learning" aria-live="polite">
+      <div>
+        <p class="eyebrow">POT RESPONSE</p>
+        <strong id="drainage-status">Learning</strong>
+        <span id="watering-interval" class="watering-interval">Learning watering rhythm</span>
+      </div>
+      <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
+    </section>
+
+    <section class="chemistry" aria-label="Soil chemistry measurements">
+      <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
+      <div class="chemistry-grid">
+        <article class="chemistry-gauge" data-metric="soil_ph">
+          <div class="chemistry-value"><span>pH</span><strong><b id="ph">--</b></strong></div>
+          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+          <p class="range-status">Waiting for reading</p>
+        </article>
+        <article class="chemistry-gauge" data-metric="nitrogen_mg_kg">
+          <div class="chemistry-value"><span>Nitrogen</span><strong><b id="nitrogen">--</b><small> mg/kg</small></strong></div>
+          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+          <p class="range-status">Waiting for reading</p>
+        </article>
+        <article class="chemistry-gauge" data-metric="phosphorus_mg_kg">
+          <div class="chemistry-value"><span>Phosphorus</span><strong><b id="phosphorus">--</b><small> mg/kg</small></strong></div>
+          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+          <p class="range-status">Waiting for reading</p>
+        </article>
+        <article class="chemistry-gauge" data-metric="potassium_mg_kg">
+          <div class="chemistry-value"><span>Potassium</span><strong><b id="potassium">--</b><small> mg/kg</small></strong></div>
+          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+          <p class="range-status">Waiting for reading</p>
+        </article>
+      </div>
+      <p id="chemistry-guidance" class="chemistry-guidance"></p>
+    </section>
+
+    <section class="watering-calendar" aria-labelledby="watering-calendar-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">WATERING RHYTHM</p><h2 id="watering-calendar-title">Current year</h2></div>
+        <span id="watering-calendar-summary">Waiting for sensor history</span>
+      </div>
+      <div class="watering-calendar-scroll" tabindex="0" aria-label="Scrollable watering calendar">
+        <div class="watering-calendar-layout">
+          <div class="calendar-spacer"></div>
+          <div id="watering-calendar-months" class="watering-calendar-months" aria-hidden="true"></div>
+          <div class="watering-calendar-weekdays" aria-hidden="true"><span>Mon</span><span>Wed</span><span>Fri</span></div>
+          <div id="watering-calendar-grid" class="watering-calendar-grid" role="grid" aria-label="Watering events by day"></div>
+        </div>
+      </div>
+      <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span></div>
+    </section>
+
+    <section class="care-log" aria-label="Plant care history">
+      <div class="section-heading"><div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div><span>Detected automatically</span></div>
+      <div id="care-log-list" class="care-log-list">
+        <p class="care-log-empty">No care events detected yet.</p>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

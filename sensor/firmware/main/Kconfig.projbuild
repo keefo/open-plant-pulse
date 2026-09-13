@@ -1,0 +1,34 @@
+menu "Open Plant Pulse"
+
+config OPP_WEB_UI_ENABLED
+    bool "Enable Wi-Fi web diagnostics"
+    default y
+    help
+        Join a Wi-Fi network and serve a webpage that mirrors ESP logs.
+        Disable this for battery-powered deployments.
+
+if OPP_WEB_UI_ENABLED
+
+config OPP_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config OPP_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    help
+        Stored only in the generated, git-ignored sdkconfig file.
+
+endif
+
+config OPP_SENSOR_MODBUS_ADDRESS
+    int "Sensor Modbus address"
+    range 1 247
+    default 1
+
+config OPP_SAMPLE_INTERVAL_MINUTES
+    int "Sampling interval in minutes"
+    range 1 1440
+    default 30
+
+endmenu
