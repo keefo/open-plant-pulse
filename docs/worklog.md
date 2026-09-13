@@ -142,9 +142,22 @@
 - Added UTC date/time and RTC status cards to the Overview ESP32-C3 section, with
   automatic migration of existing dashboard schema-v1 layouts.
 
+### Inferred power source
+
+- Added USB Serial/JTAG host detection to `/status` as `usb_connected` and
+  `power_source`.
+- Added a configurable Overview Power card showing `USB` or `Battery (inferred)`,
+  with automatic migration of existing schema-v5 dashboard layouts.
+- Documented that USB wins when both sources are present and that the battery state
+  assumes USB chargers and power banks are not used.
+- Built and flashed firmware 0.1.5, then validated the USB state and schema-v5 to
+  schema-v6 migration on the connected ESP32-C3.
+
 ### Remaining work
 
 - Validate SHT45 readings and failure recovery on the connected physical board.
+- Validate the inferred battery transition while the node remains battery-powered
+  after its USB data connection is removed.
 - Validate the purchased RS-485 soil probe register map and implement bounded acquisition.
 - Add battery voltage, charge state, Wi-Fi signal, reset reason, and stale-reading health indicators.
 - Complete versioned status/log APIs and log controls described in the web UI proposal.

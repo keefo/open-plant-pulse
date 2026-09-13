@@ -4,6 +4,7 @@
 
 #include "bthome_payload.h"
 #include "clock_policy.h"
+#include "power_source.h"
 #include "sensor_protocol.h"
 #include "sht45_decode.h"
 
@@ -94,6 +95,12 @@ static void test_clock_policy(void)
     assert(opp_clock_adjustment_ms(100000, 250000, 100100) == -150);
 }
 
+static void test_power_source_policy(void)
+{
+    assert(strcmp(opp_power_source_status_value(true), "usb") == 0);
+    assert(strcmp(opp_power_source_status_value(false), "battery_inferred") == 0);
+}
+
 int main(void)
 {
     test_modbus_request();
@@ -102,5 +109,6 @@ int main(void)
     test_sht45_response();
     test_sht45_humidity_clamping();
     test_clock_policy();
+    test_power_source_policy();
     return 0;
 }

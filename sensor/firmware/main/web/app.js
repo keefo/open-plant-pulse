@@ -14,6 +14,7 @@ const restartState = document.getElementById('restart-state');
 const firmwareVersion = document.getElementById('firmware-version');
 const cardLabels = {
   device: 'Device',
+  power: 'Power',
   uptime: 'Uptime',
   heap: 'Free heap',
   chip_temperature: 'Chip temperature',
@@ -291,8 +292,7 @@ document.getElementById('import-config').addEventListener('change', async (event
     await saveUiConfig(JSON.parse(await file.text()), 'Imported and saved', 'Import failed');
   } catch (error) {
     if (error instanceof SyntaxError) {
-      configState.className = 'config-state error';
-      configState.textContent = 'Import failed';
+      showConfigState('Import failed', 'error');
     }
   } finally {
     event.target.value = '';
@@ -494,6 +494,11 @@ async function refreshStatus() {
       : 'Disconnected';
     document.getElementById('device-address').textContent = status.ip || 'No address yet';
     document.getElementById('device-mac').textContent = status.mac || 'MAC unavailable';
+    const usbPower = status.power_source === 'usb' || status.usb_connected === true;
+    document.getElementById('power-source').textContent = usbPower ? 'USB' : 'Battery (inferred)';
+    document.getElementById('power-detail').textContent = usbPower
+      ? 'USB data host detected'
+      : 'No USB data host detected';
     document.getElementById('uptime').textContent = formatDuration(status.uptime_s);
     document.getElementById('heap').textContent = formatBytes(status.free_heap);
     document.getElementById('chip-temperature').textContent =
@@ -505,6 +510,8 @@ async function refreshStatus() {
     connection.className = 'connection offline';
     connectionLabel.textContent = 'Device unreachable';
     document.getElementById('device-state').textContent = 'Unreachable';
+    document.getElementById('power-source').textContent = 'Unavailable';
+    document.getElementById('power-detail').textContent = 'Device unreachable';
     document.getElementById('last-updated').textContent = 'Update failed';
     renderSht45(null);
   }

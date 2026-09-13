@@ -82,11 +82,22 @@ with the canonical scripts. The serial log prints the DHCP address after the
 ESP32-C3 connects. Open `http://<board-ip>/` for the live console,
 `http://<board-ip>/logs` for plain text, or `http://<board-ip>/status` for JSON.
 The status document includes the compiled `firmware_version`, Wi-Fi SSID, IP and
-station MAC, clock/RTC state, SHT45 enabled state and availability, latest ambient values, sample
-sequence, timestamp validity, and sample age. The Overview ESP32-C3 section shows
-the SSID, IP, and MAC together on the Device card, alongside UTC date/time and RTC
-synchronization details. The page mirrors the newest 16 KiB of logs while preserving
-USB serial output.
+station MAC, inferred power source, clock/RTC state, SHT45 enabled state and
+availability, latest ambient values, sample sequence, timestamp validity, and
+sample age. The Overview ESP32-C3 section shows the SSID, IP, and MAC together
+on the Device card, plus power, UTC date/time, and RTC synchronization details.
+The page mirrors the newest 16 KiB of logs while preserving USB serial output.
+
+### Power source inference
+
+`/status` exposes `usb_connected` and `power_source`. The firmware reports `usb`
+when the USB Serial/JTAG peripheral receives host SOF packets; otherwise it reports
+`battery_inferred`. The Overview Power card displays these states as `USB` and
+`Battery (inferred)`. USB takes precedence when USB and battery are both attached.
+
+This inference assumes the node is not powered by a USB charger or power bank,
+because those supplies do not provide the USB host traffic used for detection. It
+does not measure battery level or charging state; those require additional hardware.
 
 ### Clock and sample timestamps
 
@@ -117,10 +128,11 @@ persist the website color mode, accent, density, IANA timezone, and Overview car
 order, visibility, and width. The Overview
 clock and RTC synchronization timestamp are converted from device-supplied UTC
 by the browser, including daylight-saving transitions for the selected timezone.
-Existing configurations migrate to `UTC` with sensors enabled. Configuration is stored as a
-versioned, validated JSON document in the `web_ui` NVS namespace, so it survives
-power loss and firmware flashing unless NVS is explicitly erased. Control
-changes are previewed immediately and saved automatically after a short debounce.
+Existing configurations migrate to `UTC` with sensors enabled and the Power card
+visible. Configuration is stored as a versioned, validated JSON document in the
+`web_ui` NVS namespace, so it survives power loss and firmware flashing unless
+NVS is explicitly erased. Control changes are previewed immediately and saved
+automatically after a short debounce.
 The current API is:
 
 | Method | Route | Purpose |

@@ -13,12 +13,14 @@
 
 #define CONFIG_NAMESPACE "web_ui"
 #define CONFIG_KEY "ui_config"
-#define CONFIG_SCHEMA_VERSION 5
+#define CONFIG_SCHEMA_VERSION 6
+#define SCHEMA_VERSION_WITH_SENSORS 5
 #define SCHEMA_VERSION_WITH_CLOCK 4
 #define SCHEMA_VERSION_WITH_CURRENT_CARDS 3
 #define SCHEMA_VERSION_WITH_CLOCK_CARDS 2
 #define INITIAL_CONFIG_SCHEMA_VERSION 1
-#define CONFIG_CARD_COUNT 6
+#define CONFIG_CARD_COUNT 7
+#define SCHEMA_V3_TO_V5_CARD_COUNT 6
 #define SCHEMA_V2_CARD_COUNT 7
 #define SCHEMA_V1_CARD_COUNT 5
 
@@ -49,6 +51,7 @@ static const ui_config_t default_config = {
     .soil_probe_enabled = true,
     .cards = {
         {.id = "device", .visible = true, .span = 1},
+        {.id = "power", .visible = true, .span = 1},
         {.id = "uptime", .visible = true, .span = 1},
         {.id = "heap", .visible = true, .span = 1},
         {.id = "chip_temperature", .visible = true, .span = 1},
@@ -153,10 +156,10 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
     const cJSON *clock = cJSON_GetObjectItemCaseSensitive(root, "clock");
     const cJSON *sensors = cJSON_GetObjectItemCaseSensitive(root, "sensors");
     const int schema = cJSON_IsNumber(schema_version) ? schema_version->valueint : 0;
-    const char *const *accepted_root_keys = schema == CONFIG_SCHEMA_VERSION
+    const char *const *accepted_root_keys = schema >= SCHEMA_VERSION_WITH_SENSORS
         ? root_keys
         : (schema == SCHEMA_VERSION_WITH_CLOCK ? clock_root_keys : legacy_root_keys);
-    const size_t accepted_root_key_count = schema == CONFIG_SCHEMA_VERSION
+    const size_t accepted_root_key_count = schema >= SCHEMA_VERSION_WITH_SENSORS
         ? sizeof(root_keys) / sizeof(root_keys[0])
         : (schema == SCHEMA_VERSION_WITH_CLOCK
                ? sizeof(clock_root_keys) / sizeof(clock_root_keys[0])
@@ -164,6 +167,7 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
     if (!cJSON_IsNumber(schema_version) ||
         schema_version->valuedouble != schema_version->valueint ||
         (schema_version->valueint != CONFIG_SCHEMA_VERSION &&
+         schema_version->valueint != SCHEMA_VERSION_WITH_SENSORS &&
          schema_version->valueint != SCHEMA_VERSION_WITH_CLOCK &&
          schema_version->valueint != SCHEMA_VERSION_WITH_CURRENT_CARDS &&
          schema_version->valueint != SCHEMA_VERSION_WITH_CLOCK_CARDS &&
@@ -176,7 +180,7 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
         (schema >= SCHEMA_VERSION_WITH_CLOCK &&
          (!cJSON_IsObject(clock) ||
           !has_only_keys(clock, clock_keys, sizeof(clock_keys) / sizeof(clock_keys[0])))) ||
-        (schema == CONFIG_SCHEMA_VERSION &&
+        (schema >= SCHEMA_VERSION_WITH_SENSORS &&
          (!cJSON_IsObject(sensors) ||
           !has_only_keys(sensors, sensor_keys, sizeof(sensor_keys) / sizeof(sensor_keys[0]))))) {
         set_error(error_message, error_message_size, "Unsupported or incomplete configuration");
@@ -210,7 +214,7 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
         cJSON_Delete(root);
         return false;
     }
-    if (schema == CONFIG_SCHEMA_VERSION &&
+    if (schema >= SCHEMA_VERSION_WITH_SENSORS &&
         (!cJSON_IsObject(sht45) || !cJSON_IsObject(soil_probe) ||
          !has_only_keys(sht45, sensor_config_keys,
                         sizeof(sensor_config_keys) / sizeof(sensor_config_keys[0])) ||
@@ -224,7 +228,9 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
 
     const size_t input_card_count = (size_t)cJSON_GetArraySize(cards);
     size_t expected_card_count = CONFIG_CARD_COUNT;
-    if (schema_version->valueint == SCHEMA_VERSION_WITH_CLOCK_CARDS) {
+    if (schema >= SCHEMA_VERSION_WITH_CURRENT_CARDS && schema < CONFIG_SCHEMA_VERSION) {
+        expected_card_count = SCHEMA_V3_TO_V5_CARD_COUNT;
+    } else if (schema_version->valueint == SCHEMA_VERSION_WITH_CLOCK_CARDS) {
         expected_card_count = SCHEMA_V2_CARD_COUNT;
     } else if (schema_version->valueint == INITIAL_CONFIG_SCHEMA_VERSION) {
         expected_card_count = SCHEMA_V1_CARD_COUNT;
@@ -243,10 +249,10 @@ static bool parse_config(const char *json, size_t length, ui_config_t *config,
             schema >= SCHEMA_VERSION_WITH_CLOCK ? timezone->valuestring
                                                 : default_config.timezone,
             sizeof(candidate.timezone));
-    candidate.sht45_enabled = schema == CONFIG_SCHEMA_VERSION
+    candidate.sht45_enabled = schema >= SCHEMA_VERSION_WITH_SENSORS
         ? cJSON_IsTrue(sht45_enabled)
         : default_config.sht45_enabled;
-    candidate.soil_probe_enabled = schema == CONFIG_SCHEMA_VERSION
+    candidate.soil_probe_enabled = schema >= SCHEMA_VERSION_WITH_SENSORS
         ? cJSON_IsTrue(soil_probe_enabled)
         : default_config.soil_probe_enabled;
     bool seen[CONFIG_CARD_COUNT] = {false};

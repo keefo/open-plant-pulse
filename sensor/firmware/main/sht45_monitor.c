@@ -89,6 +89,9 @@ static void sht45_monitor_task(void *context)
             }
             bus_initialised = true;
         }
+        if (!opp_sht45_monitor_is_enabled()) {
+            continue;
+        }
 
         if (!sensor_detected) {
             esp_err_t probe_error = opp_sht45_probe();
@@ -102,6 +105,9 @@ static void sht45_monitor_task(void *context)
             sensor_detected = true;
             ESP_LOGI(TAG, "SHT45 detected at 0x44 on SDA GPIO%d, SCL GPIO%d",
                      CONFIG_OPP_SHT45_SDA_GPIO, CONFIG_OPP_SHT45_SCL_GPIO);
+        }
+        if (!opp_sht45_monitor_is_enabled()) {
+            continue;
         }
 
         opp_sht45_sample_t sample;

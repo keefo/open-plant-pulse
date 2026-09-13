@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "clock_sync.h"
 #include "driver/temperature_sensor.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_event.h"
@@ -23,6 +24,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "lwip/ip4_addr.h"
+#include "power_source.h"
 #include "sht45_monitor.h"
 #include "web_ui_config.h"
 
@@ -385,14 +387,16 @@ static esp_err_t status_handler(httpd_req_t *request)
     }
 
     const esp_app_desc_t *app = esp_app_get_description();
+    const bool usb_connected = usb_serial_jtag_is_connected();
     char escaped_ssid[sizeof(station_ssid) * 6];
     if (!json_escape(station_ssid, escaped_ssid, sizeof(escaped_ssid))) {
         strlcpy(escaped_ssid, "unknown", sizeof(escaped_ssid));
     }
-    char status[1280];
+    char status[1408];
     snprintf(status, sizeof(status),
              "{\"firmware_version\":\"%s\",\"connected\":%s,\"ssid\":\"%s\","
              "\"ip\":\"%s\",\"mac\":\"%s\","
+             "\"usb_connected\":%s,\"power_source\":\"%s\","
              "\"uptime_s\":%lld,\"free_heap\":%lu,\"chip_temperature_c\":%s,"
              "\"clock_valid\":%s,\"clock_sync_state\":\"%s\",\"date_time_utc\":%s,"
              "\"unix_time_s\":%s,\"rtc_clock_source\":\"internal RC slow clock\","
@@ -404,6 +408,8 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s}",
              app->version, station_connected ? "true" : "false", escaped_ssid,
              station_ip, station_mac,
+             usb_connected ? "true" : "false",
+             opp_power_source_status_value(usb_connected),
              esp_timer_get_time() / 1000000,
              (unsigned long)esp_get_free_heap_size(), temperature,
              clock_status.time_valid ? "true" : "false", sync_state, date_time_utc,
