@@ -7,13 +7,19 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header class="topbar">
+  <nav class="household-nav" aria-label="Primary navigation">
+    <a class="brand" href="/">Open Plant Pulse</a>
+    <div class="primary-links">
+      <a id="fleet-link" class="nav-link" href="/">Fleet</a>
+    </div>
+    <button id="open-inbox" class="nav-button" type="button">Sensor inbox <span id="inbox-count">0</span></button>
+  </nav>
+  <header class="topbar" data-page="detail" hidden>
     <div class="plant-identity">
       <p class="eyebrow">OPEN PLANT PULSE</p>
-      <input id="plant-label" class="plant-label" value="White bird of paradise" aria-label="Plant label">
+      <input id="plant-label" class="plant-label" value="Plant sensor" aria-label="Plant label" readonly>
       <div class="profile-control">
-        <label for="plant-profile">Plant profile</label>
-        <select id="plant-profile" aria-label="Plant profile"></select>
+        <strong id="plant-profile-name">Plant profile</strong>
         <span id="scientific-name"></span>
       </div>
     </div>
@@ -32,8 +38,52 @@
     </div>
   </header>
 
+  <section id="hub-health" class="hub-health" data-page="fleet" aria-live="polite"></section>
+
+  <dialog id="inbox-dialog">
+    <form method="dialog" class="dialog-card">
+      <div class="section-heading"><div><p class="eyebrow">NEW DEVICES</p><h2>Sensor inbox</h2></div><button value="cancel" aria-label="Close">×</button></div>
+      <p>These nearby sensors have been observed but are not assigned to a plant.</p>
+      <div id="inbox-list" class="inbox-list"></div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form" class="dialog-card">
+      <div class="section-heading"><div><p class="eyebrow">NEW SENSOR</p><h2>Enroll sensor</h2></div><button id="close-settings" type="button" aria-label="Close">×</button></div>
+      <p>Assign this observed sensor to a plant. Device settings are sent when the sensor next reports.</p>
+      <label>Plant name<input id="setting-name" maxlength="80" required></label>
+      <label>Room<input id="setting-room" maxlength="80"></label>
+      <label>Plant profile<select id="setting-profile" required></select></label>
+      <label>Reporting interval
+        <select id="setting-reporting-interval" required>
+          <option value="1">Every second</option>
+          <option value="3">Every 3 seconds</option>
+          <option value="5">Every 5 seconds</option>
+          <option value="10">Every 10 seconds</option>
+          <option value="30">Every 30 seconds</option>
+          <option value="60">Every minute</option>
+          <option value="300">Every 5 minutes</option>
+          <option value="900">Every 15 minutes</option>
+          <option value="1800" selected>Every 30 minutes</option>
+          <option value="3600">Every hour</option>
+          <option value="10800">Every 3 hours</option>
+          <option value="21600">Every 6 hours</option>
+          <option value="43200">Every 12 hours</option>
+          <option value="86400">Every 24 hours</option>
+        </select>
+      </label>
+      <div class="dialog-actions"><button type="submit">Enroll sensor</button></div>
+      <output id="settings-message"></output>
+    </form>
+  </dialog>
+
   <main>
-    <section class="plant-journey" aria-labelledby="plant-journey-title">
+    <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
+      <div class="section-heading"><div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Sensor fleet</h1><p>Choose a sensor to open its monitoring details.</p></div></div>
+      <div id="fleet-grid" class="fleet-grid"></div>
+    </section>
+    <section class="plant-journey" data-page="detail" aria-labelledby="plant-journey-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
         <span id="journey-started">Waiting for sensor history</span>
@@ -53,7 +103,7 @@
       </div>
     </section>
 
-    <section class="primary-grid" aria-label="Primary plant measurements">
+    <section class="primary-grid" data-page="detail" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
@@ -98,7 +148,33 @@
       </article>
     </section>
 
-    <section id="drainage-assessment" class="drainage-assessment" data-level="learning" aria-live="polite">
+    <section class="climate-history" data-page="detail" aria-labelledby="climate-history-title" hidden>
+      <div class="section-heading climate-history-heading">
+        <div><p class="eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
+        <div class="history-range-selector" role="group" aria-label="Chart date range">
+          <button type="button" data-history-range="live" aria-pressed="true">Live</button>
+          <button type="button" data-history-range="24h" aria-pressed="false">24h</button>
+          <button type="button" data-history-range="2d" aria-pressed="false">2 days</button>
+          <button type="button" data-history-range="7d" aria-pressed="false">7 days</button>
+          <button type="button" data-history-range="30d" aria-pressed="false">30 days</button>
+        </div>
+      </div>
+      <p id="climate-history-status" class="climate-history-status" aria-live="polite">Waiting for air readings</p>
+      <div class="climate-chart-grid">
+        <article class="climate-chart-card">
+          <header><span>Temperature</span><strong><b id="history-temperature">--</b><small>°C</small></strong></header>
+          <svg id="temperature-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Air temperature history" hidden></svg>
+          <p id="temperature-history-empty" class="history-chart-empty">No temperature readings in this range.</p>
+        </article>
+        <article class="climate-chart-card">
+          <header><span>Relative humidity</span><strong><b id="history-humidity">--</b><small>% RH</small></strong></header>
+          <svg id="humidity-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Relative humidity history" hidden></svg>
+          <p id="humidity-history-empty" class="history-chart-empty">No humidity readings in this range.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="drainage-assessment" class="drainage-assessment" data-page="detail" data-level="learning" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">POT RESPONSE</p>
         <strong id="drainage-status">Learning</strong>
@@ -107,7 +183,7 @@
       <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
     </section>
 
-    <section class="chemistry" aria-label="Soil chemistry measurements">
+    <section class="chemistry" data-page="detail" aria-label="Soil chemistry measurements" hidden>
       <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
       <div class="chemistry-grid">
         <article class="chemistry-gauge" data-metric="soil_ph">
@@ -138,7 +214,7 @@
       <p id="chemistry-guidance" class="chemistry-guidance"></p>
     </section>
 
-    <section class="watering-calendar" aria-labelledby="watering-calendar-title">
+    <section class="watering-calendar" data-page="detail" aria-labelledby="watering-calendar-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WATERING RHYTHM</p><h2 id="watering-calendar-title">Current year</h2></div>
         <span id="watering-calendar-summary">Waiting for sensor history</span>
@@ -154,10 +230,72 @@
       <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span></div>
     </section>
 
-    <section class="care-log" aria-label="Plant care history">
+    <section class="care-log" data-page="detail" aria-label="Plant care history" hidden>
       <div class="section-heading"><div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div><span>Detected automatically</span></div>
       <div id="care-log-list" class="care-log-list">
         <p class="care-log-empty">No care events detected yet.</p>
+      </div>
+    </section>
+
+    <section class="raw-report-log" data-page="detail" aria-labelledby="raw-report-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
+        <span>Latest 50 · newest first</span>
+      </div>
+      <div class="raw-report-scroll" tabindex="0" aria-label="Raw sensor report log">
+        <table>
+          <thead><tr><th>Received</th><th>Packet</th><th>Status</th><th>RSSI</th><th>Source</th><th>Service data</th></tr></thead>
+          <tbody id="raw-report-list">
+            <tr><td class="raw-report-empty" colspan="6">No raw BLE reports stored yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sensor-settings" data-page="detail" aria-labelledby="sensor-settings-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Configuration</h2></div>
+        <code id="settings-sensor-id"></code>
+      </div>
+      <form id="sensor-settings-form" class="sensor-settings-form">
+        <label>Plant name<input id="detail-setting-name" maxlength="80" required></label>
+        <label>Room<input id="detail-setting-room" maxlength="80"></label>
+        <label>Plant profile<select id="detail-setting-profile" required></select></label>
+        <label>Hub reporting interval
+          <select id="detail-setting-reporting-interval" required>
+            <option value="1">Every second</option>
+            <option value="3">Every 3 seconds</option>
+            <option value="5">Every 5 seconds</option>
+            <option value="10">Every 10 seconds</option>
+            <option value="30">Every 30 seconds</option>
+            <option value="60">Every minute</option>
+            <option value="300">Every 5 minutes</option>
+            <option value="900">Every 15 minutes</option>
+            <option value="1800">Every 30 minutes</option>
+            <option value="3600">Every hour</option>
+            <option value="10800">Every 3 hours</option>
+            <option value="21600">Every 6 hours</option>
+            <option value="43200">Every 12 hours</option>
+            <option value="86400">Every 24 hours</option>
+          </select>
+          <small>The interval requested by the hub. Changes are sent when the sensor next reports.</small>
+        </label>
+        <label>Sensor reporting interval
+          <input id="sensor-reporting-interval" value="Not synced yet" readonly aria-readonly="true">
+          <small>Read-only interval confirmed by the sensor after configuration is written and read back.</small>
+        </label>
+        <p id="device-config-status" class="configuration-delivery" aria-live="polite"></p>
+        <div class="settings-actions"><button type="submit">Save configuration</button></div>
+        <output id="sensor-settings-message"></output>
+      </form>
+      <div id="replacement-control" class="replacement-control">
+        <label>Replacement sensor<select id="replacement-sensor"></select></label>
+        <label class="checkbox"><input id="merge-history" type="checkbox"> Merge old history into replacement</label>
+        <button id="replace-sensor" type="button">Replace sensor</button>
+      </div>
+      <div class="destructive-actions">
+        <button id="archive-sensor" class="danger" type="button">Archive sensor</button>
+        <button id="delete-sensor" class="danger" type="button">Delete sensor and history</button>
       </div>
     </section>
   </main>

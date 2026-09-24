@@ -49,15 +49,35 @@ class CareEventDetector:
         self._watering_rearm_below: Dict[str, float] = {}
         self._dry_alerted: Set[str] = set()
 
+    def forget_sensor(self, sensor_id: str) -> None:
+        self._previous.pop(sensor_id, None)
+        self._drainage_observations.pop(sensor_id, None)
+        self._watering_rearm_below.pop(sensor_id, None)
+        self._dry_alerted.discard(sensor_id)
+        self._last_event_at = {
+            key: detected_at
+            for key, detected_at in self._last_event_at.items()
+            if key[0] != sensor_id
+        }
+
     def detect(
         self,
         reading: SensorReading,
         detected_at: datetime,
         refill_below: float = 35.0,
     ) -> List[CareEvent]:
+        if reading.moisture_percent is None:
+            return []
         previous = self._previous.get(reading.sensor_id)
         self._previous[reading.sensor_id] = reading
-        if previous is None or reading.sequence <= previous.sequence:
+        if (
+            previous is None
+            or previous.moisture_percent is None
+            or (
+                reading.contract_version != 2
+                and reading.sequence <= previous.sequence
+            )
+        ):
             return []
 
         events: List[CareEvent] = []
@@ -117,7 +137,12 @@ class CareEventDetector:
             events.append(drainage_event)
 
         nutrient_changes = self._nutrient_changes(previous, reading)
-        conductivity_rise = reading.conductivity_us_cm - previous.conductivity_us_cm
+        conductivity_rise = (
+            reading.conductivity_us_cm - previous.conductivity_us_cm
+            if reading.conductivity_us_cm is not None
+            and previous.conductivity_us_cm is not None
+            else 0
+        )
         if (
             conductivity_rise >= FERTILIZER_EC_RISE_US_CM
             and nutrient_changes
