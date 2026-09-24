@@ -12,6 +12,18 @@ things must happen, with no terminal, no reflash, and no app:
 1. The sensor registers with exactly one hub.
 2. The sensor receives the household Wi-Fi credentials.
 
+## Interface
+
+A clickable mockup of the screens this proposal describes:
+<https://claude.ai/artifact/XLLYZUCgwiATupGBLzLCwr>. It covers a Settings page with
+Sensors and Wi-Fi tabs, and the four-step Add a sensor flow. The link is private to
+the repository owner and will not open for anyone else.
+
+The screens establish three things the text alone does not: the household network is
+entered once and sensors carry only a switch, the pairing step is where the
+platform's own dialog appears, and onboarding ends with a measured reading rather
+than a promise.
+
 ## States
 
 The sensor has two states. The state is **derived from whether a BLE bond exists**,
