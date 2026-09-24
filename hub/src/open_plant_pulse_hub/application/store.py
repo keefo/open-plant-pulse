@@ -24,6 +24,17 @@ MIN_REPORTING_INTERVAL_MINUTES = 5
 MAX_REPORTING_INTERVAL_MINUTES = 1440
 MIN_REPORTING_INTERVAL_SECONDS = 1
 MAX_REPORTING_INTERVAL_SECONDS = 86400
+ONBOARDING_STATES = ("onboarding", "onboarded")
+WIFI_STATES = ("off", "pending", "joined", "failed")
+# Every reason a sensor can give for failing to join, so the browser never has to
+# show "it did not work" without saying what went wrong.
+WIFI_FAILURES = (
+    "wrong_password",
+    "network_not_found",
+    "association_timeout",
+    "no_address",
+    "unsupported_band",
+)
 
 
 class ReadingStore:
@@ -270,7 +281,8 @@ class ReadingStore:
                        expected_interval_seconds, replaced_by_sensor_id,
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
-                       sensor_reporting_interval_seconds
+                       sensor_reporting_interval_seconds, onboarding_state,
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -294,7 +306,8 @@ class ReadingStore:
                        expected_interval_seconds, replaced_by_sensor_id,
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
-                       sensor_reporting_interval_seconds
+                       sensor_reporting_interval_seconds, onboarding_state,
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -321,6 +334,141 @@ class ReadingStore:
                 (reporting_interval_minutes,),
             )
         return self.hub_settings()
+
+    def hub_wifi_settings(self) -> Dict[str, Any]:
+        """Return the household network name, without any password."""
+        with self._condition:
+            row = self._database.execute(
+                "SELECT wifi_ssid FROM hub_settings WHERE singleton_id = 1"
+            ).fetchone()
+        assert row is not None
+        return {"wifi_ssid": row[0]}
+
+    def set_hub_wifi_network(self, wifi_ssid: Optional[str]) -> Dict[str, Any]:
+        """Store the household network name. An empty name forgets the network.
+
+        The password is deliberately absent: it belongs in the operating system
+        keychain, never in this database, which is backed up and exported.
+        """
+        if wifi_ssid is not None:
+            wifi_ssid = wifi_ssid.strip()
+            if not wifi_ssid:
+                wifi_ssid = None
+            else:
+                self._validate_device_text(wifi_ssid, "wifi_ssid", required=True)
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET wifi_ssid = ? WHERE singleton_id = 1",
+                (wifi_ssid,),
+            )
+            if wifi_ssid is None:
+                self._database.execute(
+                    """
+                    UPDATE sensors
+                    SET wifi_enabled = 0, wifi_state = 'off',
+                        wifi_failure = NULL, wifi_address = NULL
+                    """
+                )
+        return self.hub_wifi_settings()
+
+    def set_sensor_wifi_enabled(self, sensor_id: str, enabled: bool) -> Dict[str, Any]:
+        """Switch a sensor's web console on or off.
+
+        Switching it on asks the sensor to join the household network; the result
+        is not known until the sensor reports back, so the state becomes pending
+        rather than joined.
+        """
+        if not sensor_id:
+            raise ValueError("sensor_id is required")
+        with self._condition, self._database:
+            row = self._database.execute(
+                "SELECT enrollment_status FROM sensors WHERE sensor_id = ?",
+                (sensor_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("sensor_id has not been observed")
+            if row[0] != "enrolled":
+                raise ValueError("only an enrolled sensor can use the household network")
+            if enabled:
+                network = self._database.execute(
+                    "SELECT wifi_ssid FROM hub_settings WHERE singleton_id = 1"
+                ).fetchone()
+                if network is None or not network[0]:
+                    raise ValueError("no household network is configured")
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET wifi_enabled = ?,
+                    wifi_state = ?,
+                    wifi_failure = NULL,
+                    wifi_address = NULL
+                WHERE sensor_id = ?
+                """,
+                (1 if enabled else 0, "pending" if enabled else "off", sensor_id),
+            )
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
+
+    def record_sensor_wifi_result(
+        self,
+        sensor_id: str,
+        wifi_state: str,
+        wifi_failure: Optional[str] = None,
+        wifi_address: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record what a sensor reported back after trying to join."""
+        if wifi_state not in WIFI_STATES:
+            raise ValueError("invalid wifi_state")
+        if wifi_failure is not None and wifi_failure not in WIFI_FAILURES:
+            raise ValueError("invalid wifi_failure")
+        if wifi_state == "failed" and wifi_failure is None:
+            raise ValueError("a failed join must say why")
+        if wifi_state != "failed" and wifi_failure is not None:
+            raise ValueError("only a failed join carries a reason")
+        if wifi_state != "joined" and wifi_address is not None:
+            raise ValueError("only a joined sensor has an address")
+        with self._condition, self._database:
+            updated = self._database.execute(
+                """
+                UPDATE sensors
+                SET wifi_state = ?, wifi_failure = ?, wifi_address = ?
+                WHERE sensor_id = ?
+                """,
+                (wifi_state, wifi_failure, wifi_address, sensor_id),
+            ).rowcount
+        if updated == 0:
+            raise ValueError("sensor_id has not been observed")
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
+
+    def set_sensor_onboarding_state(self, sensor_id: str, onboarding_state: str) -> Dict[str, Any]:
+        """Move a sensor between onboarding and onboarded.
+
+        Returning to onboarding is a reset: the bond is gone, so the household
+        network and everything derived from it goes with it.
+        """
+        if onboarding_state not in ONBOARDING_STATES:
+            raise ValueError("invalid onboarding_state")
+        with self._condition, self._database:
+            updated = self._database.execute(
+                """
+                UPDATE sensors
+                SET onboarding_state = ?,
+                    wifi_enabled = CASE ? WHEN 'onboarding' THEN 0 ELSE wifi_enabled END,
+                    wifi_state = CASE ? WHEN 'onboarding' THEN 'off' ELSE wifi_state END,
+                    wifi_failure = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_failure END,
+                    wifi_address = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_address END
+                WHERE sensor_id = ?
+                """,
+                (onboarding_state,) * 5 + (sensor_id,),
+            ).rowcount
+        if updated == 0:
+            raise ValueError("sensor_id has not been observed")
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
 
     def rename_sensor(self, sensor_id: str, display_name: str) -> Dict[str, Any]:
         display_name = display_name.strip()
@@ -456,6 +604,7 @@ class ReadingStore:
                 """
                 UPDATE sensors
                 SET enrollment_status = 'enrolled', archived = 0,
+                    onboarding_state = 'onboarded',
                     display_name = ?, room = ?, plant_id = ?, profile_id = ?,
                     moisture_low_percent = ?, conductivity_high_us_cm = ?,
                     expected_interval_seconds = ?, replaced_by_sensor_id = NULL,
@@ -602,6 +751,7 @@ class ReadingStore:
                         """
                         UPDATE sensors
                         SET enrollment_status = 'enrolled', archived = 0,
+                            onboarding_state = 'onboarded',
                             display_name = ?, room = ?, plant_id = ?, profile_id = ?,
                             moisture_low_percent = ?, conductivity_high_us_cm = ?,
                             expected_interval_seconds = ?, replaced_by_sensor_id = NULL,
@@ -1198,6 +1348,11 @@ class ReadingStore:
             "device_config_attempted_at": row[19],
             "device_config_error": row[20],
             "sensor_reporting_interval_seconds": row[21],
+            "onboarding_state": row[22],
+            "wifi_enabled": bool(row[23]),
+            "wifi_state": row[24],
+            "wifi_failure": row[25],
+            "wifi_address": row[26],
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:

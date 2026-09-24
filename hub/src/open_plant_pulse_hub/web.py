@@ -11,6 +11,9 @@ from open_plant_pulse_hub.domain.plant_profiles import public_plant_profiles
 
 
 STATIC_DIR = Path(__file__).with_name("static")
+# Top-level paths the browser application owns. Each one, and anything beneath it,
+# is served the same shell so a reload or a pasted link lands on the right view.
+APPLICATION_PAGES = ("/sensors", "/settings", "/onboarding")
 
 
 def create_server(
@@ -43,6 +46,8 @@ def create_server(
                 self._send_json(public_plant_profiles())
             elif path == "/api/settings":
                 self._send_json(store.hub_settings())
+            elif path == "/api/settings/wifi":
+                self._send_json(store.hub_wifi_settings())
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
             elif path.startswith("/api/sensors/"):
@@ -72,7 +77,9 @@ def create_server(
                 self._send_pot_response(request.query)
             elif path == "/api/plant-journey":
                 self._send_plant_journey(request.query)
-            elif path == "/" or path.startswith("/sensors/"):
+            elif path == "/" or any(
+                path == page or path.startswith(page + "/") for page in APPLICATION_PAGES
+            ):
                 self._send_file("index.html", "text/html; charset=utf-8")
             elif path == "/app.css":
                 self._send_file("app.css", "text/css; charset=utf-8")
@@ -84,7 +91,7 @@ def create_server(
         def do_PUT(self) -> None:
             path = urlparse(self.path).path
             if (
-                path not in ("/api/sensors/profile", "/api/settings")
+                path not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
                 and not path.startswith("/api/sensors/")
             ):
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -101,6 +108,11 @@ def create_server(
                     result = store.set_reporting_interval(
                         int(payload.get("reporting_interval_minutes", 0))
                     )
+                elif path == "/api/settings/wifi":
+                    wifi_ssid = payload.get("wifi_ssid")
+                    if wifi_ssid is not None and not isinstance(wifi_ssid, str):
+                        raise ValueError("wifi_ssid must be a string")
+                    result = store.set_hub_wifi_network(wifi_ssid)
                 elif path.endswith("/name"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/name")])
                     result = store.rename_sensor(sensor_id, str(payload.get("display_name", "")))
@@ -157,6 +169,26 @@ def create_server(
                         sensor_id,
                         str(payload.get("replacement_sensor_id", "")),
                         merge_history,
+                    )
+                elif path.startswith("/api/sensors/") and path.endswith("/wifi"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/wifi")])
+                    enabled = payload.get("enabled")
+                    if not isinstance(enabled, bool):
+                        raise ValueError("enabled must be a boolean")
+                    result = store.set_sensor_wifi_enabled(sensor_id, enabled)
+                elif path.startswith("/api/sensors/") and path.endswith("/wifi-result"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/wifi-result")])
+                    result = store.record_sensor_wifi_result(
+                        sensor_id,
+                        str(payload.get("wifi_state", "")),
+                        self._optional_str(payload.get("wifi_failure")),
+                        self._optional_str(payload.get("wifi_address")),
+                    )
+                elif path.startswith("/api/sensors/") and path.endswith("/onboarding"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/onboarding")])
+                    result = store.set_sensor_onboarding_state(
+                        sensor_id,
+                        str(payload.get("onboarding_state", "")),
                     )
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
@@ -228,6 +260,14 @@ def create_server(
         @staticmethod
         def _optional_int(value: Any) -> Optional[int]:
             return None if value in (None, "") else int(value)
+
+        @staticmethod
+        def _optional_str(value: Any) -> Optional[str]:
+            if value in (None, ""):
+                return None
+            if not isinstance(value, str):
+                raise ValueError("expected a string")
+            return value
 
         def _send_watering_calendar(self, query_string: str) -> None:
             try:
