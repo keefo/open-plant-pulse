@@ -89,20 +89,38 @@ starts unencrypted, the hub requests encryption from the stored key, and only th
 does the `_ENC` flag allow configuration access. That brief unencrypted window is
 exactly why the flag matters.
 
-**Advertisements are not covered.** BTHome telemetry is broadcast, not sent over a
-connection, so the LTK is irrelevant to it. Contract v2 keeps device-info byte
-`0x40`, unencrypted, and `protocol/README.md` already records that measurements,
-identifiers, and device presence are observable.
+**Advertisements are not covered by the LTK.** BTHome telemetry is broadcast, not
+sent over a connection, so link encryption is irrelevant to it. Contract v2 keeps
+device-info byte `0x40`, unencrypted, and `protocol/README.md` already records that
+measurements, identifiers, and device presence are observable.
 
-Encrypting telemetry needs a separate 16-byte BTHome bind key, which is a contract
-v3 decision. Onboarding is the natural moment to deliver one, so **the credential
-payload must leave room for a 16-byte key** to avoid a second migration later.
+They are covered instead by a BTHome bind key, and **that is on by default**.
 
-### Encrypted telemetry and the 24-byte budget
+### Encrypted telemetry, on by default
 
 Without a bind key, a neighbouring hub in range can read this sensor's
 measurements, and the sensor inbox means it can enrol them too. The pairing code
 stops a stranger *controlling* a sensor; only a bind key stops one *reading* it.
+Privacy that every household should have is not a setting, so there is no toggle:
+each sensor is given a 16-byte key during onboarding, over the bonded link, and
+every advertisement is encrypted from then on. This makes contract v3 the contract
+for onboarded sensors.
+
+Three consequences follow:
+
+- **Home Assistant needs the key.** Since encryption is not optional, the hub must
+  hand it over: each sensor's key is revealed and copied from that sensor's own
+  settings, to paste where Home Assistant asks for a BTHome bind key. A key the hub
+  cannot show is a sensor Home Assistant cannot read.
+- **The key is per sensor, not per household**, so one exposed key exposes one
+  plant's readings. The hub must store it durably, because it is needed to decode
+  every advertisement — unlike the Wi-Fi password, it cannot live only in the
+  keychain and be re-asked for. Storing it with the sensor record means database
+  backups contain keys, which the backup design must account for.
+- **The counter must be monotonic across deep sleep**, like the retained packet ID
+  already is, or the hub's replay protection rejects the sensor after every wake.
+
+### The 24-byte budget
 
 BTHome v2 encryption sets device-info byte `0x41` and adds a 4-byte counter and a
 4-byte MIC, so every advertisement grows by 8 bytes. The counter also gives replay
@@ -122,7 +140,8 @@ Measured against the current encoder (`bthome_payload.c:49-76`):
 Encryption therefore fits the sensor that exists and breaks when the RS-485 probe
 lands. **Drop the packet-id object when encrypted**: the counter already provides
 deduplication and replay protection, which frees exactly the 2 bytes that bring
-the soil payload to 24.
+the soil payload to 24. That leaves no headroom at all, so a soil sensor cannot
+also carry the button event; forced reports stay an air-only diagnostic.
 
 BLE 5 extended advertising would remove the limit, and it is **not viable**.
 BTHome tracks it as infeasible because `bleak` does not support it, and `bleak` is
@@ -175,6 +194,31 @@ Two consequences to design for:
 
 Wi-Fi remains optional throughout. A customer who skips it has a fully working
 sensor, because telemetry is BLE.
+
+### The first reading arrives during onboarding
+
+Onboarding must not end by telling a customer to wait for the next reporting
+interval. At a 30-minute interval that leaves them with a sensor they have no
+evidence works, and no way to tell a successful setup from a broken one.
+
+The last step of enrolment is therefore a **forced report**, requested by the hub
+over the link it is already connected on. The firmware mechanism exists:
+`opp_force_report_request()` emits a report immediately, carries the BTHome button
+event, and exposes a request/packet token the hub acknowledges after durable
+ingestion. It is only wired to the web console today, which a factory-fresh sensor
+cannot reach; onboarding needs the same request over the bonded connection.
+
+The budget is seconds, not minutes: an SHT45 acquisition, the bounded 3-second
+advertising window, and ingestion. **Target a first stored reading within 30
+seconds of the customer finishing the flow**, and show the measured values rather
+than a promise.
+
+The failure path matters as much. A forced report fails with `no valid sensor
+sample` when no sensor has produced a reading, which is a real state seen on the
+bench with an SHT45 that was not responding. Onboarding must take a fresh sample
+first, and if none is available, say the sensor is not reading its hardware rather
+than spinning. A customer who finishes onboarding and sees no reading should be
+told which of the two happened.
 
 ## Reset and transfer to a new hub
 
@@ -289,6 +333,10 @@ Host checks, build, flash, and device behaviour are separate claims.
 - [ ] The bond survives a power cycle and a deep-sleep wake.
 - [ ] The sensor joins Wi-Fi from hub-delivered credentials and survives a reset.
 - [ ] A wrong password is reported as a wrong password, not a timeout.
+- [ ] A first reading is stored within 30 seconds of finishing the flow, measured,
+      not assumed.
+- [ ] A sensor whose hardware is not reading says so at the end of onboarding
+      instead of waiting.
 - [ ] Turning the enable flag off stops the sensor's HTTP server and removes it
       from the network; turning it on restores both.
 - [ ] The household password is in the keychain and in no database row, backup, or

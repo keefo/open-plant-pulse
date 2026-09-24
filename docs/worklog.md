@@ -362,6 +362,22 @@
   payload fits at 17 bytes, but air plus the soil probe reaches 26. Dropping the
   packet-id object when encrypted frees exactly the 2 bytes needed, since the
   encryption counter already provides deduplication and replay protection.
+- Made encrypted telemetry the default rather than a setting, which makes contract
+  v3 the contract for onboarded sensors and removes the keys page from the
+  interface. Each sensor is given its own 16-byte key during onboarding. The hub
+  must therefore be able to reveal that key for Home Assistant, must store it
+  durably rather than in the keychain because every advertisement needs it, and the
+  sensor's counter must stay monotonic across deep sleep or replay protection
+  rejects it after every wake.
+- Removed the keys and pairing page. Its contents either duplicated the sensors tab,
+  belonged in the onboarding flow, or were per-sensor data; the Home Assistant key
+  now sits on the sensor it belongs to.
+- Required the first reading to arrive during onboarding rather than at the next
+  interval, targeting 30 seconds. The hub requests a forced report over the link it
+  is already connected on, reusing the existing `opp_force_report_request()` path,
+  which is wired only to the web console today. Recorded the failure case seen on
+  the bench: a forced report returns `no valid sensor sample` when the SHT45 is not
+  responding, so the flow must report that rather than wait.
 - Rejected BLE 5 extended advertising as the way out. BTHome records it as
   infeasible because `bleak` lacks support, and `bleak` is the library both this hub
   and Home Assistant depend on, so the sensor would transmit correctly and no
