@@ -446,8 +446,11 @@ class ReadingStore:
     def set_sensor_onboarding_state(self, sensor_id: str, onboarding_state: str) -> Dict[str, Any]:
         """Move a sensor between onboarding and onboarded.
 
-        Returning to onboarding is a reset: the bond is gone, so the household
-        network and everything derived from it goes with it.
+        Returning to onboarding is a reset. The bond is gone, so the sensor no
+        longer belongs to this hub: it leaves the enrolled fleet and reappears as
+        an unclaimed device, exactly as a factory-fresh sensor does. Its readings
+        are kept, so adding it again continues the same history rather than
+        starting a new one; deleting a sensor outright is a separate action.
         """
         if onboarding_state not in ONBOARDING_STATES:
             raise ValueError("invalid onboarding_state")
@@ -456,13 +459,15 @@ class ReadingStore:
                 """
                 UPDATE sensors
                 SET onboarding_state = ?,
+                    enrollment_status = CASE ?
+                        WHEN 'onboarding' THEN 'unclaimed' ELSE enrollment_status END,
                     wifi_enabled = CASE ? WHEN 'onboarding' THEN 0 ELSE wifi_enabled END,
                     wifi_state = CASE ? WHEN 'onboarding' THEN 'off' ELSE wifi_state END,
                     wifi_failure = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_failure END,
                     wifi_address = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_address END
                 WHERE sensor_id = ?
                 """,
-                (onboarding_state,) * 5 + (sensor_id,),
+                (onboarding_state,) * 6 + (sensor_id,),
             ).rowcount
         if updated == 0:
             raise ValueError("sensor_id has not been observed")

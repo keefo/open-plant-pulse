@@ -66,7 +66,7 @@ function renderSettingsSensors() {
     const name = document.createElement("strong");
     name.textContent = sensor.display_name || sensor.sensor_id;
     const state = document.createElement("small");
-    state.textContent = sensor.onboarding_state === "onboarded" ? "Paired" : "Onboarding";
+    state.textContent = sensor.onboarding_state === "onboarded" ? "Paired" : "Not paired";
     heading.append(name, state);
 
     const identity = document.createElement("code");
@@ -168,6 +168,15 @@ async function setSensorConsole(sensorId, enabled) {
 }
 
 async function forgetSensor(sensorId) {
+  const sensor = fleetSensors.find((candidate) => candidate.sensor_id === sensorId);
+  const name = (sensor && sensor.display_name) || sensorId;
+  const confirmed = window.confirm(
+    "Forget " +
+      name +
+      "?\n\nIt returns to the list of new sensors and has to be added again with " +
+      "the code on its label. Its readings are kept."
+  );
+  if (!confirmed) return;
   await fetch("/api/sensors/" + encodeURIComponent(sensorId) + "/onboarding", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

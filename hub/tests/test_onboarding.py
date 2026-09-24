@@ -51,6 +51,28 @@ class OnboardingStateTests(unittest.TestCase):
         self.assertIsNone(sensor["wifi_address"])
         self.assertIsNone(sensor["wifi_failure"])
 
+    def test_forgetting_returns_the_sensor_to_the_inbox(self):
+        enrolled_sensor(self.store, self.sensor_id)
+        self.assertEqual(self.store.sensor(self.sensor_id)["enrollment_status"], "enrolled")
+
+        sensor = self.store.set_sensor_onboarding_state(self.sensor_id, "onboarding")
+
+        self.assertEqual(sensor["enrollment_status"], "unclaimed")
+        self.assertEqual(sensor["onboarding_state"], "onboarding")
+        enrolled_ids = [item["sensor_id"] for item in self.store.sensors("enrolled")]
+        unclaimed_ids = [item["sensor_id"] for item in self.store.sensors("unclaimed")]
+        self.assertNotIn(self.sensor_id, enrolled_ids)
+        self.assertIn(self.sensor_id, unclaimed_ids)
+
+    def test_forgetting_keeps_the_readings(self):
+        enrolled_sensor(self.store, self.sensor_id)
+        before = self.store.sensor(self.sensor_id)["reading_count"]
+        self.assertGreater(before, 0)
+
+        self.store.set_sensor_onboarding_state(self.sensor_id, "onboarding")
+
+        self.assertEqual(self.store.sensor(self.sensor_id)["reading_count"], before)
+
     def test_rejects_an_unknown_onboarding_state(self):
         with self.assertRaises(ValueError):
             self.store.set_sensor_onboarding_state(self.sensor_id, "paired")
@@ -335,6 +357,14 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b'data-page="settings"', page)
         self.assertIn(b'data-page="onboarding"', page)
         self.assertIn(b'src="/onboarding.js"', page)
+
+    def test_a_forgotten_sensor_is_not_called_onboarding(self):
+        script = self.get("/onboarding.js")
+        self.assertIn(b'"Not paired"', script)
+        self.assertNotIn(b'"Onboarding"', script)
+
+    def test_forgetting_a_sensor_asks_first(self):
+        self.assertIn(b"window.confirm", self.get("/onboarding.js"))
 
     def test_the_navigation_calls_the_fleet_plants(self):
         self.assertIn(b">Plants</a>", self.get("/"))
