@@ -329,6 +329,19 @@
   characteristic is declared `F_READ | F_WRITE` with no `ble_hs_cfg.sm_*` settings
   anywhere, so the link has no pairing, bonding, or encryption and cannot carry a
   Wi-Fi password until it does.
-- Recorded that no GPIO button is read in firmware. The BTHome button event is
-  produced only by a web-console forced report, which a factory-fresh sensor
-  cannot reach, so the proposed ownership check depends on new firmware work.
+- Settled the design on two states derived from bond presence, an LE Secure
+  Connections handshake whose LTK is derived rather than transmitted, and a
+  six-digit factory passkey that provides both man-in-the-middle protection and
+  proof of physical possession. The passkey replaces an earlier button-based
+  ownership check; no GPIO button is read in firmware, and the BTHome button event
+  is produced only by a web-console forced report that a factory-fresh sensor
+  cannot reach.
+- Recorded the build settings the design depends on: `CONFIG_BT_NIMBLE_NVS_PERSIST`
+  is not set, so bonds would live in RAM and be lost on every deep-sleep wake, and
+  `CONFIG_BT_NIMBLE_MAX_BONDS` must fall from 3 to 1 for the one-hub rule.
+- Recorded that link encryption covers connections only. BTHome advertisements stay
+  unencrypted under contract v2, so telemetry privacy needs a separate 16-byte bind
+  key; the credential payload must leave room for one to avoid a second migration.
+- Chose power-cycle counting as the physical reset, filtered by `esp_reset_reason()`
+  so deep-sleep wakes do not advance it. The RESET button cannot erase anything by
+  itself, and GPIO9 is a strapping pin the enclosure does not expose.
