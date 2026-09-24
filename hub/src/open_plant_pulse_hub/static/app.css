@@ -296,3 +296,59 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .settings-actions, .sensor-settings-form output { grid-column: auto; }
   .replacement-control { align-items: stretch; flex-direction: column; }
 }
+
+/* Settings and the guided add-a-sensor flow */
+.settings-page, .onboarding-page { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
+.settings-page h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
+.primary-action { padding: 11px 18px; border: 1px solid var(--leaf); border-radius: 5px; color: white; background: var(--leaf); text-decoration: none; font-weight: 700; white-space: nowrap; }
+.primary-action:hover { background: #125638; }
+.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; gap: 6px; border-bottom: 1px solid var(--line); }
+.settings-tab { padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; }
+.settings-tab:hover { background: #e5f1e8; }
+.settings-tab.active { color: white; background: var(--leaf); }
+.settings-panel-group { display: grid; gap: 14px; }
+.settings-sensor-list { display: grid; gap: 12px; }
+.settings-sensor { padding: 19px; display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.settings-sensor-heading { display: flex; align-items: center; gap: 10px; }
+.settings-sensor-heading strong { font-size: 20px; }
+.settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
+.settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.settings-sensor .danger { width: fit-content; }
+.settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
+.usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
+.onboarding-card { max-width: 820px; margin-inline: auto; padding: 26px 30px; display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.onboarding-header { display: flex; align-items: baseline; gap: 14px; }
+.onboarding-header h1 { margin: 0; flex: 1; font: 500 30px Georgia, "Times New Roman", serif; }
+.onboarding-header span { color: var(--muted); font-size: 13px; }
+.onboarding-progress { display: flex; gap: 6px; }
+.progress-bar { height: 4px; flex: 1; border-radius: 2px; background: #e3e9e1; }
+.progress-bar.done { background: var(--leaf); }
+.onboarding-step { display: grid; gap: 12px; }
+.onboarding-step h2 { margin: 0; font: 500 21px Georgia, "Times New Roman", serif; }
+.onboarding-step p { margin: 0; color: var(--muted); line-height: 1.55; }
+.onboarding-step input, .onboarding-step select { padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.onboarding-step label:not(.checkbox) { font-weight: 700; }
+.onboarding-candidates { display: grid; gap: 10px; }
+.onboarding-candidate { padding: 18px 20px; display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: white; text-align: left; cursor: pointer; }
+.onboarding-candidate:hover { border-color: var(--leaf); }
+.onboarding-candidate.selected { border: 2px solid var(--leaf); background: #f6faf6; }
+.onboarding-candidate strong { font-size: 17px; }
+.onboarding-candidate code, .onboarding-candidate span { color: var(--muted); font-size: 12px; }
+.onboarding-notice { padding: 16px 19px; display: grid; gap: 8px; border: 1px solid #c9d6e2; border-radius: 8px; background: #f5f9fc; }
+.onboarding-notice p { margin: 0; color: #4d5f6b; }
+.pair-state { display: flex; align-items: center; gap: 10px; }
+.onboarding-summary { display: grid; gap: 10px; }
+.onboarding-summary-row { padding: 14px 19px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.onboarding-summary-row small { min-width: 74px; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; text-align: center; }
+.onboarding-summary-row span { flex: 1; }
+.onboarding-summary-row code { color: var(--muted); font-size: 12px; }
+.onboarding-footer { padding-top: 18px; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line); }
+.onboarding-footer p { margin: 0; flex: 1; color: var(--muted); font-size: 13px; }
+.onboarding-footer .primary { color: white; background: var(--leaf); border-color: var(--leaf); font-weight: 700; }
+.onboarding-footer .primary:disabled { color: #9aa69d; background: #f4f7f1; border-color: var(--line); cursor: not-allowed; }
+
+@media (max-width: 720px) {
+  .settings-page, .onboarding-page { padding: 20px; }
+  .onboarding-card { padding: 20px; }
+  .onboarding-footer { flex-wrap: wrap; }
+}

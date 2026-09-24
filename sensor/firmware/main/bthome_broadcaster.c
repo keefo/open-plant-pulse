@@ -5,11 +5,14 @@
 #include "esp_log.h"
 #include "device_config_protocol.h"
 #include "device_config_store.h"
+#include "device_identity.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "force_report.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+#include "services/gap/ble_svc_gap.h"
+#include "store/config/ble_store_config.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 
@@ -96,13 +99,34 @@ static const struct ble_gatt_svc_def device_config_services[] = {
             {
                 .uuid = &device_config_characteristic_uuid.u,
                 .access_cb = device_config_access,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .flags = BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_READ |
+                         BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_WRITE,
             },
             {0},
         },
     },
     {0},
 };
+
+/* One sensor belongs to one hub. A bond already present means this sensor has an
+ * owner, so a second central is refused rather than quietly replacing it. */
+static bool has_bond(void)
+{
+    int count = 0;
+    if (ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &count) != 0) {
+        return false;
+    }
+    return count > 0;
+}
+
+static bool peer_is_bonded(uint16_t conn_handle)
+{
+    struct ble_gap_conn_desc description;
+    if (ble_gap_conn_find(conn_handle, &description) != 0) {
+        return false;
+    }
+    return description.sec_state.bonded;
+}
 
 static int gap_event(struct ble_gap_event *event, void *context)
 {
@@ -119,6 +143,35 @@ static int gap_event(struct ble_gap_event *event, void *context)
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
         xSemaphoreGive(advertisement_done);
+    } else if (event->type == BLE_GAP_EVENT_PASSKEY_ACTION) {
+        if (event->passkey.params.action != BLE_SM_IOACT_DISP) {
+            return BLE_SM_ERR_AUTHREQ;
+        }
+        if (has_bond() && !peer_is_bonded(event->passkey.conn_handle)) {
+            ESP_LOGW(TAG, "Refused pairing: this sensor already belongs to a hub");
+            ble_gap_terminate(event->passkey.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            return BLE_SM_ERR_AUTHREQ;
+        }
+        struct ble_sm_io io = {
+            .action = BLE_SM_IOACT_DISP,
+            .passkey = opp_device_identity_passkey(),
+        };
+        ESP_LOGI(TAG, "Pairing requested; expecting the code printed on the label");
+        return ble_sm_inject_io(event->passkey.conn_handle, &io);
+    } else if (event->type == BLE_GAP_EVENT_REPEAT_PAIRING) {
+        /* Re-pairing from the bonded hub is allowed; anything else is not. */
+        struct ble_gap_conn_desc description;
+        if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &description) != 0) {
+            return BLE_GAP_REPEAT_PAIRING_IGNORE;
+        }
+        ble_store_util_delete_peer(&description.peer_id_addr);
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+    } else if (event->type == BLE_GAP_EVENT_ENC_CHANGE) {
+        const bool encrypted = peer_is_bonded(event->enc_change.conn_handle);
+        ESP_LOGI(TAG, "Link encryption %s", encrypted ? "established" : "not established");
+        if (encrypted) {
+            opp_device_identity_set_onboarded(true);
+        }
     }
     return 0;
 }
@@ -224,6 +277,18 @@ esp_err_t opp_bthome_broadcast(const char *local_name,
     if (result == ESP_OK) {
         ble_hs_cfg.reset_cb = on_reset;
         ble_hs_cfg.sync_cb = on_sync;
+        /* LE Secure Connections with a passkey. Both sides derive the long term
+         * key by ECDH and it is never transmitted; the passkey defends the
+         * exchange against an active man in the middle, which Just Works cannot.
+         * The sensor has no display, so it "displays" a code that is printed on
+         * its label instead. */
+        ble_hs_cfg.sm_sc = 1;
+        ble_hs_cfg.sm_bonding = 1;
+        ble_hs_cfg.sm_mitm = 1;
+        ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
+        ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
         nimble_port_freertos_init(host_task);
         if (xSemaphoreTake(
                 advertisement_done,

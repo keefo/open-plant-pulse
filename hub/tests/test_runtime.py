@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION
 from open_plant_pulse_hub.ingestion import decode_simulation_datagram
 from open_plant_pulse_hub.ingestion.udp import SimulationUdpReceiver
 from open_plant_pulse_hub.web import create_server, server_address
@@ -237,7 +238,10 @@ class ReadingPersistenceTests(unittest.TestCase):
 
             with sqlite3.connect(database_path) as database:
                 self.assertEqual(database.execute("SELECT COUNT(*) FROM sensor_readings").fetchone()[0], 3)
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 10)
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
                 self.assertEqual(database.execute("PRAGMA journal_mode").fetchone()[0], "wal")
 
             reopened = ReadingStore(history_size=2, database_path=database_path)
@@ -452,7 +456,10 @@ class WebApiTests(unittest.TestCase):
 
             self.assertEqual(payload["status"], "ok")
             self.assertTrue(payload["started_at"].endswith("Z"))
-            self.assertEqual(payload["database"], {"status": "ok", "schema_version": 10})
+            self.assertEqual(
+                payload["database"],
+                {"status": "ok", "schema_version": DATABASE_SCHEMA_VERSION},
+            )
             self.assertEqual(payload["scanner"]["status"], "unavailable")
             self.assertIsNone(payload["scanner"]["last_receive_at"])
         finally:

@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
-from open_plant_pulse_hub.application.migrations import MIGRATIONS
+from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION, MIGRATIONS
 from open_plant_pulse_hub.application.store import RECEIVE_DIAGNOSTIC_LIMIT
 from open_plant_pulse_hub.ingestion.advertisement import Advertisement
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
@@ -171,7 +171,10 @@ class MigrationTests(unittest.TestCase):
             store = ReadingStore(database_path=database_path)
             store.close()
             with sqlite3.connect(database_path) as database:
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 10)
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
                 self.assertEqual(database.execute("SELECT COUNT(*) FROM sensors").fetchone()[0], 1)
                 self.assertEqual(
                     database.execute("SELECT COUNT(*) FROM sensor_readings").fetchone()[0],
@@ -295,7 +298,10 @@ class MigrationTests(unittest.TestCase):
             store.close()
 
             with sqlite3.connect(database_path) as database:
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 10)
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
                 self.assertEqual(
                     database.execute("SELECT sensor_id FROM sensors ORDER BY sensor_id").fetchall(),
                     [("sensor-aabbccddeeff",), ("simulated-plant-01",)],

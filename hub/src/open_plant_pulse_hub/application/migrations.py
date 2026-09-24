@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 10
+DATABASE_SCHEMA_VERSION = 11
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -309,6 +309,21 @@ MIGRATIONS: Dict[int, str] = {
     """,
     10: """
         ALTER TABLE advertisements ADD COLUMN service_data BLOB;
+    """,
+    11: """
+        ALTER TABLE sensors ADD COLUMN onboarding_state TEXT NOT NULL DEFAULT 'onboarding'
+            CHECK (onboarding_state IN ('onboarding', 'onboarded'));
+        ALTER TABLE sensors ADD COLUMN wifi_enabled INTEGER NOT NULL DEFAULT 0
+            CHECK (wifi_enabled IN (0, 1));
+        ALTER TABLE sensors ADD COLUMN wifi_state TEXT NOT NULL DEFAULT 'off'
+            CHECK (wifi_state IN ('off', 'pending', 'joined', 'failed'));
+        ALTER TABLE sensors ADD COLUMN wifi_failure TEXT
+            CHECK (wifi_failure IS NULL OR wifi_failure IN (
+                'wrong_password', 'network_not_found', 'association_timeout',
+                'no_address', 'unsupported_band'));
+        ALTER TABLE sensors ADD COLUMN wifi_address TEXT;
+        UPDATE sensors SET onboarding_state = 'onboarded' WHERE enrollment_status != 'unclaimed';
+        ALTER TABLE hub_settings ADD COLUMN wifi_ssid TEXT;
     """,
 }
 

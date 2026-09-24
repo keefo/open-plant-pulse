@@ -304,3 +304,159 @@
   `2026-09-15T02:10:44.026289Z`, and firmware recorded the matching acknowledgment
   before report completion. Headless Chrome rendered `Request 1 · packet 6 · report
   stored and Hub acknowledged` from the board's Maintenance page.
+
+## 2026-09-23
+
+### Repository history and hub Wi-Fi onboarding design
+
+- Committed the previously uncommitted body of work in four logical commits:
+  the BTHome contract-v2 and connected-BLE protocol definitions, sensor firmware
+  0.2.0 through 0.5.1, hub BLE ingestion with sensor management, and the matching
+  documentation. All 67 canonical host checks passed before committing.
+- Reviewed the existing Wi-Fi path from a customer's perspective. Credentials are
+  compile-time `OPP_WIFI_SSID`/`OPP_WIFI_PASSWORD` constants baked into the image;
+  no provisioning mechanism of any kind exists, and none is needed on the sensor
+  because production telemetry is BLE-only.
+- Recorded review findings: changing networks requires a rebuild and reflash, the
+  password sits in unencrypted flash, the disconnect handler reconnects immediately
+  without backoff and never logs the reason code, the auth threshold silently
+  rejects open networks, and no customer-facing setup document exists.
+- Added `docs/proposals/sensor-onboarding.md` covering both out-of-box goals for a
+  new sensor: registering with the hub and receiving Wi-Fi credentials. The hub is
+  the onboarding interface and the sensor raises no access point, because the
+  connectable BLE path already exists, needs no router, and costs no flash.
+- Recorded the prerequisite found while designing it: the configuration
+  characteristic is declared `F_READ | F_WRITE` with no `ble_hs_cfg.sm_*` settings
+  anywhere, so the link has no pairing, bonding, or encryption and cannot carry a
+  Wi-Fi password until it does.
+- Settled the design on two states derived from bond presence, an LE Secure
+  Connections handshake whose LTK is derived rather than transmitted, and a
+  six-digit factory passkey that provides both man-in-the-middle protection and
+  proof of physical possession. The passkey replaces an earlier button-based
+  ownership check; no GPIO button is read in firmware, and the BTHome button event
+  is produced only by a web-console forced report that a factory-fresh sensor
+  cannot reach.
+- Recorded the build settings the design depends on: `CONFIG_BT_NIMBLE_NVS_PERSIST`
+  is not set, so bonds would live in RAM and be lost on every deep-sleep wake, and
+  `CONFIG_BT_NIMBLE_MAX_BONDS` must fall from 3 to 1 for the one-hub rule.
+- Recorded that link encryption covers connections only. BTHome advertisements stay
+  unencrypted under contract v2, so telemetry privacy needs a separate 16-byte bind
+  key; the credential payload must leave room for one to avoid a second migration.
+- Reordered the delivery plan to be interface-first: a dedicated hub management
+  page and a separate guided onboarding flow, both driven by a simulated sensor
+  with no firmware or hardware, produce the state and field contract that the
+  later firmware phases implement.
+- Recorded a platform constraint found while planning that work: `bleak` cannot
+  initiate pairing on macOS, where CoreBluetooth raises `NotImplementedError` and
+  the operating system presents its own passkey dialog. The onboarding flow cannot
+  own a passkey field there, and macOS and Linux need separate validation.
+- Moved Wi-Fi credentials to hub level: one household network entered once on the
+  hub settings page, kept in the operating system keychain rather than the readings
+  database, with each sensor carrying only an enable flag. Turning that flag off
+  stops the sensor's HTTP server and leaves the network, which makes it the control
+  for the product's only unauthenticated network surface; it defaults to off. This
+  makes Wi-Fi a runtime rather than compile-time decision, and disables SNTP
+  synchronisation along with it.
+- Measured the advertisement budget for encrypted telemetry against the current
+  encoder. Encryption adds 8 bytes into a 24-byte allowance: today's air-only
+  payload fits at 17 bytes, but air plus the soil probe reaches 26. Dropping the
+  packet-id object when encrypted frees exactly the 2 bytes needed, since the
+  encryption counter already provides deduplication and replay protection.
+- Settled that there is no Wi-Fi test action. A WPA2 passphrase cannot be checked
+  offline, only the four-way handshake proves it, and the hub cannot perform one
+  without dropping its own connection; the development hub is on Ethernet with its
+  Wi-Fi interface unassociated, so it has no route to try at all. Saving already is
+  the test: every sensor whose flag is on tries to join and reports a classified
+  result in seconds through the forced-report path. Where the operating system holds
+  the password, the settings page offers to fill it in from the keychain or from
+  NetworkManager, so it need not be retyped.
+- Renamed the primary navigation entry from Fleet to Plants.
+- Resequenced the delivery plan around the hardware rather than around features.
+  Phases 1 to 5 are written, built, and host-tested with no board and no person;
+  phase 6 groups everything that cannot be exercised otherwise, because the macOS
+  pairing dialog takes a human, a flash may need the BOOT button, and the
+  power-cycle reset ignores `ESP_RST_SW` by design so a software restart cannot
+  stand in for it. Nothing in phases 2 to 5 may be called working until phase 6
+  says so. The bench sensor's unresponsive SHT45 is a precondition for that session,
+  since the first-reading target cannot be measured without a valid sample.
+- Made encrypted telemetry the default rather than a setting, which makes contract
+  v3 the contract for onboarded sensors and removes the keys page from the
+  interface. Each sensor is given its own 16-byte key during onboarding. The hub
+  must therefore be able to reveal that key for Home Assistant, must store it
+  durably rather than in the keychain because every advertisement needs it, and the
+  sensor's counter must stay monotonic across deep sleep or replay protection
+  rejects it after every wake.
+- Removed the keys and pairing page. Its contents either duplicated the sensors tab,
+  belonged in the onboarding flow, or were per-sensor data; the Home Assistant key
+  now sits on the sensor it belongs to.
+- Required the first reading to arrive during onboarding rather than at the next
+  interval, targeting 30 seconds. The hub requests a forced report over the link it
+  is already connected on, reusing the existing `opp_force_report_request()` path,
+  which is wired only to the web console today. Recorded the failure case seen on
+  the bench: a forced report returns `no valid sensor sample` when the SHT45 is not
+  responding, so the flow must report that rather than wait.
+- Rejected BLE 5 extended advertising as the way out. BTHome records it as
+  infeasible because `bleak` lacks support, and `bleak` is the library both this hub
+  and Home Assistant depend on, so the sensor would transmit correctly and no
+  receiver would hear it.
+- Chose power-cycle counting as the physical reset, filtered by `esp_reset_reason()`
+  so deep-sleep wakes do not advance it. The RESET button cannot erase anything by
+  itself, and GPIO9 is a strapping pin the enclosure does not expose.
+
+## 2026-09-24
+
+### Onboarding phase 1: the hub interface
+
+- Added schema 11: `onboarding_state`, `wifi_enabled`, `wifi_state`, `wifi_failure`,
+  and `wifi_address` per sensor, plus one household `wifi_ssid` on the hub. The
+  network name is stored without a password, since the database is backed up and
+  exported.
+- Added store methods for the household network, the per-sensor console switch, the
+  reported join result, and the onboarding state. Forgetting the network switches
+  every console off; returning a sensor to onboarding clears everything derived from
+  its bond. The five join failure reasons are enumerated and enforced, so the browser
+  can never be handed a failure it cannot explain.
+- Added a Settings page separate from the dashboard, with Sensors and Wi-Fi tabs, and
+  a four-step add-a-sensor flow, in its own script. Extended the router from two
+  hard-coded pages to a list, and renamed the fleet navigation entry to Plants.
+- Added a throwaway preview server so the journey can be walked by a person.
+- All 99 canonical host checks pass. Verified in headless Chrome that the settings
+  page renders a paired sensor with its address, the Wi-Fi tab loads the saved
+  network and hides the sensors panel, and the wizard shows step 1 of 4 with both
+  unclaimed sensors listed and Continue disabled until one is chosen.
+- Recorded the resulting field and failure contract in the proposal. No firmware
+  exists for any of it yet; nothing here has touched hardware.
+
+### Onboarding phase 2 and part of phase 3: firmware
+
+- Bumped firmware to 0.6.0. Configured NimBLE LE Secure Connections with bonding,
+  a passkey, and `BLE_HS_IO_DISPLAY_ONLY`, and changed the configuration
+  characteristic from plain read/write to requiring an encrypted link. Added a
+  six-digit passkey generated on first boot into a `factory` NVS namespace that a
+  reset must not clear, refused a second bond so one sensor stays bound to one hub,
+  and exposed `onboarding_state` in `/status`.
+- Set `CONFIG_BT_NIMBLE_NVS_PERSIST=y` and `CONFIG_BT_NIMBLE_MAX_BONDS=1`. Without
+  the first, bonds live in RAM and every deep-sleep wake would lose the hub.
+- Added the Wi-Fi credential payload as connected-BLE protocol version 3 on the
+  established characteristic, with an NVS store beside the device configuration.
+  Host tests cover the round trip, the three payloads staying distinguishable, the
+  longest permitted values fitting the budget, and malformed input being refused.
+- Replaced the immediate endless Wi-Fi reconnect with a bounded backoff, and
+  classified disconnect reasons into the vocabulary the hub and browser share,
+  including a twenty-second watchdog for associating without receiving an address.
+
+### Unresolved: the worktree firmware image cannot be verified
+
+- `sensor/firmware/build.sh` exits 0 and the link map lists both `libesp_wifi.a` and
+  `libmain.a(web_ui.c.obj)`, but the image it produces is 659,744 bytes where the
+  bench 0.5.1 image is 1,277,776, and it contains none of the literals either
+  version should carry. A byte search of the bench image finds `wifi` 56 times,
+  `sht45_enabled`, and `force_report_state`; the same search of the worktree image
+  finds none of them, while finding `0.6.0`, `Open Plant Pulse`, `esp_timer` and
+  `nvs`.
+- The image was byte-identical in size across three builds, including one after
+  deleting `sensor/build` entirely. The two `sdkconfig` files differ only by the two
+  intended NimBLE settings.
+- The cause is not established. Treat the 0.6.0 firmware as compiling, and nothing
+  more: it has not been shown to produce a correct image, it has not been flashed,
+  and no pairing, credential, or Wi-Fi behaviour has run on hardware.

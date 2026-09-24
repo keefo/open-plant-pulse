@@ -43,10 +43,25 @@ let renderedSettingsKey = null;
 let fleetRequestSequence = 0;
 let sensorSettingsDraftSensorId = null;
 let sensorSettingsSubmitSequence = 0;
+let householdNetwork = null;
+let householdNetworkDraft = false;
+let renderedSettingsSensorsKey = null;
+let onboardingStep = "find";
+let onboardingSensorId = null;
+let onboardingDraft = false;
+let onboardingResult = null;
+
 
 function pageFromLocation() {
-  if (window.location.pathname.startsWith("/sensors/")) return "detail";
+  const path = window.location.pathname;
+  if (path.startsWith("/sensors/")) return "detail";
+  if (path === "/settings" || path.startsWith("/settings/")) return "settings";
+  if (path === "/onboarding" || path.startsWith("/onboarding/")) return "onboarding";
   return "fleet";
+}
+
+function settingsTabFromLocation() {
+  return window.location.pathname === "/settings/wifi" ? "wifi" : "sensors";
 }
 
 function sensorIdFromLocation() {
@@ -64,9 +79,24 @@ function renderPage() {
     element.hidden = element.dataset.page !== page;
   });
   document.getElementById("fleet-link").classList.toggle("active", page === "fleet");
-  document.title = page === "detail" && selectedSensor
-    ? `${selectedSensor.display_name || selectedSensor.sensor_id} · Open Plant Pulse`
-    : "Sensor fleet · Open Plant Pulse";
+  document.getElementById("settings-link").classList.toggle("active", page === "settings");
+  if (page === "settings") renderSettingsTab();
+  if (page === "onboarding") renderOnboarding();
+  document.title = titleForPage(page);
+}
+
+function titleForPage(page) {
+  if (page === "detail" && selectedSensor) {
+    return `${selectedSensor.display_name || selectedSensor.sensor_id} · Open Plant Pulse`;
+  }
+  if (page === "settings") return "Settings · Open Plant Pulse";
+  if (page === "onboarding") return "Add a sensor · Open Plant Pulse";
+  return "Plants · Open Plant Pulse";
+}
+
+function navigate(path) {
+  window.history.pushState({}, "", path);
+  renderPage();
 }
 
 function sensorState(sensor) {
@@ -320,6 +350,8 @@ async function refreshFleet() {
   renderFleet();
   renderInbox();
   renderSensorSettings();
+  renderSettingsSensors();
+  renderHouseholdNetwork();
   renderPage();
 }
 
@@ -841,9 +873,11 @@ async function loadProfiles() {
   profiles = await response.json();
   const settingSelect = document.getElementById("setting-profile");
   const detailSettingSelect = document.getElementById("detail-setting-profile");
+  const onboardingSelect = document.getElementById("onboarding-profile");
   for (const [id, profile] of Object.entries(profiles.profiles)) {
     settingSelect.add(new Option(profile.name, id));
     detailSettingSelect.add(new Option(profile.name, id));
+    onboardingSelect.add(new Option(profile.name, id));
   }
   document.getElementById("chemistry-guidance").textContent = profiles.guidance;
   renderProfileRanges();
@@ -1196,6 +1230,84 @@ document.getElementById("delete-sensor").addEventListener("click", async () => {
   renderedSettingsKey = null;
   await refresh();
 });
+document.getElementById("settings-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  navigate("/settings");
+});
+document.getElementById("fleet-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  navigate("/");
+});
+document.querySelectorAll(".settings-tab").forEach((tab) => {
+  tab.addEventListener("click", (event) => {
+    event.preventDefault();
+    navigate(tab.getAttribute("href"));
+  });
+});
+document.getElementById("household-network-form").addEventListener("submit", saveHouseholdNetwork);
+document.getElementById("wifi-ssid").addEventListener("input", () => {
+  householdNetworkDraft = true;
+});
+document.getElementById("forget-household-network").addEventListener("click", forgetHouseholdNetwork);
+document.getElementById("settings-sensor-list").addEventListener("change", (event) => {
+  const toggle = event.target.closest(".console-toggle");
+  if (toggle) setSensorConsole(toggle.dataset.sensorId, toggle.checked);
+});
+document.getElementById("settings-sensor-list").addEventListener("click", (event) => {
+  const forget = event.target.closest(".forget-sensor");
+  if (forget) forgetSensor(forget.dataset.sensorId);
+});
+document.querySelector(".settings-page .primary-action").addEventListener("click", (event) => {
+  event.preventDefault();
+  resetOnboarding();
+  navigate("/onboarding");
+});
+document.getElementById("onboarding-candidates").addEventListener("click", (event) => {
+  const choice = event.target.closest(".onboarding-candidate");
+  if (!choice) return;
+  onboardingSensorId = choice.dataset.sensorId;
+  document.getElementById("onboarding-candidates").dataset.renderKey = "";
+  renderOnboarding();
+});
+["onboarding-name", "onboarding-room"].forEach((id) => {
+  document.getElementById(id).addEventListener("input", () => {
+    onboardingDraft = true;
+  });
+});
+document.getElementById("onboarding-step-details").addEventListener("submit", (event) => {
+  event.preventDefault();
+});
+document.getElementById("onboarding-back").addEventListener("click", () => {
+  const index = ONBOARDING_STEPS.indexOf(onboardingStep);
+  if (index <= 0) {
+    resetOnboarding();
+    navigate("/settings");
+    return;
+  }
+  onboardingStep = ONBOARDING_STEPS[index - 1];
+  renderOnboarding();
+});
+document.getElementById("onboarding-next").addEventListener("click", async () => {
+  if (onboardingStep === "find") {
+    if (!onboardingSensorId) return;
+    onboardingStep = "pair";
+  } else if (onboardingStep === "pair") {
+    onboardingStep = "details";
+    onboardingDraft = false;
+  } else if (onboardingStep === "details") {
+    if (await finishOnboarding()) onboardingStep = "done";
+  } else {
+    const finished = onboardingSensorId;
+    resetOnboarding();
+    if (finished) {
+      await selectSensor(finished);
+      return;
+    }
+    navigate("/settings");
+    return;
+  }
+  renderOnboarding();
+});
 window.addEventListener("popstate", () => {
   sensorSettingsDraftSensorId = null;
   selectedSensorId = sensorIdFromLocation();
@@ -1205,5 +1317,5 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
-loadProfiles().then(poll).then(restoreClockScale);
+loadProfiles().then(refreshHouseholdNetwork).then(poll).then(restoreClockScale);
 setInterval(renderSimulationClock, 100);

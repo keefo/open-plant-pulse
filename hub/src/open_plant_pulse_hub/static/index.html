@@ -10,7 +10,8 @@
   <nav class="household-nav" aria-label="Primary navigation">
     <a class="brand" href="/">Open Plant Pulse</a>
     <div class="primary-links">
-      <a id="fleet-link" class="nav-link" href="/">Fleet</a>
+      <a id="fleet-link" class="nav-link" href="/">Plants</a>
+      <a id="settings-link" class="nav-link" href="/settings">Settings</a>
     </div>
     <button id="open-inbox" class="nav-button" type="button">Sensor inbox <span id="inbox-count">0</span></button>
   </nav>
@@ -83,6 +84,100 @@
       <div class="section-heading"><div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Sensor fleet</h1><p>Choose a sensor to open its monitoring details.</p></div></div>
       <div id="fleet-grid" class="fleet-grid"></div>
     </section>
+    <section class="settings-page" data-page="settings" aria-labelledby="settings-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">HUB SETTINGS</p><h1 id="settings-title">Settings</h1></div>
+        <a class="primary-action" href="/onboarding">Add a sensor</a>
+      </div>
+      <div class="settings-tabs" role="tablist">
+        <a id="settings-tab-sensors" class="settings-tab" href="/settings" role="tab">Sensors</a>
+        <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
+      </div>
+
+      <div id="settings-sensors-panel" class="settings-panel-group">
+        <div id="settings-sensor-list" class="settings-sensor-list"></div>
+        <p class="settings-note">A sensor belongs to one hub. To move one to a different hub, forget it here, or power-cycle it five times if this hub is unreachable. Either way it returns to onboarding and must be added again.</p>
+      </div>
+
+      <div id="settings-wifi-panel" class="settings-panel-group" hidden>
+        <form id="household-network-form" class="settings-panel">
+          <h2>Household network</h2>
+          <p>Entered once here. Any sensor whose console you switch on is given these details over its encrypted link.</p>
+          <label for="wifi-ssid">Network name</label>
+          <input id="wifi-ssid" maxlength="80" autocomplete="off" placeholder="Not configured">
+          <label for="wifi-password">Password</label>
+          <input id="wifi-password" type="password" autocomplete="off" placeholder="Stored in the system keychain">
+          <small>Kept outside the readings database and its backups. Sensors join 2.4 GHz networks only.</small>
+          <div class="inline-control">
+            <button id="save-household-network" type="submit">Save</button>
+            <button id="forget-household-network" class="danger" type="button">Forget network</button>
+            <output id="household-network-message" aria-live="polite"></output>
+          </div>
+          <small>Saving sends these details to every sensor whose console is on. Each one reports back whether it joined.</small>
+        </form>
+        <div class="settings-panel">
+          <h2>Where this is used</h2>
+          <p>Readings always arrive over Bluetooth. This network is only used by sensors whose web console you have switched on.</p>
+          <p id="wifi-usage-count" class="usage-count">No sensors are using it</p>
+          <a href="/settings">Switch consoles on or off per sensor</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="onboarding-page" data-page="onboarding" aria-labelledby="onboarding-title" hidden>
+      <div class="onboarding-card">
+        <header class="onboarding-header">
+          <h1 id="onboarding-title">Add a sensor</h1>
+          <span id="onboarding-step-label">Step 1 of 4</span>
+        </header>
+        <div id="onboarding-progress" class="onboarding-progress" role="img" aria-label="Step 1 of 4"></div>
+
+        <div id="onboarding-step-find" class="onboarding-step">
+          <h2>Power on your new sensor</h2>
+          <p>It does not need Wi-Fi yet. A new sensor announces itself over Bluetooth for as long as it is unclaimed.</p>
+          <div id="onboarding-candidates" class="onboarding-candidates"></div>
+        </div>
+
+        <div id="onboarding-step-pair" class="onboarding-step" hidden>
+          <h2>Prove the sensor is yours</h2>
+          <p>Your computer will ask for the six-digit code printed on the sensor's label.</p>
+          <div class="onboarding-notice">
+            <strong>The operating system asks, not this page.</strong>
+            <p>A system window appears. Type the code there and confirm. On Linux the code is entered here instead, because the hub handles pairing itself.</p>
+          </div>
+          <p id="onboarding-pair-state" class="pair-state" aria-live="polite">Waiting for pairing…</p>
+        </div>
+
+        <form id="onboarding-step-details" class="onboarding-step" hidden>
+          <h2>Name the plant</h2>
+          <label for="onboarding-name">Plant name</label>
+          <input id="onboarding-name" maxlength="80" required>
+          <label for="onboarding-room">Room</label>
+          <input id="onboarding-room" maxlength="80" required>
+          <label for="onboarding-profile">Plant profile</label>
+          <select id="onboarding-profile"></select>
+          <label for="onboarding-interval">Reports every</label>
+          <select id="onboarding-interval"></select>
+          <label class="checkbox"><input id="onboarding-wifi" type="checkbox"> Turn on this sensor's web console</label>
+          <small id="onboarding-wifi-note">Readings reach the hub over Bluetooth either way. Leaving it off keeps the radio idle and the battery lasting longer.</small>
+          <output id="onboarding-message" aria-live="polite"></output>
+        </form>
+
+        <div id="onboarding-step-done" class="onboarding-step" hidden>
+          <h2 id="onboarding-done-title">Sensor is set up</h2>
+          <p>It belongs to this hub and to no other.</p>
+          <div id="onboarding-summary" class="onboarding-summary"></div>
+          <p class="settings-note">Keep the sensor's label. You will need its pairing code again if you ever move it to another hub.</p>
+        </div>
+
+        <footer class="onboarding-footer">
+          <p id="onboarding-hint">Not seeing it? Move the sensor closer to this computer.</p>
+          <button id="onboarding-back" type="button">Cancel</button>
+          <button id="onboarding-next" type="button" class="primary">Continue</button>
+        </footer>
+      </div>
+    </section>
+
     <section class="plant-journey" data-page="detail" aria-labelledby="plant-journey-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
@@ -299,6 +394,7 @@
       </div>
     </section>
   </main>
+  <script src="/onboarding.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
