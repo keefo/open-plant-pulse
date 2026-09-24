@@ -169,23 +169,62 @@ onboarding roughly every reporting interval.
 
 ## Plan
 
-**Phase 1, secure the link.** Secure Connections with bonding and passkey,
+The customer journey is the riskiest part of this design and the cheapest to
+change, so it comes first. The hub is Python and iterates in seconds; firmware
+iterates in build, flash, and hardware cycles. Phase 1 therefore produces a
+complete, clickable experience driven by a simulated sensor, and its output is the
+contract the later firmware phases implement.
+
+**Phase 1, hub interface.** A dedicated management page, separate from the
+monitoring dashboard, covering sensors, Wi-Fi, and keys. A separate guided
+onboarding flow for adding one new sensor. Both driven end to end by a simulated
+unclaimed sensor through the existing replay and simulation paths, with no
+firmware change and no hardware.
+
+Phase 1 is complete when the journey can be walked and reviewed, and when it has
+produced an explicit list of the states, fields, and failure reasons the firmware
+must expose. Everything below implements that list.
+
+Scope the management page honestly. The hub never sees the LTK, which lives inside
+the host Bluetooth stack, and it must not store the passkey, which is on the
+device label. What it manages is the bonded sensor, forget and transfer, Wi-Fi
+credentials as write-only, and later the BTHome bind key.
+
+**Phase 2, secure the link.** Secure Connections with bonding and passkey,
 persistent bonds, encrypted characteristic, factory passkey storage. No new
-features. Prerequisite for everything else.
+features. Prerequisite for everything below.
 
-**Phase 2, enrolment.** Passkey entry in the hub inbox, single-bond enforcement,
-onboarding and onboarded state in `/status`.
+**Phase 3, enrolment on real hardware.** Single-bond enforcement, onboarding and
+onboarded state in `/status`, and the passkey step wired to whatever the host
+platform actually allows.
 
-**Phase 3, credentials.** Versioned Wi-Fi payload into NVS, hub UI, delivery
-through the existing revision mechanism, classified join results.
+**Phase 4, credentials.** Versioned Wi-Fi payload into NVS, delivery through the
+existing revision mechanism, classified join results shown in the flow built in
+phase 1.
 
-**Phase 4, reset.** Hub-initiated forget, power-cycle counter, documented transfer
+**Phase 5, reset.** Hub-initiated forget, power-cycle counter, documented transfer
 procedure.
+
+### Platform constraint on the passkey step
+
+`bleak` cannot initiate pairing on macOS: its CoreBluetooth backend raises
+`NotImplementedError("Pairing is not available in Core Bluetooth.")`. Pairing is
+triggered implicitly by first access to an encrypted characteristic, and macOS
+presents its own passkey dialog, attributed to the hub application. On Linux,
+BlueZ does expose pairing and an agent can supply the passkey directly.
+
+The onboarding flow must therefore not own a passkey field on macOS. It instructs
+the customer to expect a system dialog, tells them where the code is printed, and
+polls for the bond. Phase 1 must design this state explicitly rather than assume a
+form field, and the two platforms need separate validation.
 
 ## Validation
 
 Host checks, build, flash, and device behaviour are separate claims.
 
+- [ ] The whole onboarding flow can be walked against a simulated sensor, with no
+      hardware, and is covered by host tests.
+- [ ] The flow is validated on macOS and on Linux, whose passkey steps differ.
 - [ ] A factory-fresh sensor reaches onboarded with no router present.
 - [ ] Enrolment fails with a wrong passkey.
 - [ ] An unbonded central can neither read nor write the configuration

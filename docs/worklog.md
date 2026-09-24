@@ -342,6 +342,14 @@
 - Recorded that link encryption covers connections only. BTHome advertisements stay
   unencrypted under contract v2, so telemetry privacy needs a separate 16-byte bind
   key; the credential payload must leave room for one to avoid a second migration.
+- Reordered the delivery plan to be interface-first: a dedicated hub management
+  page and a separate guided onboarding flow, both driven by a simulated sensor
+  with no firmware or hardware, produce the state and field contract that the
+  later firmware phases implement.
+- Recorded a platform constraint found while planning that work: `bleak` cannot
+  initiate pairing on macOS, where CoreBluetooth raises `NotImplementedError` and
+  the operating system presents its own passkey dialog. The onboarding flow cannot
+  own a passkey field there, and macOS and Linux need separate validation.
 - Chose power-cycle counting as the physical reset, filtered by `esp_reset_reason()`
   so deep-sleep wakes do not advance it. The RESET button cannot erase anything by
   itself, and GPIO9 is a strapping pin the enclosure does not expose.
