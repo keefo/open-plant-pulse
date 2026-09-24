@@ -350,6 +350,22 @@
   initiate pairing on macOS, where CoreBluetooth raises `NotImplementedError` and
   the operating system presents its own passkey dialog. The onboarding flow cannot
   own a passkey field there, and macOS and Linux need separate validation.
+- Moved Wi-Fi credentials to hub level: one household network entered once on the
+  hub settings page, kept in the operating system keychain rather than the readings
+  database, with each sensor carrying only an enable flag. Turning that flag off
+  stops the sensor's HTTP server and leaves the network, which makes it the control
+  for the product's only unauthenticated network surface; it defaults to off. This
+  makes Wi-Fi a runtime rather than compile-time decision, and disables SNTP
+  synchronisation along with it.
+- Measured the advertisement budget for encrypted telemetry against the current
+  encoder. Encryption adds 8 bytes into a 24-byte allowance: today's air-only
+  payload fits at 17 bytes, but air plus the soil probe reaches 26. Dropping the
+  packet-id object when encrypted frees exactly the 2 bytes needed, since the
+  encryption counter already provides deduplication and replay protection.
+- Rejected BLE 5 extended advertising as the way out. BTHome records it as
+  infeasible because `bleak` lacks support, and `bleak` is the library both this hub
+  and Home Assistant depend on, so the sensor would transmit correctly and no
+  receiver would hear it.
 - Chose power-cycle counting as the physical reset, filtered by `esp_reset_reason()`
   so deep-sleep wakes do not advance it. The RESET button cannot erase anything by
   itself, and GPIO9 is a strapping pin the enclosure does not expose.

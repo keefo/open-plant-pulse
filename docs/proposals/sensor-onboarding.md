@@ -98,6 +98,38 @@ Encrypting telemetry needs a separate 16-byte BTHome bind key, which is a contra
 v3 decision. Onboarding is the natural moment to deliver one, so **the credential
 payload must leave room for a 16-byte key** to avoid a second migration later.
 
+### Encrypted telemetry and the 24-byte budget
+
+Without a bind key, a neighbouring hub in range can read this sensor's
+measurements, and the sensor inbox means it can enrol them too. The pairing code
+stops a stranger *controlling* a sensor; only a bind key stops one *reading* it.
+
+BTHome v2 encryption sets device-info byte `0x41` and adds a 4-byte counter and a
+4-byte MIC, so every advertisement grows by 8 bytes. The counter also gives replay
+protection, which the product does not have today. A legacy advertisement holds 31
+bytes; flags take 3 and the service-data header 4, leaving **24**. The local name
+rides in the scan response and does not compete.
+
+Measured against the current encoder (`bthome_payload.c:49-76`):
+
+| Payload | Plain | Encrypted | Fits in 24 |
+| --- | --- | --- | --- |
+| Air only, today's sensor | 9 | 17 | yes |
+| Air and button | 11 | 19 | yes |
+| Air and soil probe | 18 | 26 | no |
+| Air, soil, and button | 20 | 28 | no |
+
+Encryption therefore fits the sensor that exists and breaks when the RS-485 probe
+lands. **Drop the packet-id object when encrypted**: the counter already provides
+deduplication and replay protection, which frees exactly the 2 bytes that bring
+the soil payload to 24.
+
+BLE 5 extended advertising would remove the limit, and it is **not viable**.
+BTHome tracks it as infeasible because `bleak` does not support it, and `bleak` is
+the library this hub and Home Assistant both depend on: the sensor would transmit
+correctly and neither receiver would hear it. Revisit only when `bleak` gains
+support.
+
 ## Delivering credentials
 
 - A **separate versioned payload** on the existing characteristic, not an extension
@@ -105,11 +137,35 @@ payload must leave room for a 16-byte key** to avoid a second migration later.
   giving about 253 usable write bytes; the configuration payload already occupies
   171, and adding SSID and password would overflow it. Separate payloads also keep
   Wi-Fi optional.
+- **The household network is hub-level, entered once.** The hub settings page holds
+  one network name and password for the home. A sensor is not asked for
+  credentials; it carries a single **enable** flag, and the hub sends the stored
+  network to any sensor whose flag is on. A customer with four sensors types their
+  password once, not four times.
+- The hub stores that password in the **operating system keychain**, never in the
+  readings database. The database is backed up and exported; a Wi-Fi password must
+  not travel with it.
 - The sensor stores SSID and password in NVS exactly as it stores device
   configuration today, with `nvs_set_blob` and `nvs_commit`, and never returns the
   password on a read, in `/status`, in the log ring, or over serial.
-- The hub does not persist the password in SQLite. It holds it only for the write
-  and asks again if a sensor needs it later.
+
+### The enable flag controls the console
+
+Turning the flag off is not cosmetic. The sensor stops its HTTP server, calls
+`esp_wifi_stop()`, and leaves the network; turning it on rejoins at the next
+report. The flag therefore controls the only unauthenticated network surface the
+product has, and it defaults to **off**. A sensor that nobody has deliberately put
+on the network cannot be reached from the network.
+
+Two consequences to design for:
+
+- Wi-Fi today is compile-time (`CONFIG_OPP_WEB_UI_ENABLED`). This flag makes it a
+  runtime decision, so `web_ui_start()` must become startable and stoppable rather
+  than a one-way call made once at boot.
+- **SNTP clock synchronisation shares that radio.** With Wi-Fi off the clock drifts
+  and sample timestamps stop being wall-clock accurate, falling back to the
+  monotonic ordering the firmware already keeps. The interface must say so where
+  the flag is turned off, rather than letting a customer discover it later.
 - Delivery reuses the existing desired/acknowledged revision mechanism, so a sensor
   that is asleep or out of range receives credentials after its next report.
 - The sensor reports the join result back: joined with an address, or a classified
@@ -233,6 +289,10 @@ Host checks, build, flash, and device behaviour are separate claims.
 - [ ] The bond survives a power cycle and a deep-sleep wake.
 - [ ] The sensor joins Wi-Fi from hub-delivered credentials and survives a reset.
 - [ ] A wrong password is reported as a wrong password, not a timeout.
+- [ ] Turning the enable flag off stops the sensor's HTTP server and removes it
+      from the network; turning it on restores both.
+- [ ] The household password is in the keychain and in no database row, backup, or
+      export.
 - [ ] Five rapid power cycles reset the sensor; four do not; a day of deep-sleep
       wakes does not.
 - [ ] The passkey survives a reset.
