@@ -1,0 +1,110 @@
+{
+  "schema": "open-plant-pulse.bthome-replay.v1",
+  "contract_version": 2,
+  "service_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb",
+  "events": [
+    {
+      "id": "sensor-a-full",
+      "received_at": "2026-09-13T12:00:00Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -48,
+      "service_data_hex": "40002a022e0903f014148a0c45f20056d204",
+      "expected": {
+        "sensor_id": "sensor-aabbccddeeff",
+        "sequence": 42,
+        "soil_temperature_c": 23.5,
+        "moisture_percent": 32.1,
+        "conductivity_us_cm": 1234,
+        "air_temperature_c": 24.2,
+        "air_humidity_percent": 53.6,
+        "soil_source_status": "available",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-a-duplicate",
+      "received_at": "2026-09-13T12:00:02Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -49,
+      "service_data_hex": "40002a022e0903f014148a0c45f20056d204",
+      "expected_status": "duplicate"
+    },
+    {
+      "id": "sensor-a-air-only",
+      "received_at": "2026-09-13T12:30:00Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -50,
+      "service_data_hex": "40002b03d71145f500",
+      "expected": {
+        "sensor_id": "sensor-aabbccddeeff",
+        "sequence": 43,
+        "soil_temperature_c": null,
+        "moisture_percent": null,
+        "conductivity_us_cm": null,
+        "air_temperature_c": 24.5,
+        "air_humidity_percent": 45.67,
+        "soil_source_status": "unavailable",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-b-air-only",
+      "received_at": "2026-09-13T12:00:03Z",
+      "local_name": "sensor-001122334455",
+      "observed_identifier": "replay-b",
+      "rssi": -61,
+      "service_data_hex": "400007037c1545f100",
+      "expected": {
+        "sensor_id": "sensor-001122334455",
+        "sequence": 7,
+        "soil_temperature_c": null,
+        "moisture_percent": null,
+        "conductivity_us_cm": null,
+        "air_temperature_c": 24.1,
+        "air_humidity_percent": 55.0,
+        "soil_source_status": "unavailable",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-c-soil-only",
+      "received_at": "2026-09-13T12:00:04Z",
+      "local_name": "sensor-102030405060",
+      "observed_identifier": "replay-c",
+      "rssi": -73,
+      "service_data_hex": "4000ff02b70714b90f562003",
+      "expected": {
+        "sensor_id": "sensor-102030405060",
+        "sequence": 255,
+        "soil_temperature_c": 19.75,
+        "moisture_percent": 40.25,
+        "conductivity_us_cm": 800,
+        "air_temperature_c": null,
+        "air_humidity_percent": null,
+        "soil_source_status": "available",
+        "air_source_status": "unavailable"
+      }
+    },
+    {
+      "id": "malformed-truncated",
+      "received_at": "2026-09-13T12:00:05Z",
+      "local_name": "sensor-abcdef123456",
+      "observed_identifier": "replay-malformed",
+      "rssi": -70,
+      "service_data_hex": "40000902",
+      "expected_status": "rejected"
+    },
+    {
+      "id": "unsupported-object",
+      "received_at": "2026-09-13T12:00:06Z",
+      "local_name": "sensor-abcdef123456",
+      "observed_identifier": "replay-unsupported",
+      "rssi": -70,
+      "service_data_hex": "4000090164",
+      "expected_status": "rejected"
+    }
+  ]
+}
