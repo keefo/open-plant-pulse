@@ -164,6 +164,15 @@ support.
 - The hub stores that password in the **operating system keychain**, never in the
   readings database. The database is backed up and exported; a Wi-Fi password must
   not travel with it.
+- A **Check network** action scans from the hub and reports whether the network is
+  in range, whether it is 2.4 GHz, and what security it uses. It deliberately does
+  not test the password: the hub joining the network to try it would disconnect the
+  hub itself, and only a sensor joining proves a password anyway. What it does
+  catch are the two failures customers blame on the sensor — a mistyped or hidden
+  name, and a 5 GHz-only network the ESP32-C3 can never join. Reading SSIDs
+  requires Location permission on macOS, and a hub with no Wi-Fi adapter cannot
+  scan at all, so the check must degrade to saying it could not look rather than
+  claiming a failure.
 - The sensor stores SSID and password in NVS exactly as it stores device
   configuration today, with `nvs_set_blob` and `nvs_commit`, and never returns the
   password on a read, in `/status`, in the log ring, or over serial.

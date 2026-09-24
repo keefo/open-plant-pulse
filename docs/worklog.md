@@ -362,6 +362,12 @@
   payload fits at 17 bytes, but air plus the soil probe reaches 26. Dropping the
   packet-id object when encrypted frees exactly the 2 bytes needed, since the
   encryption counter already provides deduplication and replay protection.
+- Added a Check network action to the household network settings. It reports range,
+  band, and security from the hub's own scan, and deliberately does not test the
+  password, because the hub joining to try it would disconnect the hub and only a
+  sensor joining proves a password. It catches the mistyped name and the 5 GHz-only
+  network, needs Location permission on macOS, and must degrade to saying it could
+  not look on a hub with no Wi-Fi adapter.
 - Made encrypted telemetry the default rather than a setting, which makes contract
   v3 the contract for onboarded sensors and removes the keys page from the
   interface. Each sensor is given its own 16-byte key during onboarding. The hub
