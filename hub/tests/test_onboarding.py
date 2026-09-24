@@ -263,5 +263,98 @@ class OnboardingWebTests(unittest.TestCase):
         self.assertEqual(sensor["onboarding_state"], "onboarding")
 
 
+class GuidedFlowTests(unittest.TestCase):
+    """Walk the whole journey a customer takes, against a simulated sensor."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_a_new_sensor_can_be_onboarded_without_a_network(self):
+        candidate = self.store.sensor(self.sensor_id)
+        self.assertEqual(candidate["onboarding_state"], "onboarding")
+
+        sensor = enrolled_sensor(self.store, self.sensor_id)
+
+        self.assertEqual(sensor["onboarding_state"], "onboarded")
+        self.assertFalse(sensor["wifi_enabled"])
+        self.assertIsNotNone(sensor["latest"])
+
+    def test_the_console_can_be_switched_on_during_onboarding(self):
+        self.store.set_hub_wifi_network("BEYONDCOW-2.4G")
+        enrolled_sensor(self.store, self.sensor_id)
+
+        self.store.set_sensor_wifi_enabled(self.sensor_id, True)
+        sensor = self.store.record_sensor_wifi_result(
+            self.sensor_id, "joined", None, "192.168.0.111"
+        )
+
+        self.assertEqual(sensor["wifi_state"], "joined")
+        self.assertEqual(sensor["wifi_address"], "192.168.0.111")
+
+    def test_a_reset_sensor_can_be_onboarded_again(self):
+        enrolled_sensor(self.store, self.sensor_id)
+        self.store.set_sensor_onboarding_state(self.sensor_id, "onboarding")
+
+        sensor = enrolled_sensor(self.store, self.sensor_id, "second life")
+
+        self.assertEqual(sensor["onboarding_state"], "onboarded")
+        self.assertEqual(sensor["display_name"], "second life")
+
+
+class InterfaceTests(unittest.TestCase):
+    """The served page and scripts carry the pieces the flow depends on."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        self.server = create_server(self.store, "127.0.0.1", 0)
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = server_address(self.server)
+        self.base_url = f"http://{host}:{port}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=1.0)
+        self.store.close()
+
+    def get(self, path):
+        with urlopen(self.base_url + path, timeout=1.0) as response:
+            return response.read()
+
+    def test_the_onboarding_script_is_served(self):
+        self.assertIn(b"function renderOnboarding()", self.get("/onboarding.js"))
+
+    def test_the_page_carries_both_new_sections(self):
+        page = self.get("/")
+        self.assertIn(b'data-page="settings"', page)
+        self.assertIn(b'data-page="onboarding"', page)
+        self.assertIn(b'src="/onboarding.js"', page)
+
+    def test_the_navigation_calls_the_fleet_plants(self):
+        self.assertIn(b">Plants</a>", self.get("/"))
+
+    def test_every_failure_reason_has_wording(self):
+        script = self.get("/onboarding.js")
+        for failure in (
+            b"wrong_password",
+            b"network_not_found",
+            b"association_timeout",
+            b"no_address",
+            b"unsupported_band",
+        ):
+            self.assertIn(failure, script)
+
+    def test_the_password_field_is_never_sent_to_the_hub(self):
+        script = self.get("/onboarding.js")
+        self.assertIn(b'getElementById("wifi-ssid")', script)
+        self.assertNotIn(b'wifi_password', script)
+
+
 if __name__ == "__main__":
     unittest.main()

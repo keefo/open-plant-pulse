@@ -85,6 +85,8 @@ def create_server(
                 self._send_file("app.css", "text/css; charset=utf-8")
             elif path == "/app.js":
                 self._send_file("app.js", "text/javascript; charset=utf-8")
+            elif path == "/onboarding.js":
+                self._send_file("onboarding.js", "text/javascript; charset=utf-8")
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
 
