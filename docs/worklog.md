@@ -371,6 +371,14 @@
   the password, the settings page offers to fill it in from the keychain or from
   NetworkManager, so it need not be retyped.
 - Renamed the primary navigation entry from Fleet to Plants.
+- Resequenced the delivery plan around the hardware rather than around features.
+  Phases 1 to 5 are written, built, and host-tested with no board and no person;
+  phase 6 groups everything that cannot be exercised otherwise, because the macOS
+  pairing dialog takes a human, a flash may need the BOOT button, and the
+  power-cycle reset ignores `ESP_RST_SW` by design so a software restart cannot
+  stand in for it. Nothing in phases 2 to 5 may be called working until phase 6
+  says so. The bench sensor's unresponsive SHT45 is a precondition for that session,
+  since the first-reading target cannot be measured without a valid sample.
 - Made encrypted telemetry the default rather than a setting, which makes contract
   v3 the contract for onboarded sensors and removes the keys page from the
   interface. Each sensor is given its own 16-byte key during onboarding. The hub

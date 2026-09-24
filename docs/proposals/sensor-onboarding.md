@@ -321,20 +321,47 @@ the host Bluetooth stack, and it must not store the passkey, which is on the
 device label. What it manages is the bonded sensor, forget and transfer, Wi-Fi
 credentials as write-only, and later the BTHome bind key.
 
-**Phase 2, secure the link.** Secure Connections with bonding and passkey,
-persistent bonds, encrypted characteristic, factory passkey storage. No new
-features. Prerequisite for everything below.
+**Phase 2, link security.** Secure Connections with bonding and passkey, persistent
+bonds, encrypted characteristic, factory passkey storage, single-bond enforcement,
+and onboarding state in `/status`. Prerequisite for everything below.
 
-**Phase 3, enrolment on real hardware.** Single-bond enforcement, onboarding and
-onboarded state in `/status`, and the passkey step wired to whatever the host
-platform actually allows.
+**Phase 3, credentials and the enable flag.** Versioned Wi-Fi payload into NVS,
+delivery through the existing revision mechanism, classified disconnect reasons, and
+a web server that can be started and stopped at runtime rather than at compile time.
 
-**Phase 4, credentials.** Versioned Wi-Fi payload into NVS, delivery through the
-existing revision mechanism, classified join results shown in the flow built in
-phase 1.
+**Phase 4, encrypted telemetry.** Contract v3: bind key generation and delivery,
+AES-CCM encoding with the counter retained across deep sleep, the packet-id object
+dropped, hub decryption and replay rejection, and fixtures covering all of it.
 
-**Phase 5, reset.** Hub-initiated forget, power-cycle counter, documented transfer
-procedure.
+**Phase 5, reset.** Hub-initiated forget, power-cycle counter filtered by reset
+reason, documented transfer procedure.
+
+**Phase 6, hardware validation.** Everything the phases above can only claim: the
+flash, the pairing dialog, the first-reading timing, the power-cycle reset, and the
+soak. See below.
+
+### Sequencing around the hardware
+
+Phases 1 to 5 are written, built, and host-tested without a board or a person.
+Phase 6 is where they are proved, and it needs both, because three things in this
+design cannot be exercised any other way:
+
+- **The pairing dialog is the operating system's.** On macOS somebody must read the
+  code from the label and type it into a system window; no automation reaches it.
+- **A flash may need the BOOT button.** The worklog records images that only took
+  after releasing BOOT and resetting.
+- **The power-cycle reset requires real power cycles.** `esp_restart()` reports
+  `ESP_RST_SW`, which the counter deliberately ignores, so a software restart cannot
+  stand in for pulling the plug.
+
+Grouping them means one hands-on session rather than five. It also means **nothing
+in phases 2 to 5 may be described as working until phase 6 says so**: those phases
+produce code that builds and passes host tests, which is not the same claim.
+
+One repair is a precondition for phase 6 rather than part of it. The bench sensor
+currently reports `sht45_available: false` with null readings, and a forced report
+on it fails with `no valid sensor sample`, so the first-reading target cannot be
+measured until its air sensor reads again.
 
 ### Platform constraint on the passkey step
 
