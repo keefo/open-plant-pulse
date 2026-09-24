@@ -321,8 +321,8 @@
   password sits in unencrypted flash, the disconnect handler reconnects immediately
   without backoff and never logs the reason code, the auth threshold silently
   rejects open networks, and no customer-facing setup document exists.
-- Added `docs/proposals/hub-wifi-onboarding.md` covering the Raspberry Pi hub
-  appliance, a two-tier design that uses Raspberry Pi Imager pre-configuration as
-  the primary path and a hub-owned NetworkManager setup hotspot as the recovery
-  path, the security and radio-coexistence constraints, a four-phase delivery plan,
-  and a validation strategy. Nothing is implemented.
+- Added `docs/proposals/sensor-wifi-onboarding.md`: an ESP32-C3 setup access point
+  and captive portal served by the existing `esp_http_server`, credentials moved
+  from Kconfig into NVS, classified disconnect reasons, a four-phase plan, and a
+  validation list. BLE provisioning and hub-driven credential delivery were
+  considered and rejected. Nothing is implemented.
