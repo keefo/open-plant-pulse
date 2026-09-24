@@ -52,6 +52,9 @@ development values, not proof of a sensor's register map:
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `OPP_WEB_UI_ENABLED` | enabled | Development Wi-Fi log webpage |
+| `OPP_PRODUCTION_LIFECYCLE` | disabled | One-shot SHT45/BTHome/deep-sleep mode; bypasses development services |
+| `OPP_BTHOME_ADVERTISEMENT_WINDOW_MS` | `3000` | Fixed advertising window in production and development modes |
+| `OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS` | `250` | Advertising interval within each bounded window |
 | `OPP_WIFI_SSID` | empty | 2.4 GHz Wi-Fi network name |
 | `OPP_WIFI_PASSWORD` | empty | Wi-Fi password stored in ignored `sdkconfig` |
 | `OPP_CLOCK_SYNC_ENABLED` | enabled | Validate and synchronize the system clock over SNTP |
@@ -65,7 +68,11 @@ development values, not proof of a sensor's register map:
 | `OPP_SHT45_SCL_GPIO` | 7 | SHT45 I2C clock pin (XIAO D5) |
 | `OPP_SHT45_SAMPLE_INTERVAL_SECONDS` | 5 | Awake development sampling interval |
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
-| `OPP_SAMPLE_INTERVAL_MINUTES` | 30 | Delay between wake cycles |
+| `OPP_SAMPLE_INTERVAL_MINUTES` | 30 | Initial delay before hub device configuration is applied |
+
+The default ESP-IDF partition selection is the 1.5 MiB single-app layout. This fits
+the combined development Wi-Fi and BLE image on the XIAO ESP32-C3's flash while
+retaining the existing NVS partition; OTA is not enabled.
 
 ### Web UI diagnostics
 
@@ -123,9 +130,11 @@ history is intentionally not added here because durable history remains owned by
 the hub. When valid, `air_sample_unix_ms` preserves the full acquisition
 timestamp represented by `air_sample_time_utc`.
 
-The Sensors view can enable or disable each sensor, and the Maintenance view can
-persist the website color mode, accent, density, IANA timezone, `/status` refresh
-interval, and Overview card order, visibility, and width. The refresh choices range
+The console has Overview and Maintenance pages. Overview presents the ESP32-C3 and
+Hub configuration in metric-card sections, with live ESP-IDF logs at the bottom.
+The Sensors section on Maintenance can enable or disable each sensor. Maintenance
+also persists the website color mode, accent, density, IANA timezone, `/status`
+refresh interval, and Overview card order, visibility, and width. The refresh choices range
 from one second to one hour, or Off; Off still permits the page's initial status
 request. The Overview
 clock and RTC synchronization timestamp are converted from device-supplied UTC
@@ -143,6 +152,7 @@ The current API is:
 | `GET` | `/api/v1/config/ui` | Read the active UI configuration |
 | `PUT` | `/api/v1/config/ui` | Validate and persist a complete JSON configuration |
 | `POST` | `/api/v1/config/ui/reset` | Erase the saved value and restore firmware defaults |
+| `POST` | `/api/v1/reports/force` | Queue an immediate report and return its request ID |
 | `POST` | `/api/v1/restart` | Schedule a device restart after validating `{"confirm":"restart"}` |
 
 Request bodies are limited to 1535 bytes. Unknown fields, duplicate or unknown
@@ -159,8 +169,11 @@ endpoint. A valid request receives `202 Accepted`; the response is sent before a
 development endpoint has no authentication and must only be exposed on a trusted
 bench network. Restart request bodies are limited to 63 bytes.
 
-Wi-Fi is intended for powered bench diagnostics. Disable `OPP_WEB_UI_ENABLED`
-before battery-life testing or production deep-sleep builds.
+The always-on Wi-Fi web UI is intended for powered bench diagnostics. Disable
+`OPP_WEB_UI_ENABLED` before battery-life testing or production deep-sleep builds.
+The production design uses one bounded BTHome advertising burst per wake. Sensor
+Wi-Fi/HTTP reporting is lower-priority evaluation work and is not required by the
+first hub.
 
 UART pins, probe register addresses, stabilization delay, and power-enable
 polarity will be added only after the hardware checklist records verified values.
@@ -181,8 +194,8 @@ SHT4x CRC-8 check before the reading is published. Humidity is clamped to 0-100%
 
 The awake development firmware takes one-shot readings every five seconds. Valid
 samples are logged as `air_temperature_c` and `air_humidity_percent`, exposed by
-`/status`, and displayed in an automatic Overview section. The Sensors view shows
-only the SHT45 status badge and its persisted enable switch. The Overview derives
+`/status`, and displayed in an automatic Overview section. The Sensors section on
+Maintenance shows the SHT45 status badge and its persisted enable switch. The Overview derives
 absolute humidity in g/m³ from each temperature and relative-humidity sample using
 the Magnus saturation-vapor-pressure approximation.
 The Overview section is hidden when the SHT45 has no valid reading. A failed
@@ -198,18 +211,65 @@ power from a breakout wired directly to the always-on 3.3 V rail; eliminating it
 standby current requires a verified switched sensor rail.
 
 Use the [XIAO ESP32-C3 and SHT45 first-node guide](sht45-first-node.md) for
-wiring, measurement commands, CRC handling, BLE bring-up, and the required hub
-changes for an air-only prototype.
+wiring, measurement commands, CRC handling, BLE advertisement bring-up, and the
+required hub changes for an air-only prototype.
 
-Sampling frequency should remain low enough to avoid self-heating. BLE publication
-and the production deep-sleep lifecycle remain pending; a failed SHT45 read must
-not produce an ambient measurement advertisement when they are implemented.
+Sampling frequency should remain low enough to avoid self-heating. Production mode
+publishes only a newly acquired SHT45 sample; a failed read skips advertising and
+returns to deep sleep rather than reusing an earlier ambient measurement.
 
-## Planned deep-sleep lifecycle
+When `OPP_PRODUCTION_LIFECYCLE` is disabled, an unconfigured development image
+remains awake and emits an air-only BTHome report every five seconds from the latest
+valid SHT45 sample. Once the hub sends device configuration, this path uses the
+persisted 1-second-to-24-hour reporting interval. The bounded advertisement window
+and radio interval remain configurable in `menuconfig`; no deep-sleep API is called
+on this path.
 
-The ESP32-C3 will use a timer wake-up to run one bounded acquisition and BLE
-advertising cycle, then return to deep sleep. Probe power must be disabled on
-every normal and error path before sleep begins. See
+### Hub-delivered device configuration
+
+Each bounded BTHome window is connectable and exposes the configuration service
+documented in [`protocol/README.md`](../protocol/README.md). The hub writes plant
+name, room, interval, and revision after the sensor reports, then reads the value
+back. Firmware validates the complete payload, commits it to NVS, and changes the
+next report schedule. Identical writes do not consume another NVS write.
+
+`/status` exposes `device_config_revision`, `plant_name`, `room`, and
+`reporting_interval_seconds`. The sensor Overview renders those values. Before the
+first valid configuration, revision is zero and the compiled interval remains the
+production fallback.
+
+### Manual forced reports
+
+The Maintenance **Report now** control is available only in the always-awake Wi-Fi
+diagnostics runtime. It queues a fresh BLE report immediately, without changing or
+resetting the configured periodic deadline. The page tracks the request ID and
+BTHome packet ID through queued, reporting, acknowledged, unacknowledged, and failed
+states. A successful result means the Hub durably accepted that exact packet and
+wrote the matching acknowledgment token back during the same BLE window.
+
+The request uses the standard BTHome button-press event and the connected-BLE
+acknowledgment characteristic documented in [`protocol/README.md`](../protocol/README.md).
+If there is no current SHT45 sample, advertising fails, the Hub is stopped, or the
+token does not match, the dashboard shows failure rather than inferring delivery.
+Production deep-sleep firmware intentionally has no web button and does not wait
+for acknowledgments.
+
+The service currently has no encryption, authentication, or physical-presence
+gate. It is suitable only for prototype validation on a trusted bench.
+
+## Production deep-sleep lifecycle
+
+Enable `OPP_PRODUCTION_LIFECYCLE` to replace the powered diagnostics runtime with
+one bounded wake cycle. Production firmware reads the SHT45 once, omits the complete air
+object group if acquisition fails, advertises a fresh contract-v2 sample with a
+deep-sleep-retained packet ID and eFuse-derived `sensor-<DEVICE_ID>` name, explicitly
+stops/deinitializes NimBLE, and enters timer deep sleep. The advertisement window
+defaults to 3000 ms at a 250 ms interval; the sleep interval defaults to 30 minutes
+until hub configuration is applied.
+
+This first implementation is air-only. The unverified soil UART and probe-power
+hardware are deliberately not energized. Probe power must be disabled on every
+normal and error path when that acquisition stage is added. See
 [sensor power management](power-management.md) for the power-domain model,
 RTC timer behavior, peripheral shutdown requirements, and battery-life method.
 
@@ -223,12 +283,19 @@ sh scripts/test-sensor.sh
 
 The script builds with C11 and treats all warnings as errors. Tests cover the
 known Modbus request CRC, valid and corrupted responses, signed/scaled values,
-and the exact BTHome service-data bytes.
+contract-v1 and contract-v2 BTHome service-data bytes, partial source omission,
+packet IDs, and stable local-name formatting.
 
 ## Implementation status
 
-The current target application provides a development Wi-Fi log console and
-bounded SHT45 ambient acquisition. Add remaining target code in this order: UART
-reads with fixture data, GPIO power control, BLE advertisement lifecycle,
-guaranteed cleanup, then deep sleep. See [the roadmap](roadmap.md) for acceptance
-criteria.
+The target application provides two compile-time modes: powered Wi-Fi diagnostics
+and an opt-in bounded SHT45/BTHome/deep-sleep lifecycle. Firmware 0.4.0 was built,
+flashed, and verified on the physical board in always-awake diagnostics mode. Direct
+connected-BLE write/read-back, NVS restoration after reset, the live sensor dashboard,
+and a 300-second configuration were verified with revision 4. Firmware 0.5.0 adds
+the manual forced-report acknowledgment workflow; build, flash, and live validation
+results are recorded in the worklog. The production lifecycle remains unflashed and unmeasured;
+USB source detection is not a current or energy measurement, and the 24-hour soak is
+still pending. Add remaining target code in this order: UART reads with fixture data,
+verified GPIO power control, centralized probe cleanup, then physical repeated-cycle
+and power validation. See [the roadmap](roadmap.md) for acceptance criteria.

@@ -12,9 +12,10 @@ for bench development, bring-up, and fault diagnosis. It is not the product's
 historical dashboard; long-term readings, analytics, plant care, and Home
 Assistant integration remain responsibilities of the hub.
 
-The production sensor remains BLE-first and battery-oriented. Wi-Fi and this UI
-must stay optional and be disabled for power measurements and deployed
-low-power builds.
+The production sensor remains deep-sleep and battery-oriented. It will emit one
+bounded BTHome advertising burst per wake; the continuously available Wi-Fi web UI
+must stay optional and be disabled for power measurements and deployed low-power
+builds. Sensor Wi-Fi/HTTP reporting is lower-priority evaluation work.
 
 ## Goals
 

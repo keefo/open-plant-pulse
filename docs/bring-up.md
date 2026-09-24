@@ -46,9 +46,15 @@ deep sleep, switched rails, wake timing, and current consumption.
 - [ ] Probe rail is off at reset and during deep sleep.
 - [ ] Stabilization delay established by measurement, with margin.
 - [ ] Failed reads always remove probe power.
-- [ ] BTHome payload parses correctly in Home Assistant.
-- [ ] Soil and air temperatures appear as distinct, correctly named entities.
-- [ ] Device is discovered reliably at the intended proxy distance.
+- [ ] One bounded BTHome advertising burst is received and stored by the hub.
+- [ ] The hub being absent does not extend the fixed advertisement window.
+- [ ] Duplicate callbacks from one burst do not create duplicate stored samples.
+- [ ] BTHome payload parses correctly in Home Assistant and the hub.
+- [ ] Soil and air temperatures appear as distinct, correctly named values.
+- [x] Hub plant name, room, and interval are written during a report and read back.
+- [x] Configuration survives reset and appears on the sensor dashboard.
+- [x] The next always-awake report window uses the applied interval.
+- [ ] Other physical sensors remain independent while configuration is delivered.
 - [ ] Deep-sleep and complete-cycle current profiles recorded.
 
 ## Enclosure trial

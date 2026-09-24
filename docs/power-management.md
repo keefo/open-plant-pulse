@@ -7,12 +7,14 @@ implementation so that planned behavior is not mistaken for tested hardware.
 ## Implementation status
 
 The target sensor wakes on a timer, measures the SHT45, powers and reads the
-RS485 soil probe, advertises one BTHome sample, and returns to deep sleep.
+RS485 soil probe, advertises one BTHome sample for the hub and any nearby Home
+Assistant receiver, and returns to deep sleep.
 
-The checked-in ESP32-C3 application is currently only a bootable logging
-scaffold. Deep sleep, SHT45 sampling, probe power control, Modbus acquisition,
-and the BLE advertisement lifecycle still need to be implemented and verified
-on the assembled prototype.
+The checked-in ESP32-C3 application provides powered bench diagnostics and an
+opt-in production mode. Production mode performs one fresh SHT45 acquisition,
+runs a bounded BTHome advertising window, stops the radio, and enters timer deep
+sleep. This path builds but is not physically validated. Probe power control,
+Modbus acquisition, and complete assembled-node power measurements remain pending.
 
 ## Why deep sleep
 
@@ -41,17 +43,16 @@ flowchart TD
     ProbeOn --> Stabilize[Wait for supply and probe stabilization]
     Stabilize --> Modbus[Read and validate Modbus registers]
     Modbus --> ProbeOff[Disable probe supply]
-    ProbeOff --> Encode[Encode valid BTHome measurements]
-    Encode --> Advertise[Advertise over BLE for a bounded interval]
-    Advertise --> Cleanup[Stop radio and place outputs in safe states]
+    ProbeOff --> BLE[Advertise BTHome for a bounded window]
+    BLE --> Cleanup[Stop Bluetooth and place outputs in safe states]
     Cleanup --> Alarm[Configure the next timer wake-up]
     Alarm --> Sleep
 ```
 
-The sensor owns physical acquisition and measurement validation. The hub only
-receives decoded radio measurements; it does not wake the sensor or poll the
-soil probe. Missing expected advertisements are therefore how the hub detects
-that a sensor may be offline.
+The sensor owns physical acquisition and measurement validation. The hub cannot
+wake the sensor, poll the soil probe, or acknowledge a BTHome advertisement.
+Missing expected advertisements are therefore how the hub detects that a sensor
+may be offline. Hub-owned names and plant settings do not change sensor behavior.
 
 ## RTC timer wake-up
 
@@ -110,7 +111,7 @@ have been placed in their safe state:
 
 ```c
 const uint64_t interval_us =
-    (uint64_t)CONFIG_OPP_SAMPLE_INTERVAL_MINUTES * 60ULL * 1000000ULL;
+    (uint64_t)device_config.reporting_interval_seconds * 1000000ULL;
 
 esp_sleep_enable_timer_wakeup(interval_us);
 esp_deep_sleep_start();
@@ -144,24 +145,24 @@ before sleeping again. This supports policies such as faster sampling after
 watering or during rapid change and slower sampling during stable periods.
 
 The CPU cannot revise the timer after deep sleep has started because normal
-application code is no longer running. A remote configuration change must wait
-until the sensor wakes, be received during that active window, and then be
-applied to the following sleep cycle. Policies that depend on information from
-earlier cycles must deliberately reconstruct or retain that state, for example
-from measurements encoded in retained RTC memory, nonvolatile storage, or a
-configuration received from the hub. Flash writes should be minimized because
-they consume energy and have finite endurance.
+application code is no longer running. The hub therefore delivers configuration
+during a connectable report window; the newly persisted interval controls the next
+sleep. Policies that depend on earlier cycles must deliberately reconstruct or
+retain state in RTC memory or nonvolatile storage. Firmware skips identical writes
+to limit flash wear. Connected-BLE energy and security still require physical
+measurement and hardening.
 
 The final code must inspect the wake cause when useful, handle cold boot and
 timer wake consistently, and avoid relying on non-retained state.
 
 ## Power domains by component
 
-| Component | Measurement | BLE advertisement | Deep sleep target |
+| Component | Measurement | Advertisement window | Deep sleep target |
 | --- | --- | --- | --- |
 | ESP32-C3 CPU and main clocks | On | On | Off |
 | ESP32-C3 low-power timer | On | On | On at low power |
-| Bluetooth radio | Off unless needed | On briefly | Off |
+| Wi-Fi radio | Off in production; optional for bench clock/UI | Off | Off |
+| Bluetooth radio | Off | On for a bounded BTHome burst | Off |
 | SHT45 | Measuring briefly | Idle | Idle or explicitly power-gated |
 | RS485 transceiver | On | Off | Off |
 | Probe boost converter | On | Off | Off |
@@ -232,16 +233,17 @@ disabled. Probe power must be removed when:
 - A request times out.
 - A response has an invalid CRC or unexpected length.
 - The SHT45 fails.
-- BLE initialization or advertising fails.
+- BTHome encoding or advertising fails.
 - A later processing step returns an error.
 
 Cleanup should be centralized so normal and error paths use the same shutdown
 logic. Watchdogs and reset defaults are additional safeguards, not substitutes
 for a verified power-enable circuit with a safe inactive state.
 
-The sensor must not advertise cached measurements as though they were new. The
-partial-sample policy must explicitly decide whether a cycle containing only
-some valid measurements is omitted or advertised with only those valid fields.
+The sensor must not report or advertise cached measurements as though they were
+new. A failed source is represented by a status and omitted values. The report may
+retain valid values from other sources, but never stale values from an earlier
+cycle.
 
 ## Estimating battery life
 
@@ -267,7 +269,9 @@ The estimate must include the complete assembly, not only the ESP32-C3:
 - RS485 interface and boost-converter shutdown current.
 - Battery protection and regulator losses.
 - Probe startup and measurement current.
-- BLE advertising current and duration.
+- BTHome radio startup, advertising current, burst duration, and repeat count.
+- Optional bench Wi-Fi/SNTP energy, excluded from production estimates unless the
+  production design retains it.
 - Temperature, battery aging, and usable-capacity margin.
 
 The XIAO documentation's approximate 44 microamp deep-sleep figure is only a
@@ -295,7 +299,8 @@ Before treating this design as complete, verify on the assembled prototype:
 - Wake interval and drift are acceptable.
 - Stabilization delay includes measured margin.
 - Every failure path removes probe power.
-- BLE advertising ends before deep sleep.
+- BTHome advertising ends before deep sleep.
+- An unavailable hub does not extend the bounded advertisement window.
 - Complete-cycle and deep-sleep current profiles are recorded.
 - Battery-life estimates use measured system current.
 

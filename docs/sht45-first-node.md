@@ -3,7 +3,7 @@
 This guide builds the first physical Open Plant Pulse data path:
 
 ```text
-SHT45 -> I2C -> XIAO ESP32-C3 -> BTHome v2 over BLE -> hub computer
+SHT45 -> I2C -> XIAO ESP32-C3 -> BTHome/BLE -> hub computer
 ```
 
 The first milestone measures only ambient air temperature and relative humidity.
@@ -26,8 +26,8 @@ the current one is repeatable.
 2. The I2C controller finds one device at address `0x44`.
 3. Ten consecutive CRC-checked SHT45 readings are plausible and stable in the
    serial monitor.
-4. The hub computer receives and decodes the same readings from BLE without
-   requiring the sensor to join Wi-Fi.
+4. The sensor advertises the same readings over BTHome, and the hub subscribes and
+   stores them without fabricated soil values.
 
 For the first bench test, keep the XIAO connected to USB and sample every five
 seconds. Add deep sleep only after all four checkpoints pass.
@@ -36,7 +36,7 @@ seconds. Add deep sleep only after all four checkpoints pass.
 
 ### Parts and tools
 
-- Seeed Studio XIAO ESP32-C3 and its external BLE antenna.
+- Seeed Studio XIAO ESP32-C3 and its external 2.4 GHz antenna.
 - An SHT45 breakout with accessible `VCC` or `VIN`, `GND`, `SDA`, and `SCL` pins.
 - A data-capable USB-C cable.
 - Four short jumper wires and, if needed, soldered 2.54 mm headers.
@@ -110,7 +110,7 @@ With USB disconnected:
 1. Check that `3V3` is not shorted to `GND`.
 2. Check that SDA is connected only to D4/GPIO6 and SCL only to D5/GPIO7.
 3. Confirm that no wire is connected to the XIAO `5V` pin.
-4. Attach the external antenna before sustained BLE testing. Press the tiny U.FL
+4. Attach the external antenna before sustained radio testing. Press the tiny U.FL
    connector straight down; do not lever it sideways.
 5. Position the SHT45 away from the XIAO regulator, ESP32-C3, direct sunlight,
    your breath, and your fingers.
@@ -166,7 +166,7 @@ sensor/firmware/components/sht45/
 └── sht45.c
 ```
 
-The public API should return values only after both CRC bytes pass:
+The SHT45 parser function should return values only after both CRC bytes pass:
 
 ```c
 typedef struct {
@@ -250,7 +250,7 @@ SHT45 air_temperature_c=23.42 air_humidity_percent=51.87
 Touching or breathing on the sensor should cause an obvious response. Then leave
 it untouched and verify ten consecutive valid samples.
 
-### 4. Add host tests before BLE
+### 4. Add host tests before BLE advertising
 
 Keep conversion and CRC logic independent of ESP-IDF so it can be tested by the
 host C compiler. Add tests for:
@@ -271,81 +271,38 @@ sh scripts/test-sensor.sh
 Only the thin I2C transport should depend on ESP-IDF; the response parser should
 remain host-testable.
 
-### 5. Define the air-only bring-up advertisement
+### 5. Define the air-only BTHome fixture
 
-The repository's released BTHome contract v1 is soil-only. Do not silently call
-an air-only packet contract v1. For this bring-up, use a temporary documented
-payload under service UUID `0xFCD2`:
+Extend the BTHome contract in [`protocol/README.md`](../protocol/README.md) with
+stable sensor identity, packet/deduplication semantics, SHT45 air temperature,
+air humidity, and explicit partial-source behavior. Omit soil measurements; do
+not fill missing values with fake zeros.
 
-| Byte(s) | Meaning | Encoding |
-| --- | --- | --- |
-| 0 | BTHome device information | `0x40`: v2, unencrypted, regular interval |
-| 1 | Temperature object | `0x02` |
-| 2-3 | Air temperature | signed little-endian, factor 0.01 degrees C |
-| 4 | Humidity object | `0x03` |
-| 5-6 | Relative humidity | unsigned little-endian, factor 0.01% |
-
-For 23.42 degrees C and 51.87% RH, the service data is:
-
-```text
-40 02 26 09 03 43 14
-```
-
-Use a local name such as `OPP-AIR-A1B2`, where the suffix comes from the final
-two bytes of the factory MAC. This is adequate for bench identification, but it
-is not the project's final cross-platform enrollment design.
-
-Encode with rounded, range-checked integers:
-
-```c
-int16_t temperature = (int16_t)lroundf(sample.air_temperature_c * 100.0f);
-uint16_t humidity = (uint16_t)lroundf(sample.air_humidity_percent * 100.0f);
-```
-
-Initialize NimBLE, advertise the local name and `0xFCD2` service data for a
-bounded window such as 3-5 seconds, then stop advertising. During initial USB
-testing, repeat the measure-and-advertise cycle every five seconds without deep
-sleep so logs remain available.
+Add shared fixtures and host tests for valid air-only data, negative temperature,
+humidity boundaries, missing or malformed identity, duplicate packet identifiers,
+unsupported objects, and truncated service data. The hub decoder must accept the
+fixture before firmware emits it.
 
 ### 6. Add the hub's air-only BLE ingestion path
 
-The current hub does **not** yet accept this physical packet:
+The current hub does **not** yet subscribe to physical advertisements. Its BTHome
+decoder handles only the soil-only version-1 fixture, and
+`SimulationUdpReceiver` remains loopback-only regression infrastructure.
 
-- `ingestion/bthome.py` requires the soil-only 10-byte v1 payload.
-- `SensorReading` and SQLite rows require soil temperature, moisture, and
-  conductivity.
-- `SimulationUdpReceiver` is intentionally loopback-only and requires a full
-  simulated soil-and-air reading. Do not expose it to the LAN or fill missing
-  soil values with fake zeros.
+Implement the hub side in the order in [`hub.md`](hub.md):
 
-Implement the server side in this order:
+1. Finalize identity, deduplication, and partial-source fixtures.
+2. Add a deterministic BLE advertisement replay adapter.
+3. Migrate SQLite for sensors, enrollment, advertisements, and partial readings.
+4. Add the Bleak subscriber filtered to BTHome service UUID `0xFCD2`.
+5. Store valid air measurements while preserving soil fields as absent and keep
+   soil-dependent care detection disabled for this partial sample.
+6. Expose scanner health and sensor-scoped latest/history views in the household
+   web application.
 
-1. Add an air-only BTHome decoder for the exact seven-byte payload above. Test a
-   valid fixture, signed negative temperature, wrong object order, wrong length,
-   unsupported device-info flags, and truncated data.
-2. Add a Bleak scanner adapter that filters service UUID `0000fcd2-0000-1000-8000-00805f9b34fb`
-   and local names beginning with `OPP-AIR-`.
-3. Give the adapter an explicit start/stop lifecycle and isolate malformed
-   advertisements so one bad device cannot stop scanning.
-4. Introduce an air-sample domain/storage path with nullable soil fields or a
-   separate typed `AirReading`. Preserve the distinction between absent data and
-   a measured zero. A separate type is preferable while care-event logic still
-   assumes soil readings.
-5. Assign `observed_at` from the hub's UTC receipt time because the advertisement
-   contains no wall clock. Add a packet ID before relying on deduplication across
-   repeated advertisements.
-6. Feed accepted samples into SQLite and expose them through the existing latest
-   and history APIs. Keep care-event detection disabled for air-only samples.
-
-On macOS, grant Bluetooth permission to the terminal or Python executable that
-runs the hub. On Linux, verify that BlueZ is running and that the service account
-has permission to scan. Run the hub's HTTP API on loopback unless LAN access is
-explicitly secured.
-
-Before integrating persistence, a short diagnostic Bleak script may print the
-decoded values. That still counts as checkpoint 4 only when readings are stable
-for at least ten minutes and malformed packets are rejected without terminating
-the scanner.
+Before enabling physical firmware advertising, replay the shared fixtures and
+verify persistence, deduplication, restart behavior, and dashboard rendering for
+at least ten minutes.
 
 ### 7. Verify end to end
 
@@ -358,14 +315,14 @@ PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 The physical-node acceptance test is:
 
 1. The serial log reports address `0x44` and valid CRCs.
-2. A BLE scanner sees `OPP-AIR-xxxx` and UUID `0xFCD2`.
-3. Decoded BLE values match the serial values within rounding error.
-4. The hub API returns non-null `air_temperature_c` and
+2. The sensor emits the expected BTHome service data for a bounded window.
+3. The hub-decoded BLE values match the serial values within rounding error.
+4. The hub web application shows non-null `air_temperature_c` and
    `air_humidity_percent` with a UTC receipt time.
 5. The dashboard updates both air measurements without displaying fabricated
    soil measurements.
-6. Disconnecting the SHT45 produces a bounded error and no stale advertisement.
-7. Restarting the hub resumes scanning and does not crash on repeated packets.
+6. Disconnecting the SHT45 produces a bounded error and no stale measurement.
+7. Repeated callbacks for one packet create no duplicate row.
 
 Run all repository checks after each completed layer:
 
@@ -381,17 +338,18 @@ After USB and BLE tests pass, change the lifecycle to:
 flowchart LR
     Wake[Boot or timer wake] --> Init[Initialize I2C]
     Init --> Read[Read and CRC-check SHT45]
-    Read -->|valid| BLE[Advertise for 3-5 seconds]
+    Read --> Advertise[Advertise BTHome for a bounded window]
     Read -->|invalid| Log[Log bounded error]
-    BLE --> Stop[Stop BLE and release peripherals]
+    Advertise --> Stop[Stop Bluetooth and release peripherals]
     Log --> Stop
     Stop --> Timer[Set next timer wake]
     Timer --> Sleep[Deep sleep]
 ```
 
 Start with a one-minute interval for bench observation, then restore the project
-default after validation. Never enter deep sleep while the BLE stack is still
-advertising. A failed SHT45 read should produce no measurement advertisement.
+default after validation. Never enter deep sleep while advertising is active.
+Advertising needs a bounded duration, and a failed SHT45 read must not reuse a
+previous measurement.
 
 ## Troubleshooting
 
@@ -403,15 +361,13 @@ advertising. A failed SHT45 read should produce no measurement advertisement.
 | CRC failures | Wiring noise, early read, wrong byte order | Use 100 kHz, wait 10 ms, inspect all six bytes |
 | Temperature reads too high | Board heat or poor placement | Move the SHT45 away from the XIAO and wait to settle |
 | Humidity jumps while testing | Breath or handling | Stop touching it and allow several minutes to recover |
-| BLE visible but hub gets nothing | Hub decoder still expects soil v1 | Implement the air-only decoder and Bleak adapter |
-| BLE disappears during sleep | Expected behavior | Scan across the complete wake interval |
+| Hub sees no advertisement | Bluetooth disabled, missing permission, wrong UUID, or poor range | Verify another BLE device, inspect service UUID `0xFCD2`, and move the node closer |
+| One sample is stored repeatedly | Missing packet identity or faulty deduplication | Inspect the captured service data and hub deduplication fixture |
 
 ## References
 
 - [Seeed XIAO ESP32-C3 getting started and pin map](https://wiki.seeedstudio.com/XIAO_ESP32C3_Getting_Started/)
 - [Sensirion SHT45 product page and current datasheet](https://sensirion.com/products/catalog/SHT45)
 - [ESP-IDF ESP32-C3 I2C master documentation](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c3/api-reference/peripherals/i2c.html)
-- [BTHome v2 format](https://bthome.io/format/)
-- [Bleak documentation](https://bleak.readthedocs.io/)
 - [Open Plant Pulse protocol](../protocol/README.md)
 - [Open Plant Pulse power lifecycle](power-management.md)

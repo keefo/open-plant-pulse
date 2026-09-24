@@ -11,5 +11,6 @@ deploy/
 ```
 
 Deployment artifacts must define a dedicated data/config location, least-privilege
-Bluetooth access, log rotation, clean shutdown, database migration, and rollback.
+LAN binding and firewall behavior, log rotation, clean shutdown, database
+migration, and rollback.
 Templates must never contain credentials or machine-specific paths.

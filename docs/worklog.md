@@ -187,3 +187,120 @@
 - Design authentication or a physical-presence policy before exposing sensitive maintenance operations.
 - Revisit the flash header and partition table before adding OTA or larger persistent assets.
 - Return the production firmware to a BLE/deep-sleep lifecycle after bench diagnostics are complete.
+
+## 2026-09-13
+
+### Hub BTHome phases 1–2 validation
+
+- Installed the declared hub development dependencies in an isolated `.venv` and
+  confirmed the dependency set is consistent with `pip check`.
+- Exercised CoreBluetooth discovery on macOS and observed 40 BLE devices without a
+  permission or adapter error.
+- Started the production `BleakSubscriber` with its BTHome `0xFCD2` filter and
+  observed `scanner.status` remain `scanning` with no error.
+- Observed no BTHome broadcaster, so `last_receive_at` remained null; physical
+  BTHome reception, multi-sensor radio behavior, and Linux BlueZ permissions remain
+  unvalidated.
+- Completed phases 1–2 using captured evidence: repeated replay across restart and
+  the production scanner callback path keep three sensor identities isolated,
+  suppress duplicate durable samples, preserve partial-source nulls, recover from
+  adapter interruption, bound receive diagnostics, and report scanner/database
+  health separately.
+
+### Hub phase 3 and sensor phase 4 start
+
+- Added schema-v3 sensor management fields and browser workflows for the sensor
+  inbox, three-sensor fleet monitoring, enrollment, names, rooms, profiles,
+  thresholds, archive/restore, and replacement with optional history merge.
+- Added sensor-scoped latest-reading, history, and care-log queries, responsive
+  navigation/deep links, freshness and unavailable-source states, and same-origin
+  checks for browser mutations.
+- Bumped sensor firmware to 0.2.0 and added an opt-in air-only production lifecycle:
+  fresh SHT45 acquisition, stable BTHome v2 identity, retained packet ID, bounded
+  non-connectable advertising, explicit NimBLE shutdown, and timer deep sleep.
+- Host sensor tests and 46 hub tests pass. The ESP-IDF 5.5.5 production-mode build
+  succeeds. An intermediate 0.2.0 image flashed successfully, after which the USB
+  serial device disappeared on sleep before runtime logs could be captured; the
+  final radio-shutdown adjustment therefore still needs reflashing. Running-version,
+  physical BLE delivery, repeated wake cycles, power measurements, soil-probe
+  cleanup, and the 24-hour soak remain unverified.
+- Bumped firmware to 0.2.1 and disabled `OPP_PRODUCTION_LIFECYCLE` in the local
+  ignored `sensor/sdkconfig` to prepare an always-awake recovery image. Fixed the
+  resulting development-build unused-variable warning; canonical checks and the
+  ESP-IDF 5.5.5 build pass. The image contains version 0.2.1 and uses 0xf68a0 bytes
+  of the 0x100000-byte app partition, leaving 4% free.
+- Initial `sensor/firmware/flush.sh --no-monitor` attempts were blocked while no
+  ESP32 serial port was present. After USB recovery exposed
+  `/dev/cu.usbmodem14801`, the canonical script flashed 0.2.1 successfully and
+  verified every written image hash. Releasing BOOT and resetting produced normal
+  flash boot; serial logs confirmed running version 0.2.1 and repeated SHT45 samples.
+  The HTTP `/status` response confirmed USB power, Wi-Fi at `192.168.0.111`, clock
+  synchronization, and a current SHT45 sample. Physical BLE delivery, production
+  sleep cycles, power, and soak validation remain unverified.
+
+### Persistent hub-to-sensor configuration
+
+- Bumped firmware to 0.3.0 and added a versioned connected-BLE configuration
+  characteristic for plant name, room, and 5-minute-to-24-hour reporting interval.
+- Firmware validates and stores accepted configuration in NVS, renders it on the
+  sensor dashboard, and applies the interval to future awake reports or deep sleep.
+- The hub tracks desired and acknowledged revisions, retries failures after later
+  reports, and shows pending/applied/retrying state on sensor detail pages.
+- All 60 canonical host checks pass and the ESP-IDF 5.5.5 firmware build succeeds.
+  Initial validation was blocked while no serial device was available.
+
+## 2026-09-14
+
+### Firmware 0.3.0 physical configuration validation
+
+- Flashed the always-awake firmware 0.3.0 image through the canonical
+  `sensor/firmware/flush.sh` workflow; esptool verified every written image hash.
+  Serial boot output confirmed version 0.3.0 and restored NVS revision 1 with plant
+  `white bird`, room `living`, and a 30-minute interval.
+- Diagnosed `/status` connection resets as an HTTP-task stack-protection fault in the
+  enlarged `snprintf` response. Moved the 2,432-byte response buffer to the heap with
+  allocation and truncation checks, reran all 60 host checks, rebuilt, and reflashed.
+  Five consecutive `/status` requests then returned HTTP 200 without a reset.
+- The live `/status` payload reported version 0.3.0, revision 1, `white bird`,
+  `living`, 30 minutes, and USB power. Headless Chrome rendered the same revision,
+  plant, room, and interval in the board's Overview page.
+- Direct CoreBluetooth GATT access from the project `.venv` wrote and read back the
+  revision-1 payload exactly. After the final flash/reset, an idempotent read-back
+  completed at 08:13:25 UTC, 1,801.8 seconds after the estimated 07:43:24 UTC boot,
+  physically confirming the first configured 30-minute report window.
+- The direct GATT client consumed that advertising connection, so the concurrently
+  running hub did not store a second cadence sample. Multi-sensor physical behavior,
+  production deep-sleep operation, measured current/energy, and the 24-hour soak
+  remain unverified. `/status` only confirms that the current source is USB; no power
+  meter was connected.
+
+## 2026-09-15
+
+### Firmware 0.5.0 manual report acknowledgement
+
+- Added an always-awake diagnostics **Report now** control that interrupts the wait
+  for the next configured interval without moving that scheduled deadline.
+- Forced reports carry a standard BTHome button-press event and expose a versioned
+  request-ID/packet-ID token through the connected-BLE service. The Hub writes that
+  exact token back only after durable ingestion and suppresses duplicate GATT attempts
+  from repeated callbacks in one advertising burst.
+- The sensor dashboard tracks queued, reporting, acknowledged, unacknowledged, and
+  failed states and shows both the request and packet IDs. Scheduled and production
+  deep-sleep reports remain one-way and do not wait for a Hub.
+- Hardware testing at the persisted 3-second interval exposed and fixed starvation
+  when the advertising window occupied the complete interval. The scheduler now
+  prioritizes a queued manual request as soon as the active window closes without
+  moving the periodic deadline.
+- The first physical report was durably accepted as packet 18, but macOS retained
+  the old GATT service layout and could not discover a newly added characteristic.
+  The six-byte token was moved onto the established configuration characteristic,
+  with version and payload length distinguishing the two protocols; this avoids a
+  service-cache migration requirement.
+- All 65 repository checks and JavaScript syntax validation passed. ESP-IDF 5.5.5
+  built firmware 0.5.0 with 17% of the app partition free. The canonical flash
+  workflow wrote the final image to `/dev/cu.usbmodem14801` and verified every hash.
+- Live `/status` confirmed firmware 0.5.0, revision 5, and the persisted 3-second
+  interval. Physical request 1 emitted packet 6; the Hub database accepted it at
+  `2026-09-15T02:10:44.026289Z`, and firmware recorded the matching acknowledgment
+  before report completion. Headless Chrome rendered `Request 1 · packet 6 · report
+  stored and Hub acknowledged` from the board's Maintenance page.

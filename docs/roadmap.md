@@ -3,69 +3,109 @@
 ## M0: Monorepo foundation
 
 - [x] Separate sensor and hub product boundaries.
-- [x] Host-tested Modbus parser and BTHome encoder.
-- [x] Host-tested hub decoder with a shared protocol fixture.
-- [x] Runnable simulated sensor, UDP ingestion, local API, and live dashboard.
-- [x] Machine-readable planning BOM and maintenance policy.
-- [x] System architecture, development, safety, and integration documentation.
-- [x] Repository checks in continuous integration.
+- [x] Host-test the Modbus parser and BTHome encoder/decoder.
+- [x] Add a shared BTHome fixture.
+- [x] Run the simulated sensor, loopback UDP ingestion, SQLite store, internal HTTP
+  endpoints, and live dashboard.
+- [x] Add system architecture, development, safety, and integration documentation.
+- [x] Add repository checks in continuous integration.
 
-## M1: Sensor bench prototype
+## M1: Freeze the BLE ingestion contract
 
-- [ ] Resolve exact MPNs for controller, RS485 interface, SHT45, and power parts.
-- [ ] Capture the selected NPKPHCTH-S revision and verify all seven register mappings.
-- [ ] Verify expansion-board power-enable behavior.
-- [ ] Validate SHT45 I2C wiring, CRC-checked reads, placement, and thermal error.
-- [ ] Implement bounded UART transport and configurable register mapping.
-- [ ] Validate 100 consecutive reads against a reference Modbus tool.
-- [ ] Implement NimBLE advertisement lifecycle and guaranteed power cleanup.
+- [x] Define stable identity across macOS, Linux, hub replacement, and sensor reset.
+- [x] Define a packet identifier or tested advertisement deduplication rule.
+- [x] Finalize SHT45 object semantics and partial-source behavior.
+- [x] Decide whether initial advertisements remain unencrypted and document the
+  later key-provisioning path if encryption is required.
+- [x] Add fixtures for multiple sensors, duplicates, partial samples, malformed
+  payloads, and unsupported objects.
+- [x] Add a deterministic advertisement replay adapter using the same application
+  ingestion interface as the physical scanner.
 
-**Exit:** serial readings match the reference tool, the shared fixture is emitted,
-and every error path deasserts probe power.
+**Exit:** at least three replayed sensors remain distinct, duplicates are not
+stored, and a failed source cannot appear as a fresh value.
 
-## M2: End-to-end hub ingestion
+## M2: Hub BLE subscriber and durable storage
 
-- [ ] Capture service UUID `0xFCD2` using Bleak on macOS and Linux.
-- [ ] Define stable cross-platform sensor enrollment and identity.
-- [ ] Add a versioned SQLite schema and migration mechanism.
-- [ ] Persist valid readings with UTC receipt time and raw payload.
-- [ ] Deduplicate repeated advertisements and expose collector health.
+- [x] Implement continuous BTHome `0xFCD2` subscription with `bleak`.
+- [x] Add explicit SQLite migrations for sensors, enrollment, advertisements,
+  partial readings, and hub-owned plant metadata.
+- [x] Persist readings and bounded receive diagnostics transactionally.
+- [x] Recover with bounded backoff after adapter loss and isolate malformed devices.
+- [x] Report scanner, database, and last-receive health independently.
+- [ ] Validate native Bluetooth behavior and permissions on macOS and Linux (macOS
+  scanner startup verified; physical BTHome reception and Linux remain).
 
-**Exit:** a 24-hour hardware run stores complete, queryable readings on both
-supported platforms without duplicates or daemon crashes.
+**Exit:** physical or captured advertisements survive hub restart, duplicate
+callbacks, adapter interruption, and concurrent traffic from at least three
+sensors without crossing identities.
 
-## M3: Local service and integrations
+## M3: Household HTTP server and web application
 
-- [x] Persist deduplicated raw readings indefinitely in versioned SQLite storage.
-- [ ] Add read-only health, sensor, latest-reading, and history APIs.
-- [ ] Stream new readings over a local WebSocket.
-- [ ] Add MQTT discovery/state publishing for Home Assistant.
-- [ ] Add native notifications behind a platform adapter.
-- [ ] Package launchd and systemd services with upgrade/rollback instructions.
+- [x] Add hub health and an inbox for newly observed, unclaimed sensors.
+- [x] Add multi-plant overview and per-sensor reading/history views.
+- [x] Add name, room, plant/profile, threshold, archive, and replace/merge flows.
+- [x] Link fleet cards to sensor-detail routes; consolidate configuration,
+  rename/delete, and persisted per-sensor device configuration on each detail page.
+- [x] Add host-tested connected-BLE delivery/read-back for plant name, room, and
+  reporting interval, with NVS-backed firmware configuration.
+- [x] Clearly distinguish fresh, stale, unavailable-source, and scanner-failure
+  states.
+- [x] Keep routes required by the web application internal while they stabilize.
+- [x] Default to loopback and document explicit LAN binding, firewall, same-origin,
+  and CSRF behavior.
 
-**Exit:** a clean host install survives reboot and continues collecting when any
-optional client, broker, or integration is offline.
+**Exit:** a household user can enroll, manage, and monitor three BLE sensors from a
+browser without a terminal, with device changes clearly shown as pending or applied.
 
-## M4: Analysis and prediction
+## M4: Sensor bench and physical BLE lifecycle
 
-- [x] Detect and persist watering and possible fertilizing events from correlated sensor changes.
-- [ ] Establish per-plant wet/dry baselines and data-quality rules.
-- [ ] Calculate moisture slope and bounded depletion estimates.
-- [ ] Model EC behavior relative to watering events and moisture changes.
-- [ ] Calculate VPD from local SHT45 air temperature/humidity with documented
-	canopy-temperature assumptions.
+- [ ] Resolve exact MPNs and verify the seven soil-probe register mappings.
+- [ ] Validate SHT45 wiring, CRC-checked reads, placement, and thermal error.
+- [ ] Implement bounded UART acquisition and guaranteed probe-power cleanup.
+- [x] Implement a bounded BTHome advertise/stop/deep-sleep cycle (built for ESP32-C3;
+  physical cycle validation remains below).
+- [x] Add an always-awake development path that reports every five seconds before
+  configuration and uses the hub-delivered interval afterward.
+- [ ] Verify repeated delivery under normal and degraded radio conditions.
+- [ ] Measure complete-cycle and deep-sleep energy at intended reporting intervals.
+- [x] Run the canonical version bump, build, flash, and running-device verification
+  for the firmware 0.3.0 always-awake bench image.
+- [ ] Flash and verify the firmware 0.3.0 production BLE/deep-sleep image separately.
+
+**Exit:** a 24-hour run stores queryable BLE samples, every error path deasserts
+probe power, and build, flash, running version, BLE delivery, and power results are
+recorded separately.
+
+## M5: Service packaging and resilience
+
+- [ ] Package launchd and systemd services with native Bluetooth permissions.
+- [ ] Verify reboot startup, clean shutdown, database migration, backup, and rollback.
+- [ ] Test explicit household LAN access and firewall instructions on both hosts.
+- [ ] Add retention/export controls after representative database growth is measured.
+
+**Exit:** a clean host install survives reboot and resumes collection without
+manual terminal steps; the browser still serves stored history during BLE outages.
+
+## M6: Analysis and integrations
+
+- [x] Detect and persist watering and possible fertilizing events from correlated
+  sensor changes.
+- [ ] Establish per-plant baselines and data-quality rules.
+- [ ] Calculate moisture slope, bounded depletion estimates, EC behavior, and VPD.
 - [ ] Backtest predictions and report confidence/error rather than false precision.
+- [ ] Add MQTT discovery/state publishing and native notifications behind adapters.
 
-**Exit:** algorithms have documented inputs, failure modes, and backtest results
-against retained data before they drive user notifications.
+## Later: public API and alternate sensor transport
 
-## M5: User experience and hardware release
-
-- [ ] Build a local web dashboard against the public hub API.
-- [ ] Evaluate a separate macOS menu-bar client.
-- [ ] Publish editable enclosure CAD, drawings, assembly photos, and frozen BOM.
-- [ ] Complete measured battery-life and two-week hardware soak reports.
-- [ ] Tag the first reproducible sensor-plus-hub release.
+- [ ] Stabilize and version a read-only public HTTP API after the household UI and
+  BLE domain model settle.
+- [ ] Add authenticated management API operations only when needed.
+- [ ] Measure complete BLE, HTTP, and authenticated/TLS HTTP wake-cycle energy under
+  normal and degraded signal conditions.
+- [ ] Re-evaluate Wi-Fi/HTTP or hybrid sensor transport for acknowledged delivery,
+  larger diagnostics, or remote configuration.
+- [ ] Evaluate a separate macOS menu-bar client only after a public API exists.
 
 ## Later: Actuation
 

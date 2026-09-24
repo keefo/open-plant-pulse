@@ -3,10 +3,11 @@
 Open Plant Pulse is a local-first plant monitoring system with two products:
 
 - A battery-powered **sensor node** reads a seven-parameter NPKPHCTH-S RS485 soil
-   probe and an SHT45 ambient sensor, then broadcasts the implemented measurement
-   subset using BTHome v2.
-- An always-on **desktop hub** receives nearby sensors on macOS or Linux, stores
-   history, derives plant-state insights, and serves local integrations.
+  probe and an SHT45 ambient sensor, then broadcasts each wake-cycle sample using
+  BTHome v2 over BLE.
+- An always-on **desktop hub** subscribes to nearby BTHome sensors on macOS or
+  Linux, stores history, derives plant-state insights, and hosts a local HTTP web
+  application for household management and monitoring.
 
 The sensor can still be discovered directly by Home Assistant. The hub is for
 users who want durable local history, analysis, native notifications, APIs, and
@@ -14,9 +15,10 @@ multi-system forwarding without putting those responsibilities on the battery
 device.
 
 > [!IMPORTANT]
-> This repository is in the prototype stage. Protocol encode/decode logic is
-> tested, but BLE collection, target hardware, persistence, predictions, and
-> packaging have not yet been validated end to end.
+> This repository is in the prototype stage. The loopback simulator, SQLite
+> persistence, internal browser endpoints, dashboard, and BTHome encode/decode
+> logic are tested, but continuous BLE collection, target hardware, predictions,
+> and packaging have not been validated end to end.
 
 ## Repository layout
 
@@ -29,7 +31,7 @@ open-plant-pulse/
 ├── hub/                     Installable Python desktop/server product
 │   ├── src/                 Domain and adapter packages
 │   └── tests/               Hub unit and integration tests
-├── simulator/               Development sensor broadcasting full dummy readings
+├── simulator/               Development sensor sending full dummy readings
 ├── protocol/                Versioned sensor-to-hub contract and fixtures
 ├── deploy/                  Future launchd/systemd and packaging assets
 ├── docs/                    System architecture, setup, roadmap, and proposals
@@ -102,10 +104,12 @@ commands.
 | --- | --- |
 | Sensor Modbus parser and BTHome encoder | Host tested |
 | Simulated sensor to hub to web dashboard | Runnable and integration tested |
-| Hub BTHome decoder and shared fixture | Host tested; BLE scanner planned |
-| ESP-IDF target application | SHT45 acquisition implemented; soil transport planned |
-| Hub BLE scanner and SQLite persistence | Planned |
-| Hub API, UI, MQTT, notifications, predictions | Planned |
+| Hub SQLite persistence and current HTTP dashboard | Runnable and integration tested |
+| Hub BLE subscriber and multi-sensor storage | Implemented and replay tested; macOS physical reception verified, Linux pending |
+| Direct BTHome Home Assistant path | Encoder/decoder host tested; hardware pending |
+| ESP-IDF target application | Firmware 0.5.0 adds a tracked manual report with exact Hub acknowledgment to the always-awake bench UI; build/flash/live results are recorded in the worklog, while production sleep/power/soak validation remains pending |
+| Multi-plant management UI | Fleet-to-detail navigation, enrollment, per-sensor configuration delivery state, rename/delete, and sensor-specific freshness are host tested |
+| Public HTTP API, sensor Wi-Fi/HTTP, MQTT, notifications | Lower priority |
 | Electrical design and enclosure | Needs prototype validation |
 
 See [the roadmap](docs/roadmap.md) for acceptance criteria. The original Chinese
