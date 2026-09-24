@@ -304,3 +304,25 @@
   `2026-09-15T02:10:44.026289Z`, and firmware recorded the matching acknowledgment
   before report completion. Headless Chrome rendered `Request 1 · packet 6 · report
   stored and Hub acknowledged` from the board's Maintenance page.
+
+## 2026-09-23
+
+### Repository history and hub Wi-Fi onboarding design
+
+- Committed the previously uncommitted body of work in four logical commits:
+  the BTHome contract-v2 and connected-BLE protocol definitions, sensor firmware
+  0.2.0 through 0.5.1, hub BLE ingestion with sensor management, and the matching
+  documentation. All 67 canonical host checks passed before committing.
+- Reviewed the existing Wi-Fi path from a customer's perspective. Credentials are
+  compile-time `OPP_WIFI_SSID`/`OPP_WIFI_PASSWORD` constants baked into the image;
+  no provisioning mechanism of any kind exists, and none is needed on the sensor
+  because production telemetry is BLE-only.
+- Recorded review findings: changing networks requires a rebuild and reflash, the
+  password sits in unencrypted flash, the disconnect handler reconnects immediately
+  without backoff and never logs the reason code, the auth threshold silently
+  rejects open networks, and no customer-facing setup document exists.
+- Added `docs/proposals/hub-wifi-onboarding.md` covering the Raspberry Pi hub
+  appliance, a two-tier design that uses Raspberry Pi Imager pre-configuration as
+  the primary path and a hub-owned NetworkManager setup hotspot as the recovery
+  path, the security and radio-coexistence constraints, a four-phase delivery plan,
+  and a validation strategy. Nothing is implemented.
