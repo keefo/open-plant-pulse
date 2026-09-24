@@ -48,6 +48,12 @@ static char station_ip[IP4ADDR_STRLEN_MAX] = "disconnected";
 static char station_mac[18] = "unknown";
 static char station_ssid[33] = "unknown";
 static bool station_connected;
+/* Why the last join attempt failed, in the vocabulary the hub and the browser
+ * share. Without this every failure looks identical from outside the device. */
+static const char *station_failure = "";
+static uint32_t consecutive_failures;
+static esp_timer_handle_t reconnect_timer;
+static esp_timer_handle_t address_timer;
 static temperature_sensor_handle_t chip_temperature_sensor;
 static esp_timer_handle_t restart_timer;
 #if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
@@ -433,7 +439,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
              "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
              "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s,"
-             "\"onboarding_state\":\"%s\","
+             "\"onboarding_state\":\"%s\",\"wifi_failure\":\"%s\","
              "\"device_config_revision\":%lu,\"plant_name\":\"%s\",\"room\":\"%s\","
              "\"reporting_interval_seconds\":%lu,"
              "\"force_report_state\":\"%s\",\"force_report_error\":\"%s\","
@@ -455,6 +461,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              air_humidity, air_sample_age, sample_sequence, sample_monotonic,
              sample_unix_time, sample_time_utc,
              opp_device_identity_is_onboarded() ? "onboarded" : "onboarding",
+             station_failure,
              (unsigned long)device_config.revision,
              escaped_plant_name, escaped_room,
              (unsigned long)device_config.reporting_interval_seconds,
@@ -617,18 +624,81 @@ static esp_err_t start_http_server(void)
     return ESP_OK;
 }
 
+/* One failure reason per thing a customer can act on.
+ *
+ * A 5 GHz-only network is indistinguishable from an absent one here, because the
+ * ESP32-C3 has no 5 GHz radio and simply never sees it; both arrive as
+ * WIFI_REASON_NO_AP_FOUND. The hub says so in the wording for that reason. */
+static const char *classify_disconnect(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+        return "wrong_password";
+    case WIFI_REASON_NO_AP_FOUND:
+        return "network_not_found";
+    default:
+        return "association_timeout";
+    }
+}
+
+/* Back off rather than reconnecting in a tight loop. The previous behaviour
+ * retried immediately and forever, which burned power and filled the log without
+ * ever saying what was wrong. */
+static uint32_t reconnect_delay_ms(uint32_t failures)
+{
+    const uint32_t capped = failures > 6 ? 6 : failures;
+    uint32_t delay = 1000U << (capped > 0 ? capped - 1 : 0);
+    return delay > 60000U ? 60000U : delay;
+}
+
+static void reconnect_timer_callback(void *argument)
+{
+    (void)argument;
+    esp_wifi_connect();
+}
+
+static void address_timer_callback(void *argument)
+{
+    (void)argument;
+    if (!station_connected) {
+        station_failure = "no_address";
+        ESP_LOGW(TAG, "Associated but no address was offered");
+    }
+}
+
 static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *disconnected = event_data;
         station_connected = false;
         opp_clock_sync_set_network_available(false);
         strlcpy(station_ip, "disconnected", sizeof(station_ip));
+        if (address_timer != NULL) {
+            esp_timer_stop(address_timer);
+        }
+        if (disconnected != NULL) {
+            station_failure = classify_disconnect(disconnected->reason);
+            if (consecutive_failures < UINT32_MAX) {
+                consecutive_failures++;
+            }
+            ESP_LOGW(TAG, "Wi-Fi disconnected: %s (reason %u)",
+                     station_failure, (unsigned)disconnected->reason);
+        }
 #if CONFIG_OPP_WEB_UI_ENABLED
-        ESP_LOGW(TAG, "Wi-Fi disconnected; reconnecting");
-        esp_wifi_connect();
+        if (reconnect_timer != NULL) {
+            const uint32_t delay = reconnect_delay_ms(consecutive_failures);
+            esp_timer_stop(reconnect_timer);
+            ESP_LOGI(TAG, "Retrying in %lu ms", (unsigned long)delay);
+            esp_timer_start_once(reconnect_timer, (uint64_t)delay * 1000);
+        } else {
+            esp_wifi_connect();
+        }
 #else
         if (clock_wifi_window_open) {
             ESP_LOGW(TAG, "Wi-Fi disconnected during clock synchronization; reconnecting");
@@ -638,6 +708,11 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = event_data;
         station_connected = true;
+        station_failure = "";
+        consecutive_failures = 0;
+        if (address_timer != NULL) {
+            esp_timer_stop(address_timer);
+        }
         opp_clock_sync_set_network_available(true);
         snprintf(station_ip, sizeof(station_ip), IPSTR, IP2STR(&event->ip_info.ip));
 #if CONFIG_OPP_WEB_UI_ENABLED
@@ -675,7 +750,19 @@ esp_err_t web_ui_start(void)
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&restart_timer_args, &restart_timer), TAG,
                         "Failed to create restart timer");
+    const esp_timer_create_args_t reconnect_timer_args = {
+        .callback = reconnect_timer_callback,
+        .name = "wifi_retry",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&reconnect_timer_args, &reconnect_timer), TAG,
+                        "Failed to create reconnect timer");
 #endif
+    const esp_timer_create_args_t address_timer_args = {
+        .callback = address_timer_callback,
+        .name = "wifi_address",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&address_timer_args, &address_timer), TAG,
+                        "Failed to create address timer");
 #if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
     const esp_timer_create_args_t clock_wifi_timer_args = {
         .callback = clock_wifi_timer_callback,
@@ -725,6 +812,10 @@ esp_err_t web_ui_start(void)
 #endif
 
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "Failed to start Wi-Fi");
+    /* Associating is not joining. Without an address within this window the join
+     * has failed in a way the disconnect reason never reports. */
+    ESP_RETURN_ON_ERROR(esp_timer_start_once(address_timer, 20ULL * 1000 * 1000), TAG,
+                        "Failed to start address timer");
 #if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED
     ESP_RETURN_ON_ERROR(
         esp_timer_start_once(clock_wifi_timer,

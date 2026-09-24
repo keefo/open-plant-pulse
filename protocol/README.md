@@ -263,6 +263,42 @@ This acknowledgment is deliberately limited to user-initiated reports in the
 always-awake diagnostics runtime. Scheduled and production deep-sleep telemetry
 remain one-way and never extend their bounded awake window waiting for a Hub.
 
+## Connected-BLE Wi-Fi credentials version 3
+
+The hub holds one household network for the whole house and sends it to any sensor
+whose web console is switched on. The sensor stores it in NVS and joins. Readings
+never depend on it: telemetry is BTHome either way, and a sensor with its console
+off is fully functional.
+
+This is a third payload on the same read/write characteristic
+`7f510002-1b15-4c28-9a4a-8d0f4f505000`, distinguished by its first byte as the
+other two are. It is a separate payload rather than an extension of device
+configuration for two reasons: that payload already occupies 171 of the roughly
+253 bytes an ATT write carries at the negotiated MTU, and Wi-Fi is optional while
+plant name and interval are not.
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Protocol version, `3` |
+| 1 | 4 | Revision, unsigned little-endian |
+| 5 | 1 | Console enabled, `0` or `1` |
+| 6 | 1 | Network name length, at most 32 |
+| 7 | n | Network name |
+| 7+n | 1 | Password length, at most 63 |
+| 8+n | m | Password |
+
+A disabled console still carries its network, so switching it back on needs
+nothing resent. A payload that claims an enabled console with no network name is
+refused, as is any payload whose declared lengths do not account for exactly the
+bytes received. The sensor never returns the password on a read, and it appears in
+no status response, log, or serial output.
+
+> [!IMPORTANT]
+> This payload carries a household secret, so it may only be written over a
+> bonded, encrypted link. The characteristic requires encryption from firmware
+> 0.6.0; earlier firmware accepted reads and writes from anything in range and
+> must not be given credentials.
+
 ## Development simulation transport
 
 The runnable simulator currently sends the full reading as a versioned
