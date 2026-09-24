@@ -12,6 +12,7 @@
 #include "bthome_payload.h"
 #include "clock_sync.h"
 #include "device_config_store.h"
+#include "device_identity.h"
 #include "force_report.h"
 #include "sht45.h"
 #include "sht45_monitor.h"
@@ -107,6 +108,10 @@ static void run_production_cycle(void)
     ESP_LOGI(TAG, "Open Plant Pulse firmware %s production wake cycle",
              esp_app_get_description()->version);
     esp_err_t nvs_error = initialise_nvs();
+    esp_err_t identity_error = opp_device_identity_init();
+    if (identity_error != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load device identity: %s", esp_err_to_name(identity_error));
+    }
     esp_err_t config_error = opp_device_config_store_init();
     if (nvs_error != ESP_OK) {
         ESP_LOGE(TAG, "NVS initialization failed: %s", esp_err_to_name(nvs_error));
@@ -248,6 +253,7 @@ void app_main(void)
     run_production_cycle();
 #else
     ESP_ERROR_CHECK(web_ui_config_init());
+    ESP_ERROR_CHECK(opp_device_identity_init());
     ESP_ERROR_CHECK(opp_device_config_store_init());
     ESP_ERROR_CHECK(opp_force_report_init());
     ESP_ERROR_CHECK(opp_clock_sync_init());

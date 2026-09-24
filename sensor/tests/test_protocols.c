@@ -7,6 +7,7 @@
 #include "device_config_protocol.h"
 #include "power_source.h"
 #include "report_ack_protocol.h"
+#include "wifi_credentials_protocol.h"
 #include "sensor_protocol.h"
 #include "sht45_decode.h"
 
@@ -222,6 +223,73 @@ static void test_power_source_policy(void)
     assert(strcmp(opp_power_source_status_value(false), "battery_inferred") == 0);
 }
 
+static void test_wifi_credentials(void)
+{
+    opp_wifi_credentials_t sent = {
+        .revision = 7,
+        .enabled = true,
+    };
+    strcpy(sent.ssid, "BEYONDCOW-2.4G");
+    strcpy(sent.password, "softmoss");
+
+    uint8_t payload[OPP_WIFI_CREDENTIALS_PAYLOAD_MAX_SIZE];
+    const size_t size = opp_wifi_credentials_encode(&sent, payload);
+    assert(size == 1 + 4 + 1 + 1 + 14 + 1 + 8);
+    assert(payload[0] == OPP_WIFI_CREDENTIALS_PROTOCOL_VERSION);
+
+    /* The three payloads on the shared characteristic stay distinguishable. */
+    assert(opp_wifi_credentials_matches(payload, size));
+    uint8_t configuration[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE];
+    const opp_device_config_t device = {
+        .revision = 1, .reporting_interval_seconds = 1800,
+        .plant_name = "white bird", .room = "living",
+    };
+    const size_t configuration_size = opp_device_config_encode(&device, configuration);
+    assert(!opp_wifi_credentials_matches(configuration, configuration_size));
+
+    opp_wifi_credentials_t received;
+    assert(opp_wifi_credentials_decode(payload, size, &received));
+    assert(received.revision == 7);
+    assert(received.enabled);
+    assert(strcmp(received.ssid, "BEYONDCOW-2.4G") == 0);
+    assert(strcmp(received.password, "softmoss") == 0);
+
+    /* Switching the console off keeps the network, so switching it back on needs
+     * nothing resent. */
+    opp_wifi_credentials_t disabled = sent;
+    disabled.enabled = false;
+    const size_t disabled_size = opp_wifi_credentials_encode(&disabled, payload);
+    assert(disabled_size == size);
+    assert(opp_wifi_credentials_decode(payload, disabled_size, &received));
+    assert(!received.enabled);
+    assert(strcmp(received.ssid, "BEYONDCOW-2.4G") == 0);
+
+    /* An open network is representable; a switched-on console without one is not. */
+    opp_wifi_credentials_t open_network = {.revision = 1, .enabled = true};
+    strcpy(open_network.ssid, "guest");
+    assert(opp_wifi_credentials_encode(&open_network, payload) > 0);
+    opp_wifi_credentials_t nameless = {.revision = 1, .enabled = true};
+    assert(opp_wifi_credentials_encode(&nameless, payload) == 0);
+
+    /* Longest permitted values still fit the payload budget. */
+    opp_wifi_credentials_t longest = {.revision = 0xffffffffU, .enabled = true};
+    memset(longest.ssid, 'S', OPP_WIFI_SSID_MAX_BYTES);
+    memset(longest.password, 'P', OPP_WIFI_PASSWORD_MAX_BYTES);
+    const size_t longest_size = opp_wifi_credentials_encode(&longest, payload);
+    assert(longest_size == OPP_WIFI_CREDENTIALS_PAYLOAD_MAX_SIZE);
+    assert(opp_wifi_credentials_decode(payload, longest_size, &received));
+    assert(strlen(received.ssid) == OPP_WIFI_SSID_MAX_BYTES);
+    assert(strlen(received.password) == OPP_WIFI_PASSWORD_MAX_BYTES);
+
+    /* Malformed input is refused rather than half-applied. */
+    assert(!opp_wifi_credentials_decode(payload, longest_size - 1, &received));
+    assert(!opp_wifi_credentials_decode(payload, 0, &received));
+    uint8_t wrong_version[8] = {2, 0, 0, 0, 0, 0, 0, 0};
+    assert(!opp_wifi_credentials_decode(wrong_version, sizeof(wrong_version), &received));
+    uint8_t lying_length[9] = {3, 1, 0, 0, 0, 1, 40, 'a', 0};
+    assert(!opp_wifi_credentials_decode(lying_length, sizeof(lying_length), &received));
+}
+
 int main(void)
 {
     test_modbus_request();
@@ -235,5 +303,6 @@ int main(void)
     test_sht45_humidity_clamping();
     test_clock_policy();
     test_power_source_policy();
+    test_wifi_credentials();
     return 0;
 }

@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "clock_sync.h"
 #include "device_config_store.h"
+#include "device_identity.h"
 #include "driver/temperature_sensor.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
@@ -432,6 +433,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
              "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
              "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s,"
+             "\"onboarding_state\":\"%s\","
              "\"device_config_revision\":%lu,\"plant_name\":\"%s\",\"room\":\"%s\","
              "\"reporting_interval_seconds\":%lu,"
              "\"force_report_state\":\"%s\",\"force_report_error\":\"%s\","
@@ -451,7 +453,9 @@ static esp_err_t status_handler(httpd_req_t *request)
              opp_sht45_monitor_is_enabled() ? "true" : "false",
              air_sample_valid ? "true" : "false", air_temperature,
              air_humidity, air_sample_age, sample_sequence, sample_monotonic,
-             sample_unix_time, sample_time_utc, (unsigned long)device_config.revision,
+             sample_unix_time, sample_time_utc,
+             opp_device_identity_is_onboarded() ? "onboarded" : "onboarding",
+             (unsigned long)device_config.revision,
              escaped_plant_name, escaped_room,
              (unsigned long)device_config.reporting_interval_seconds,
              opp_force_report_state_name(force_report.state),
