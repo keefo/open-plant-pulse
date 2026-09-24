@@ -402,3 +402,27 @@
 - Chose power-cycle counting as the physical reset, filtered by `esp_reset_reason()`
   so deep-sleep wakes do not advance it. The RESET button cannot erase anything by
   itself, and GPIO9 is a strapping pin the enclosure does not expose.
+
+## 2026-09-24
+
+### Onboarding phase 1: the hub interface
+
+- Added schema 11: `onboarding_state`, `wifi_enabled`, `wifi_state`, `wifi_failure`,
+  and `wifi_address` per sensor, plus one household `wifi_ssid` on the hub. The
+  network name is stored without a password, since the database is backed up and
+  exported.
+- Added store methods for the household network, the per-sensor console switch, the
+  reported join result, and the onboarding state. Forgetting the network switches
+  every console off; returning a sensor to onboarding clears everything derived from
+  its bond. The five join failure reasons are enumerated and enforced, so the browser
+  can never be handed a failure it cannot explain.
+- Added a Settings page separate from the dashboard, with Sensors and Wi-Fi tabs, and
+  a four-step add-a-sensor flow, in its own script. Extended the router from two
+  hard-coded pages to a list, and renamed the fleet navigation entry to Plants.
+- Added a throwaway preview server so the journey can be walked by a person.
+- All 99 canonical host checks pass. Verified in headless Chrome that the settings
+  page renders a paired sensor with its address, the Wi-Fi tab loads the saved
+  network and hides the sensors panel, and the wizard shows step 1 of 4 with both
+  unclaimed sensors listed and Continue disabled until one is chosen.
+- Recorded the resulting field and failure contract in the proposal. No firmware
+  exists for any of it yet; nothing here has touched hardware.

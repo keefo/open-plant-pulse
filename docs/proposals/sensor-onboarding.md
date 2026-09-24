@@ -286,6 +286,30 @@ exposes no opening for it.
 Reset needs no indicator. The sensor returns to onboarding and reappears in the
 hub's inbox, which is the customer's confirmation.
 
+## The contract phase 1 produced
+
+Phase 1 is implemented, so these are no longer proposals: the hub stores them,
+serves them, and the browser renders them. The firmware phases implement this list
+rather than inventing their own.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `onboarding_state` | `onboarding`, `onboarded` | Derived from the bond. A reset returns a sensor to `onboarding` and clears everything below. |
+| `wifi_enabled` | boolean | The console switch. Default off. |
+| `wifi_state` | `off`, `pending`, `joined`, `failed` | `pending` means the hub has asked and the sensor has not yet answered. |
+| `wifi_failure` | see below | Present only when `wifi_state` is `failed`, and required then. |
+| `wifi_address` | string | Present only when `wifi_state` is `joined`. |
+
+The failure reasons are closed, and the store rejects any other value, so the
+browser can never be handed a failure it cannot explain:
+
+`wrong_password`, `network_not_found`, `association_timeout`, `no_address`,
+`unsupported_band`.
+
+The household network is hub-level: one `wifi_ssid`, stored without a password.
+Forgetting it switches every console off. A console cannot be switched on before a
+network exists, and only an enrolled sensor may use one.
+
 ## Required build changes
 
 | Setting | Now | Needed |
