@@ -321,8 +321,14 @@
   password sits in unencrypted flash, the disconnect handler reconnects immediately
   without backoff and never logs the reason code, the auth threshold silently
   rejects open networks, and no customer-facing setup document exists.
-- Added `docs/proposals/sensor-wifi-onboarding.md`: an ESP32-C3 setup access point
-  and captive portal served by the existing `esp_http_server`, credentials moved
-  from Kconfig into NVS, classified disconnect reasons, a four-phase plan, and a
-  validation list. BLE provisioning and hub-driven credential delivery were
-  considered and rejected. Nothing is implemented.
+- Added `docs/proposals/sensor-onboarding.md` covering both out-of-box goals for a
+  new sensor: registering with the hub and receiving Wi-Fi credentials. The hub is
+  the onboarding interface and the sensor raises no access point, because the
+  connectable BLE path already exists, needs no router, and costs no flash.
+- Recorded the prerequisite found while designing it: the configuration
+  characteristic is declared `F_READ | F_WRITE` with no `ble_hs_cfg.sm_*` settings
+  anywhere, so the link has no pairing, bonding, or encryption and cannot carry a
+  Wi-Fi password until it does.
+- Recorded that no GPIO button is read in firmware. The BTHome button event is
+  produced only by a web-console forced report, which a factory-fresh sensor
+  cannot reach, so the proposed ownership check depends on new firmware work.
