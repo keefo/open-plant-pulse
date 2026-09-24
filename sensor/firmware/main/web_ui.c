@@ -9,6 +9,7 @@
 
 #include "cJSON.h"
 #include "clock_sync.h"
+#include "device_config_store.h"
 #include "driver/temperature_sensor.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
@@ -23,6 +24,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "force_report.h"
 #include "lwip/ip4_addr.h"
 #include "power_source.h"
 #include "sht45_monitor.h"
@@ -32,6 +34,7 @@
 #define LOG_LINE_SIZE 512
 #define RESTART_REQUEST_SIZE 64
 #define RESTART_DELAY_US (750 * 1000)
+#define STATUS_JSON_MAX 3072
 
 static const char *TAG = "web_ui";
 static char log_ring[LOG_RING_SIZE];
@@ -392,8 +395,31 @@ static esp_err_t status_handler(httpd_req_t *request)
     if (!json_escape(station_ssid, escaped_ssid, sizeof(escaped_ssid))) {
         strlcpy(escaped_ssid, "unknown", sizeof(escaped_ssid));
     }
-    char status[1408];
-    snprintf(status, sizeof(status),
+    opp_device_config_t device_config;
+    opp_device_config_store_get(&device_config);
+    opp_force_report_status_t force_report;
+    opp_force_report_get_status(&force_report);
+    char escaped_plant_name[sizeof(device_config.plant_name) * 6];
+    char escaped_room[sizeof(device_config.room) * 6];
+    if (!json_escape(device_config.plant_name, escaped_plant_name, sizeof(escaped_plant_name))) {
+        strlcpy(escaped_plant_name, "", sizeof(escaped_plant_name));
+    }
+    if (!json_escape(device_config.room, escaped_room, sizeof(escaped_room))) {
+        strlcpy(escaped_room, "", sizeof(escaped_room));
+    }
+    char force_report_packet_id[5];
+    if (force_report.packet_id_valid) {
+        snprintf(force_report_packet_id, sizeof(force_report_packet_id), "%u",
+                 force_report.packet_id);
+    } else {
+        strlcpy(force_report_packet_id, "null", sizeof(force_report_packet_id));
+    }
+    char *status = malloc(STATUS_JSON_MAX);
+    if (status == NULL) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Out of memory");
+    }
+    int status_length = snprintf(status, STATUS_JSON_MAX,
              "{\"firmware_version\":\"%s\",\"connected\":%s,\"ssid\":\"%s\","
              "\"ip\":\"%s\",\"mac\":\"%s\","
              "\"usb_connected\":%s,\"power_source\":\"%s\","
@@ -405,7 +431,14 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"sht45_enabled\":%s,\"sht45_available\":%s,\"air_temperature_c\":%s,"
              "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
              "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
-             "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s}",
+             "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s,"
+             "\"device_config_revision\":%lu,\"plant_name\":\"%s\",\"room\":\"%s\","
+             "\"reporting_interval_seconds\":%lu,"
+             "\"force_report_state\":\"%s\",\"force_report_error\":\"%s\","
+             "\"force_report_request_id\":%lu,\"force_report_packet_id\":%s,"
+             "\"force_report_requested_at_ms\":%lld,"
+             "\"force_report_completed_at_ms\":%lld,"
+             "\"force_report_acknowledged_at_ms\":%lld}",
              app->version, station_connected ? "true" : "false", escaped_ssid,
              station_ip, station_mac,
              usb_connected ? "true" : "false",
@@ -418,10 +451,26 @@ static esp_err_t status_handler(httpd_req_t *request)
              opp_sht45_monitor_is_enabled() ? "true" : "false",
              air_sample_valid ? "true" : "false", air_temperature,
              air_humidity, air_sample_age, sample_sequence, sample_monotonic,
-             sample_unix_time, sample_time_utc);
+             sample_unix_time, sample_time_utc, (unsigned long)device_config.revision,
+             escaped_plant_name, escaped_room,
+             (unsigned long)device_config.reporting_interval_seconds,
+             opp_force_report_state_name(force_report.state),
+             opp_force_report_failure_name(force_report.failure),
+             (unsigned long)force_report.request_id,
+             force_report_packet_id,
+             (long long)force_report.requested_at_ms,
+             (long long)force_report.report_completed_at_ms,
+             (long long)force_report.acknowledged_at_ms);
+    if (status_length < 0 || status_length >= STATUS_JSON_MAX) {
+        free(status);
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not serialize status");
+    }
     httpd_resp_set_type(request, "application/json");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(request, status);
+    esp_err_t result = httpd_resp_send(request, status, status_length);
+    free(status);
+    return result;
 }
 
 static esp_err_t config_get_handler(httpd_req_t *request)
@@ -505,6 +554,29 @@ static esp_err_t config_reset_handler(httpd_req_t *request)
     return config_get_handler(request);
 }
 
+static esp_err_t force_report_handler(httpd_req_t *request)
+{
+    uint32_t request_id;
+    esp_err_t error = opp_force_report_request(&request_id);
+    if (error == ESP_ERR_INVALID_STATE) {
+        httpd_resp_set_status(request, "409 Conflict");
+        return httpd_resp_sendstr(request, "A forced report is already in progress");
+    }
+    if (error != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not queue forced report");
+    }
+
+    char response[48];
+    int length = snprintf(response, sizeof(response),
+                          "{\"request_id\":%lu,\"state\":\"queued\"}",
+                          (unsigned long)request_id);
+    ESP_LOGI(TAG, "Forced BLE report request %lu queued", (unsigned long)request_id);
+    httpd_resp_set_type(request, "application/json");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_send(request, response, length);
+}
+
 static esp_err_t start_http_server(void)
 {
     if (http_server != NULL) {
@@ -527,6 +599,7 @@ static esp_err_t start_http_server(void)
         {.uri = "/api/v1/config/ui", .method = HTTP_GET, .handler = config_get_handler},
         {.uri = "/api/v1/config/ui", .method = HTTP_PUT, .handler = config_put_handler},
         {.uri = "/api/v1/config/ui/reset", .method = HTTP_POST, .handler = config_reset_handler},
+        {.uri = "/api/v1/reports/force", .method = HTTP_POST, .handler = force_report_handler},
         {.uri = "/api/v1/restart", .method = HTTP_POST, .handler = restart_handler},
     };
     for (size_t index = 0; index < sizeof(routes) / sizeof(routes[0]); index++) {

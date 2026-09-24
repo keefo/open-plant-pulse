@@ -155,7 +155,8 @@ h2 { font-size: 19px; }
 .metric small { display: block; margin-top: 6px; color: var(--muted); }
 .metric small.device-mac { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-.overview-sensor { margin-top: 36px; }
+.device-configuration, .overview-sensor { margin-top: 36px; }
+.configuration-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .overview-sensor[hidden] { display: none; }
 .overview-sensor-status { display: flex; align-items: center; gap: 10px; }
 .ambient-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--line); }
@@ -166,10 +167,8 @@ h2 { font-size: 19px; }
 
 .activity { margin-top: 36px; }
 .section-heading { margin-bottom: 12px; }
-.text-action { border: 0; background: transparent; color: var(--green); cursor: pointer; }
-.text-action:hover { text-decoration: underline; }
 
-.log-preview, .log-console {
+.log-console {
   margin: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -180,10 +179,10 @@ h2 { font-size: 19px; }
   overflow-wrap: anywhere;
   overflow: auto;
 }
-.log-preview { height: 210px; padding: 16px; }
 .log-console { height: min(68vh, 720px); min-height: 360px; padding: 18px; }
 
 .sensor-list, .maintenance-list { border-top: 1px solid var(--line); }
+.sensors-panel { margin-bottom: 36px; }
 .sensor-row, .maintenance-row { min-height: 74px; padding: 14px 4px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); }
 .maintenance-row > div:first-child span { display: block; }
 .maintenance-row > div:first-child small { display: block; margin-top: 3px; color: var(--muted); }
@@ -193,6 +192,8 @@ h2 { font-size: 19px; }
 .action-state.pending { color: var(--amber); }
 .action-state.success { color: var(--green); }
 .action-state.error { color: var(--red); }
+.report-action .action-state { max-width: 300px; text-align: right; }
+.secondary-action:disabled { opacity: 0.55; cursor: default; }
 .danger-action {
   min-height: 36px;
   padding: 0 14px;
@@ -280,6 +281,7 @@ select { width: min(260px, 100%); padding: 0 34px 0 10px; background: var(--surf
   .nav-item { min-width: max-content; min-height: 48px; padding: 0 10px; border-left: 0; border-bottom: 2px solid transparent; }
   .nav-item.active { border-left: 0; border-bottom-color: var(--green); }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .configuration-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 520px) {
@@ -292,6 +294,7 @@ select { width: min(260px, 100%); padding: 0 34px 0 10px; background: var(--surf
   .view-heading { align-items: start; flex-direction: column; }
   .log-heading { flex-direction: row; align-items: end; }
   .metric-grid { grid-template-columns: 1fr; }
+  .configuration-grid { grid-template-columns: 1fr; }
   .metric { min-height: 116px; grid-column: 1 !important; }
   .metric-label { margin-bottom: 14px; }
   .overview-sensor-status { align-items: flex-end; flex-direction: column; gap: 5px; }

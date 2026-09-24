@@ -1,5 +1,23 @@
 menu "Open Plant Pulse"
 
+config OPP_PRODUCTION_LIFECYCLE
+    bool "Enable bounded BTHome advertise/deep-sleep lifecycle"
+    default n
+    help
+        Run one SHT45 acquisition, advertise the fresh sample for a bounded
+        window, stop Bluetooth, and enter timer deep sleep. This production
+        mode bypasses the powered development web console and SNTP tasks.
+
+config OPP_BTHOME_ADVERTISEMENT_WINDOW_MS
+    int "BTHome advertising window in milliseconds"
+    range 500 30000
+    default 3000
+
+config OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS
+    int "BTHome advertising interval in milliseconds"
+    range 100 1000
+    default 250
+
 config OPP_WEB_UI_ENABLED
     bool "Enable Wi-Fi web diagnostics"
     default y
@@ -95,7 +113,7 @@ config OPP_SENSOR_MODBUS_ADDRESS
 
 config OPP_SAMPLE_INTERVAL_MINUTES
     int "Sampling interval in minutes"
-    range 1 1440
+    range 5 1440
     default 30
 
 endmenu

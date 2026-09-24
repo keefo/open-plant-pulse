@@ -25,8 +25,6 @@
   <div class="app-shell">
     <nav class="navigation" aria-label="Device console">
       <button class="nav-item active" type="button" data-view="overview">Overview</button>
-      <button class="nav-item" type="button" data-view="sensors">Sensors</button>
-      <button class="nav-item" type="button" data-view="logs">Logs</button>
       <button class="nav-item" type="button" data-view="maintenance">Maintenance</button>
     </nav>
 
@@ -86,6 +84,30 @@
           </div>
         </section>
 
+        <section class="device-configuration" aria-labelledby="device-configuration-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Hub</p>
+              <h2 id="device-configuration-title">Hub configuration</h2>
+            </div>
+            <span class="state" id="device-config-state">Not configured</span>
+          </div>
+          <div class="metric-grid configuration-grid">
+            <article class="metric">
+              <span class="metric-label">Plant name</span>
+              <strong id="configured-plant-name">Not assigned</strong>
+            </article>
+            <article class="metric">
+              <span class="metric-label">Room</span>
+              <strong id="configured-room">Not assigned</strong>
+            </article>
+            <article class="metric">
+              <span class="metric-label">Reporting interval</span>
+              <strong id="configured-reporting-interval">Firmware default</strong>
+            </article>
+          </div>
+        </section>
+
         <section class="overview-sensor" id="overview-sht45" aria-labelledby="overview-sht45-title" hidden>
           <div class="section-heading">
             <div>
@@ -116,58 +138,16 @@
           </div>
         </section>
 
-        <section class="activity" aria-labelledby="activity-title">
-          <div class="section-heading">
-            <h2 id="activity-title">Recent activity</h2>
-            <button class="text-action" type="button" data-open-view="logs">Open logs</button>
+        <section class="activity" aria-labelledby="logs-title">
+          <div class="section-heading log-heading">
+            <div>
+              <p class="eyebrow">ESP-IDF output</p>
+              <h2 id="logs-title">Live logs</h2>
+            </div>
+            <span class="live-label"><span class="pulse" aria-hidden="true"></span>Polling every second</span>
           </div>
-          <pre class="log-preview" id="log-preview">Waiting for logs...</pre>
+          <pre class="log-console" id="log-console">Waiting for logs...</pre>
         </section>
-      </section>
-
-      <section class="view" id="sensors" aria-labelledby="sensors-title" hidden>
-        <div class="view-heading">
-          <div>
-            <p class="eyebrow">Acquisition hardware</p>
-            <h1 id="sensors-title">Sensors</h1>
-          </div>
-        </div>
-        <div class="sensor-list">
-          <article class="sensor-row">
-            <div><span class="sensor-name">SHT45</span><small>Air temperature and humidity</small></div>
-            <div class="sensor-controls">
-              <span class="state unavailable" id="sht45-state">Unavailable</span>
-              <label class="sensor-toggle">
-                <input id="sht45-enabled" type="checkbox" role="switch" disabled>
-                <span class="toggle-track" aria-hidden="true"></span>
-                <span>Enabled</span>
-              </label>
-            </div>
-          </article>
-          <article class="sensor-row">
-            <div><span class="sensor-name">NPKPHCTH-S</span><small>RS-485 soil probe</small></div>
-            <div class="sensor-controls">
-              <span class="state unavailable" id="soil-probe-state">Not implemented</span>
-              <label class="sensor-toggle">
-                <input id="soil-probe-enabled" type="checkbox" role="switch" disabled>
-                <span class="toggle-track" aria-hidden="true"></span>
-                <span>Enabled</span>
-              </label>
-            </div>
-          </article>
-        </div>
-        <p class="empty-note" id="sensor-config-state" aria-live="polite">Loading sensor settings</p>
-      </section>
-
-      <section class="view" id="logs" aria-labelledby="logs-title" hidden>
-        <div class="view-heading log-heading">
-          <div>
-            <p class="eyebrow">ESP-IDF output</p>
-            <h1 id="logs-title">Live logs</h1>
-          </div>
-          <span class="live-label"><span class="pulse" aria-hidden="true"></span>Polling every second</span>
-        </div>
-        <pre class="log-console" id="log-console">Waiting for logs...</pre>
       </section>
 
       <section class="view" id="maintenance" aria-labelledby="maintenance-title" hidden>
@@ -177,6 +157,39 @@
             <h1 id="maintenance-title">Maintenance</h1>
           </div>
         </div>
+        <section class="sensors-panel" aria-labelledby="sensors-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Acquisition hardware</p>
+              <h2 id="sensors-title">Sensors</h2>
+            </div>
+          </div>
+          <div class="sensor-list">
+            <article class="sensor-row">
+              <div><span class="sensor-name">SHT45</span><small>Air temperature and humidity</small></div>
+              <div class="sensor-controls">
+                <span class="state unavailable" id="sht45-state">Unavailable</span>
+                <label class="sensor-toggle">
+                  <input id="sht45-enabled" type="checkbox" role="switch" disabled>
+                  <span class="toggle-track" aria-hidden="true"></span>
+                  <span>Enabled</span>
+                </label>
+              </div>
+            </article>
+            <article class="sensor-row">
+              <div><span class="sensor-name">NPKPHCTH-S</span><small>RS-485 soil probe</small></div>
+              <div class="sensor-controls">
+                <span class="state unavailable" id="soil-probe-state">Not implemented</span>
+                <label class="sensor-toggle">
+                  <input id="soil-probe-enabled" type="checkbox" role="switch" disabled>
+                  <span class="toggle-track" aria-hidden="true"></span>
+                  <span>Enabled</span>
+                </label>
+              </div>
+            </article>
+          </div>
+          <p class="empty-note" id="sensor-config-state" aria-live="polite">Loading sensor settings</p>
+        </section>
         <section class="settings-panel" aria-labelledby="appearance-title">
           <div class="section-heading">
             <h2 id="appearance-title">Interface settings</h2>
@@ -244,6 +257,13 @@
 
         <div class="maintenance-list">
           <div class="maintenance-row"><span>Configuration storage</span><strong>Device NVS</strong></div>
+          <div class="maintenance-row">
+            <div><span>Force sensor report</span><small>Ignore the current interval and wait for Hub acknowledgement</small></div>
+            <div class="maintenance-action report-action">
+              <span class="action-state" id="force-report-state" aria-live="polite">Ready</span>
+              <button class="secondary-action" id="force-report" type="button">Report now</button>
+            </div>
+          </div>
           <div class="maintenance-row">
             <div><span>Device restart</span><small>Restart firmware without erasing configuration</small></div>
             <div class="maintenance-action">

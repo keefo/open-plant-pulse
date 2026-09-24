@@ -3,7 +3,6 @@ const navItems = document.querySelectorAll('.nav-item');
 const connection = document.getElementById('connection');
 const connectionLabel = document.getElementById('connection-label');
 const logConsole = document.getElementById('log-console');
-const logPreview = document.getElementById('log-preview');
 const configForm = document.getElementById('ui-config-form');
 const configState = document.getElementById('config-state');
 const sensorConfigState = document.getElementById('sensor-config-state');
@@ -11,6 +10,8 @@ const sht45Enabled = document.getElementById('sht45-enabled');
 const soilProbeEnabled = document.getElementById('soil-probe-enabled');
 const restartButton = document.getElementById('restart-device');
 const restartState = document.getElementById('restart-state');
+const forceReportButton = document.getElementById('force-report');
+const forceReportState = document.getElementById('force-report-state');
 const firmwareVersion = document.getElementById('firmware-version');
 const cardLabels = {
   device: 'Device',
@@ -68,9 +69,6 @@ function showView(name) {
 }
 
 navItems.forEach((item) => item.addEventListener('click', () => showView(item.dataset.view)));
-document.querySelectorAll('[data-open-view]').forEach((item) => {
-  item.addEventListener('click', () => showView(item.dataset.openView));
-});
 
 function applyUiConfig(config) {
   const preferredTheme = config.theme.mode === 'system'
@@ -352,6 +350,65 @@ restartButton.addEventListener('click', async () => {
   }
 });
 
+function renderForceReport(status) {
+  const state = status?.force_report_state || 'idle';
+  const request = Number.isInteger(status?.force_report_request_id) && status.force_report_request_id > 0
+    ? `Request ${status.force_report_request_id}`
+    : 'Report';
+  const packet = Number.isInteger(status?.force_report_packet_id)
+    ? ` · packet ${status.force_report_packet_id}`
+    : '';
+  forceReportButton.disabled = state === 'queued' || state === 'reporting';
+  if (state === 'queued') {
+    forceReportState.className = 'action-state pending';
+    forceReportState.textContent = `${request} queued`;
+  } else if (state === 'reporting') {
+    forceReportState.className = 'action-state pending';
+    forceReportState.textContent = `${request}${packet} sent · waiting for Hub`;
+  } else if (state === 'acknowledged') {
+    forceReportState.className = 'action-state success';
+    forceReportState.textContent = `${request}${packet} · report stored and Hub acknowledged`;
+  } else if (state === 'unacknowledged') {
+    forceReportState.className = 'action-state error';
+    forceReportState.textContent = `${request}${packet} · no Hub acknowledgement`;
+  } else if (state === 'failed') {
+    forceReportState.className = 'action-state error';
+    forceReportState.textContent = `${request} failed · ${status.force_report_error || 'unknown error'}`;
+  } else {
+    forceReportState.className = 'action-state';
+    forceReportState.textContent = 'Ready';
+  }
+}
+
+forceReportButton.addEventListener('click', async () => {
+  forceReportButton.disabled = true;
+  forceReportState.className = 'action-state pending';
+  forceReportState.textContent = 'Queuing report';
+  try {
+    const response = await fetch('/api/v1/reports/force', { method: 'POST' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const request = await response.json();
+    const deadline = Date.now() + 40000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const statusResponse = await fetch('/status', { cache: 'no-store' });
+      if (!statusResponse.ok) throw new Error(`HTTP ${statusResponse.status}`);
+      const status = await statusResponse.json();
+      renderForceReport(status);
+      if (status.force_report_request_id === request.request_id
+          && ['acknowledged', 'unacknowledged', 'failed'].includes(status.force_report_state)) {
+        forceReportButton.disabled = false;
+        return;
+      }
+    }
+    throw new Error('Acknowledgement timed out');
+  } catch (error) {
+    forceReportState.className = 'action-state error';
+    forceReportState.textContent = 'Report request failed';
+    forceReportButton.disabled = false;
+  }
+});
+
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
   if (uiConfig?.theme.mode === 'system') applyUiConfig(uiConfig);
 });
@@ -407,6 +464,24 @@ function renderSht45(status) {
     Number.isFinite(status.air_sample_age_ms)
       ? `Sampled ${Math.max(0, Math.floor(status.air_sample_age_ms / 1000))}s ago`
       : 'Latest sample';
+}
+
+function renderDeviceConfiguration(status) {
+  const configured = Number.isInteger(status.device_config_revision)
+    && status.device_config_revision > 0;
+  const state = document.getElementById('device-config-state');
+  state.className = `state ${configured ? 'available' : 'disabled'}`;
+  state.textContent = configured ? `Revision ${status.device_config_revision}` : 'Not configured';
+  document.getElementById('configured-plant-name').textContent =
+    configured ? status.plant_name : 'Not assigned';
+  document.getElementById('configured-room').textContent =
+    configured && status.room ? status.room : 'Not assigned';
+  const intervalSeconds = status.reporting_interval_seconds;
+  const interval = intervalSeconds < 60
+    ? `${intervalSeconds} second${intervalSeconds === 1 ? '' : 's'}`
+    : `${intervalSeconds / 60} minute${intervalSeconds === 60 ? '' : 's'}`;
+  document.getElementById('configured-reporting-interval').textContent =
+    interval;
 }
 
 function timezoneName(timezone) {
@@ -527,7 +602,9 @@ async function refreshStatus() {
     document.getElementById('chip-temperature').textContent =
       Number.isFinite(status.chip_temperature_c) ? `${status.chip_temperature_c.toFixed(1)} C` : 'Unavailable';
     renderClock(status);
+    renderDeviceConfiguration(status);
     renderSht45(status);
+    renderForceReport(status);
     document.getElementById('last-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     connection.className = 'connection offline';
@@ -555,12 +632,9 @@ async function refreshLogs() {
     const response = await fetch('/logs', { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const text = await response.text();
-    const lines = text.trimEnd().split('\n');
-    logPreview.textContent = lines.slice(-8).join('\n') || 'No logs captured yet.';
     logConsole.textContent = text || 'No logs captured yet.';
-    if (activeView === 'logs') logConsole.scrollTop = logConsole.scrollHeight;
+    if (activeView === 'overview') logConsole.scrollTop = logConsole.scrollHeight;
   } catch (error) {
-    logPreview.textContent = 'Log stream unavailable.';
     logConsole.textContent = 'Log stream unavailable.';
   }
 }
