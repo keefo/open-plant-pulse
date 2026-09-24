@@ -21,3 +21,7 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+
+# Claude Code worktrees and session state
+.claude/
+

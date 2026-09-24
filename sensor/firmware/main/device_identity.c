@@ -69,6 +69,15 @@ esp_err_t opp_device_identity_init(void)
     }
 
     loaded = true;
+    /* Printed on every boot so the code can be recovered for the label, not only
+     * on the boot that generated it.
+     *
+     * This is deliberately safe only because of where it runs: web_ui_start()
+     * installs the log hook that fills the console's 16 KiB ring, and it runs
+     * after this. Anything logged here therefore reaches USB serial and nothing
+     * else. Moving identity initialisation after web_ui_start() would publish the
+     * pairing code on an unauthenticated web page. */
+    ESP_LOGW(TAG, "Pairing code for this device's label: %06" PRIu32, cached_passkey);
     ESP_LOGI(TAG, "Device is %s", cached_onboarded ? "onboarded" : "waiting to be added");
     return ESP_OK;
 }
