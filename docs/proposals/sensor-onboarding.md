@@ -164,32 +164,25 @@ support.
 - The hub stores that password in the **operating system keychain**, never in the
   readings database. The database is backed up and exported; a Wi-Fi password must
   not travel with it.
-- A **Check network** action scans from the hub and reports whether the network is
-  in range, whether it is 2.4 GHz, and what security it uses. It catches the two
-  failures customers blame on the sensor: a mistyped or hidden name, and a 5 GHz-only
-  network the ESP32-C3 can never join. Reading SSIDs requires Location permission on
-  macOS, and a hub may have no Wi-Fi adapter or be wired — the development hub is on
-  Ethernet with its Wi-Fi interface unassociated — so the check must degrade to
-  saying it could not look rather than claiming a failure.
-
-### Verifying the password
+### No test button
 
 A WPA2 passphrase cannot be checked offline. The pre-shared key is derived from the
 passphrase and the network name, and only the four-way handshake with the access
 point proves it, so something must associate. The hub cannot be that something: it
 would drop its own connection, possibly the one serving the page the customer is
-using, and on a wired hub it has no route to try at all.
+using, and on a wired hub it has no route to try at all — the development hub is on
+Ethernet with its Wi-Fi interface unassociated.
 
-The sensor is the right test instrument, and the forced report makes it a fast one.
-**Test the password** sends the credentials to an enrolled sensor, asks it to join,
-and reports the classified result within seconds — the same mechanism that delivers
-the first reading during onboarding. It is a genuine end-to-end test rather than a
-guess, because the device that must work is the device that tried.
+There is therefore **no test action**, because saving already is one. Credentials go
+to every sensor whose flag is on, each tries to join, and each reports a classified
+result within seconds through the forced-report path. A button that duplicated that
+would either repeat what saving just did or, worse, report a hub-side check the
+sensors might still contradict.
 
-Typing is also worth avoiding entirely. Where the hub's operating system already
-holds a password for the network, offer to fill it in from there: on macOS the
-keychain, behind the standard authorization prompt; on Linux the NetworkManager
-connection. A password that is never retyped cannot be mistyped.
+Typing is worth avoiding instead. Where the hub's operating system already holds a
+password for the network, offer to fill it in from there: on macOS the keychain,
+behind the standard authorization prompt; on Linux the NetworkManager connection. A
+password that is never retyped cannot be mistyped.
 - The sensor stores SSID and password in NVS exactly as it stores device
   configuration today, with `nvs_set_blob` and `nvs_commit`, and never returns the
   password on a read, in `/status`, in the log ring, or over serial.

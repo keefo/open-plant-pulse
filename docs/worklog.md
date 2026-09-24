@@ -362,20 +362,15 @@
   payload fits at 17 bytes, but air plus the soil probe reaches 26. Dropping the
   packet-id object when encrypted frees exactly the 2 bytes needed, since the
   encryption counter already provides deduplication and replay protection.
-- Added a Check network action to the household network settings. It reports range,
-  band, and security from the hub's own scan, and deliberately does not test the
-  password, because the hub joining to try it would disconnect the hub and only a
-  sensor joining proves a password. It catches the mistyped name and the 5 GHz-only
-  network, needs Location permission on macOS, and must degrade to saying it could
-  not look on a hub with no Wi-Fi adapter.
-- Established how the Wi-Fi password is verified. It cannot be checked offline,
-  because only the four-way handshake proves a WPA2 passphrase, and the hub cannot
-  perform it without dropping its own connection; the development hub is on Ethernet
-  with its Wi-Fi interface unassociated, so it has no route to try at all. The test
-  therefore runs through an enrolled sensor using the forced-report path, returning
-  a classified result in seconds. Where the operating system already holds the
-  password, the settings page offers to fill it in from the keychain or from
+- Settled that there is no Wi-Fi test action. A WPA2 passphrase cannot be checked
+  offline, only the four-way handshake proves it, and the hub cannot perform one
+  without dropping its own connection; the development hub is on Ethernet with its
+  Wi-Fi interface unassociated, so it has no route to try at all. Saving already is
+  the test: every sensor whose flag is on tries to join and reports a classified
+  result in seconds through the forced-report path. Where the operating system holds
+  the password, the settings page offers to fill it in from the keychain or from
   NetworkManager, so it need not be retyped.
+- Renamed the primary navigation entry from Fleet to Plants.
 - Made encrypted telemetry the default rather than a setting, which makes contract
   v3 the contract for onboarded sensors and removes the keys page from the
   interface. Each sensor is given its own 16-byte key during onboarding. The hub
