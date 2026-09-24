@@ -426,3 +426,37 @@
   unclaimed sensors listed and Continue disabled until one is chosen.
 - Recorded the resulting field and failure contract in the proposal. No firmware
   exists for any of it yet; nothing here has touched hardware.
+
+### Onboarding phase 2 and part of phase 3: firmware
+
+- Bumped firmware to 0.6.0. Configured NimBLE LE Secure Connections with bonding,
+  a passkey, and `BLE_HS_IO_DISPLAY_ONLY`, and changed the configuration
+  characteristic from plain read/write to requiring an encrypted link. Added a
+  six-digit passkey generated on first boot into a `factory` NVS namespace that a
+  reset must not clear, refused a second bond so one sensor stays bound to one hub,
+  and exposed `onboarding_state` in `/status`.
+- Set `CONFIG_BT_NIMBLE_NVS_PERSIST=y` and `CONFIG_BT_NIMBLE_MAX_BONDS=1`. Without
+  the first, bonds live in RAM and every deep-sleep wake would lose the hub.
+- Added the Wi-Fi credential payload as connected-BLE protocol version 3 on the
+  established characteristic, with an NVS store beside the device configuration.
+  Host tests cover the round trip, the three payloads staying distinguishable, the
+  longest permitted values fitting the budget, and malformed input being refused.
+- Replaced the immediate endless Wi-Fi reconnect with a bounded backoff, and
+  classified disconnect reasons into the vocabulary the hub and browser share,
+  including a twenty-second watchdog for associating without receiving an address.
+
+### Unresolved: the worktree firmware image cannot be verified
+
+- `sensor/firmware/build.sh` exits 0 and the link map lists both `libesp_wifi.a` and
+  `libmain.a(web_ui.c.obj)`, but the image it produces is 659,744 bytes where the
+  bench 0.5.1 image is 1,277,776, and it contains none of the literals either
+  version should carry. A byte search of the bench image finds `wifi` 56 times,
+  `sht45_enabled`, and `force_report_state`; the same search of the worktree image
+  finds none of them, while finding `0.6.0`, `Open Plant Pulse`, `esp_timer` and
+  `nvs`.
+- The image was byte-identical in size across three builds, including one after
+  deleting `sensor/build` entirely. The two `sdkconfig` files differ only by the two
+  intended NimBLE settings.
+- The cause is not established. Treat the 0.6.0 firmware as compiling, and nothing
+  more: it has not been shown to produce a correct image, it has not been flashed,
+  and no pairing, credential, or Wi-Fi behaviour has run on hardware.
