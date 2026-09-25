@@ -323,6 +323,10 @@ class DeviceConfigurationSynchronizer:
             # was doing, and recording the version is what establishes that.
             self._record_reported_progress(sensor_id, payload)
             self._store.record_station_report(sensor_id, version)
+            # A sensor answering while an update is still "in progress" is a
+            # sensor that has come back without it: either it is about to, or
+            # the new image never started and this one is the old one.
+            self._store.expire_stalled_firmware_update(sensor_id)
             sensor = self._store.sensor(sensor_id)
             if sensor and sensor["wifi_enabled"]:
                 self._store.record_sensor_wifi_result(

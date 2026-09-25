@@ -466,6 +466,26 @@ class StoreStateTests(unittest.TestCase):
         self.assertEqual(sensor["firmware_update_state"], "succeeded")
         self.assertEqual(sensor["firmware_update_percent"], 100)
 
+    def test_an_update_the_sensor_never_returned_from_is_given_up_on(self) -> None:
+        self.store.request_firmware_update(self.sensor_id, self.image["digest"])
+        self.store.record_firmware_update_state(self.sensor_id, "rebooting", 100)
+
+        # While it could still be on its way, nothing is concluded.
+        self.assertIsNone(self.store.expire_stalled_firmware_update(self.sensor_id))
+
+        self.store._database.execute(
+            "UPDATE sensors SET firmware_update_started_at = '2026-01-01T00:00:00Z'"
+        )
+        self.store.record_station_report(self.sensor_id, "0.11.2")
+        sensor = self.store.expire_stalled_firmware_update(self.sensor_id)
+
+        # The commonest cause is the one this exists for: the new image did not
+        # start, the sensor rolled back, and it is running what it had.
+        self.assertEqual(sensor["firmware_update_state"], "failed")
+        self.assertIn("did not come back", sensor["firmware_update_error"])
+        self.assertIn("0.11.2", sensor["firmware_update_error"])
+        self.assertIsNone(self.store.expire_stalled_firmware_update(self.sensor_id))
+
     def test_only_an_enrolled_sensor_and_a_stored_image_can_be_asked_for(self) -> None:
         with self.assertRaises(ValueError):
             self.store.request_firmware_update(self.sensor_id, "ab" * 32)

@@ -29,6 +29,10 @@ WIFI_STATES = ("off", "pending", "joined", "failed")
 # How far an over-the-air update has got. Progress belongs to the sensor, which
 # is the only one doing any of it; the hub records what it is told and, at the
 # end, what it can see for itself — the version the sensor comes back reporting.
+# Longer than any update takes. A download of a full image over Wi-Fi is
+# seconds, and a restart is seconds more; five minutes is a sensor that is not
+# coming back, which is the answer somebody needs rather than a spinner.
+FIRMWARE_UPDATE_TIMEOUT_SECONDS = 300
 FIRMWARE_UPDATE_STATES = (
     "idle",
     "pending",
@@ -588,6 +592,38 @@ class ReadingStore:
                 """,
                 (sensor_id,),
             )
+
+    def expire_stalled_firmware_update(self, sensor_id: str) -> Optional[Dict[str, Any]]:
+        """Give up on an update the sensor never came back from.
+
+        An update that has been under way for longer than any of it takes has
+        not succeeded, and leaving it saying "restarting" for ever is the worst
+        of both: nothing to act on, and no way to try again. The commonest cause
+        is the one this is here for — the new image did not start, and the
+        sensor is running the old one again.
+        """
+        sensor = self.sensor(sensor_id)
+        if sensor is None or sensor["firmware_update_state"] not in (
+            "commanded",
+            "downloading",
+            "installing",
+            "rebooting",
+        ):
+            return None
+        started_at = sensor["firmware_update_started_at"]
+        if started_at is None:
+            return None
+        started = self._observation_datetime(started_at, datetime.now(timezone.utc))
+        age = (datetime.now(timezone.utc) - started).total_seconds()
+        if age < FIRMWARE_UPDATE_TIMEOUT_SECONDS:
+            return None
+        running = sensor["firmware_version"] or "the firmware it had"
+        return self.record_firmware_update_state(
+            sensor_id,
+            "failed",
+            None,
+            f"the sensor did not come back running it; it is running {running}",
+        )
 
     def station_report_age_seconds(self, sensor_id: str) -> Optional[int]:
         """How long since the sensor last told the hub about itself."""
