@@ -42,7 +42,9 @@ def main() -> int:
                 print(f"    Pairing code: {code}")
                 print()
                 print("    Write this on the sensor before closing its case.")
-                print("    Your hub asks for it once, when the sensor is added.")
+                print("    Adding a sensor does not ask for it: one that belongs to")
+                print("    nobody is claimed by the first hub that asks. The code")
+                print("    is kept for a future recovery path and is unused today.")
                 print()
                 return 0
 

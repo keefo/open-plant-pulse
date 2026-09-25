@@ -264,14 +264,14 @@ function renderOnboarding() {
   back.hidden = onboardingStep === "done";
   next.textContent = {
     find: "Continue",
-    pair: "Paired — continue",
+    pair: "Claimed — continue",
     details: "Finish",
     done: "Done",
   }[onboardingStep];
   next.disabled = onboardingStep === "find" && !onboardingSensorId;
   document.getElementById("onboarding-hint").textContent = {
     find: "Not seeing it? Move the sensor closer to this computer.",
-    pair: "No window appeared? Check that Bluetooth is on, then start again.",
+    pair: "Nothing to enter. If this does not finish, check that Bluetooth is on.",
     details: "Everything here can be changed later in Settings.",
     done: "Readings appear on the Plants page as they arrive.",
   }[onboardingStep];
@@ -369,7 +369,7 @@ function renderOnboardingSummary() {
   document.getElementById("onboarding-done-title").textContent =
     (onboardingResult.display_name || onboardingResult.sensor_id) + " is set up";
   summary.textContent = "";
-  const rows = [["Paired", "Encrypted Bluetooth link", onboardingResult.sensor_id]];
+  const rows = [["Claimed", "Encrypted Bluetooth link", onboardingResult.sensor_id]];
   if (onboardingResult.wifi_enabled) {
     rows.push([
       onboardingResult.wifi_state === "joined" ? "Joined" : "Pending",

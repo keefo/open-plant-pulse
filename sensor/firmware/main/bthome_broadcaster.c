@@ -133,6 +133,27 @@ static bool peer_is_bonded(uint16_t conn_handle)
     return description.sec_state.bonded;
 }
 
+/* Is this the hub that already owns the sensor?
+ *
+ * Checked against stored keys rather than the live connection, because the
+ * answer is needed the moment a central connects, before any encryption exists
+ * to make sec_state.bonded true. Without a code to prove who is connecting,
+ * this is what keeps a claimed sensor claimed. */
+static bool peer_is_owner(uint16_t conn_handle)
+{
+    struct ble_gap_conn_desc description;
+    if (ble_gap_conn_find(conn_handle, &description) != 0) {
+        return false;
+    }
+    if (description.sec_state.bonded) {
+        return true;
+    }
+    struct ble_store_key_sec key = {0};
+    struct ble_store_value_sec value;
+    key.peer_addr = description.peer_id_addr;
+    return ble_store_read_peer_sec(&key, &value) == 0;
+}
+
 static int gap_event(struct ble_gap_event *event, void *context)
 {
     (void)context;
@@ -140,6 +161,11 @@ static int gap_event(struct ble_gap_event *event, void *context)
         xSemaphoreGive(advertisement_done);
     } else if (event->type == BLE_GAP_EVENT_CONNECT) {
         if (event->connect.status == 0) {
+            if (has_bond() && !peer_is_owner(event->connect.conn_handle)) {
+                ESP_LOGW(TAG, "Refused a hub that does not own this sensor");
+                ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                return 0;
+            }
             connection_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Hub connected for report acknowledgement or device configuration");
         } else {
@@ -148,25 +174,16 @@ static int gap_event(struct ble_gap_event *event, void *context)
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
         xSemaphoreGive(advertisement_done);
-    } else if (event->type == BLE_GAP_EVENT_PASSKEY_ACTION) {
-        if (event->passkey.params.action != BLE_SM_IOACT_DISP) {
-            return BLE_SM_ERR_AUTHREQ;
-        }
-        if (has_bond() && !peer_is_bonded(event->passkey.conn_handle)) {
-            ESP_LOGW(TAG, "Refused pairing: this sensor already belongs to a hub");
-            ble_gap_terminate(event->passkey.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-            return BLE_SM_ERR_AUTHREQ;
-        }
-        struct ble_sm_io io = {
-            .action = BLE_SM_IOACT_DISP,
-            .passkey = opp_device_identity_passkey(),
-        };
-        ESP_LOGI(TAG, "Pairing requested; expecting the code printed on the label");
-        return ble_sm_inject_io(event->passkey.conn_handle, &io);
     } else if (event->type == BLE_GAP_EVENT_REPEAT_PAIRING) {
-        /* Re-pairing from the bonded hub is allowed; anything else is not. */
+        /* Re-pairing from the hub that already owns this sensor is allowed, so a
+         * hub that lost its own keys can recover. A different central is not the
+         * owner, and gets nothing. */
         struct ble_gap_conn_desc description;
         if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &description) != 0) {
+            return BLE_GAP_REPEAT_PAIRING_IGNORE;
+        }
+        if (!description.sec_state.bonded) {
+            ESP_LOGW(TAG, "Refused re-pairing: this sensor already belongs to a hub");
             return BLE_GAP_REPEAT_PAIRING_IGNORE;
         }
         ble_store_util_delete_peer(&description.peer_id_addr);
@@ -282,15 +299,21 @@ esp_err_t opp_bthome_broadcast(const char *local_name,
     if (result == ESP_OK) {
         ble_hs_cfg.reset_cb = on_reset;
         ble_hs_cfg.sync_cb = on_sync;
-        /* LE Secure Connections with a passkey. Both sides derive the long term
-         * key by ECDH and it is never transmitted; the passkey defends the
-         * exchange against an active man in the middle, which Just Works cannot.
-         * The sensor has no display, so it "displays" a code that is printed on
-         * its label instead. */
+        /* LE Secure Connections without a passkey.
+         *
+         * The link is still encrypted, and the long term key is still derived by
+         * ECDH rather than transmitted. What is given up is protection against
+         * someone sitting in the middle of the one pairing exchange, which is
+         * the price of an onboarding with nothing to type.
+         *
+         * Ownership is defended instead of adoption: anyone may claim a sensor
+         * that belongs to nobody, and nobody may take one that is already
+         * claimed. That lock is the refusal below, the hub's release, and the
+         * physical reset, not the handshake. */
         ble_hs_cfg.sm_sc = 1;
         ble_hs_cfg.sm_bonding = 1;
-        ble_hs_cfg.sm_mitm = 1;
-        ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
+        ble_hs_cfg.sm_mitm = 0;
+        ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT;
         ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
         ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
         ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
