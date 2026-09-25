@@ -261,6 +261,30 @@ class OnboardingBeaconTests(unittest.TestCase):
         self.assertEqual(self.ingestion.ingest(partial), "rejected")
 
 
+class ConfigurationRetryRateTests(unittest.TestCase):
+    """Each attempt asks the operating system to pair, so it must be rare."""
+
+    def test_the_retry_floor_is_far_slower_than_the_beacon_cadence(self):
+        from open_plant_pulse_hub.ingestion.ble import CONFIGURATION_RETRY_SECONDS
+
+        # An unclaimed sensor beacons every three seconds; without a floor every
+        # one of those produced a pairing dialog.
+        self.assertGreaterEqual(CONFIGURATION_RETRY_SECONDS, 10.0)
+
+    def test_retries_are_not_keyed_on_the_advertisement_payload(self):
+        source = (
+            Path(__file__).parents[1]
+            / "src/open_plant_pulse_hub/ingestion/ble.py"
+        ).read_text()
+        # Every beacon carries a new packet ID, so comparing payloads never
+        # matches and the rate limit would never apply.
+        self.assertNotIn(
+            "self._last_configuration_attempt.get(sensor_id)\n                            != advertisement.service_data",
+            source,
+        )
+        self.assertIn("CONFIGURATION_RETRY_SECONDS", source)
+
+
 class OnboardingWebTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()

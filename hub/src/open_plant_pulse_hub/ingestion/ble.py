@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import time
 import logging
 from datetime import datetime, timezone
 from threading import Event, Lock, Thread
@@ -13,6 +15,11 @@ from .bthome import BTHOME_SERVICE_UUID, has_force_report_event
 from .device_configuration import DeviceConfigurationSynchronizer
 
 LOGGER = logging.getLogger(__name__)
+
+# One configuration attempt per sensor per half minute. Each attempt opens a
+# connection, and on a platform where pairing is driven by the operating system
+# that means a dialog, so this is the floor on how often a person can be asked.
+CONFIGURATION_RETRY_SECONDS = 30.0
 ScannerFactory = Callable[..., Any]
 
 
@@ -98,6 +105,7 @@ class BleakSubscriber:
         self._last_error: str | None = None
         self._last_receive_at: str | None = None
         self._last_configuration_attempt: dict[str, bytes] = {}
+        self._last_configuration_time: dict[str, float] = {}
         self._last_force_report_attempt: dict[str, bytes] = {}
 
     def start(self) -> None:
@@ -175,10 +183,18 @@ class BleakSubscriber:
                             and self._last_force_report_attempt.get(sensor_id)
                             != advertisement.service_data
                         )
+                        # Rate limit by time, not by payload bytes. Every
+                        # advertisement carries a new packet ID, so comparing
+                        # bytes never matches and every single advertisement
+                        # triggered an attempt. An unclaimed sensor announces
+                        # itself every three seconds, and each attempt asks the
+                        # operating system to pair, which made a popup storm out
+                        # of a retry that was invisible at a slower cadence.
+                        now = time.monotonic()
                         configuration_due = (
                             self._configuration_synchronizer.has_pending(sensor_id)
-                            and self._last_configuration_attempt.get(sensor_id)
-                            != advertisement.service_data
+                            and now - self._last_configuration_time.get(sensor_id, -math.inf)
+                            >= CONFIGURATION_RETRY_SECONDS
                         )
                         if force_report_due or configuration_due:
                             if force_report_due:
@@ -186,9 +202,7 @@ class BleakSubscriber:
                                     advertisement.service_data
                                 )
                             if configuration_due:
-                                self._last_configuration_attempt[sensor_id] = (
-                                    advertisement.service_data
-                                )
+                                self._last_configuration_time[sensor_id] = now
                             await self._configuration_synchronizer.synchronize(
                                 sensor_id, advertisement.observed_identifier
                                 if advertisement.connection_target is None
