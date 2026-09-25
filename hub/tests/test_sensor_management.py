@@ -301,6 +301,26 @@ class SensorManagementWebTests(unittest.TestCase):
 
         self.assertIsNone(self.store.sensor(sensor_id))
 
+    def test_raw_report_log_is_collapsed_last_and_remembers_its_state(self) -> None:
+        with self.request("/sensors/sensor-aabbccddeeff") as response:
+            detail_page = response.read().decode("utf-8")
+        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
+
+        # Debug output belongs after the controls somebody came to the page for,
+        # and closed until asked for: it is the longest section on the page.
+        self.assertLess(
+            detail_page.index('id="sensor-settings-title"'),
+            detail_page.index('id="raw-report-title"'),
+        )
+        self.assertIn('<details class="raw-report-log" id="raw-report-log"', detail_page)
+        self.assertNotIn('<details class="raw-report-log" id="raw-report-log" open', detail_page)
+        self.assertIn("<summary>", detail_page)
+        # Opened or closed, it stays that way across the reloads that watching
+        # reports arrive involves.
+        self.assertIn('log.open = window.localStorage.getItem(RAW_REPORTS_OPEN_KEY) === "true";', app)
+        self.assertIn('window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));', app)
+        self.assertIn("trackRawReportsDisclosure();", app)
+
     def test_raw_report_endpoint_scopes_reports_and_rejects_unknown_sensor(self) -> None:
         sensor_id = "sensor-aabbccddeeff"
         with self.request("/api/raw-reports?" + urlencode({"sensor_id": sensor_id})) as response:

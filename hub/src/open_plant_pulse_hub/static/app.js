@@ -313,6 +313,31 @@ function renderSensorSettings() {
   }
 }
 
+/* The debug log stays as it was left.
+ *
+ * It sits last on the page and is closed until somebody wants it, but watching
+ * reports arrive means reloading this page repeatedly, and reopening the same
+ * section every time is a chore. Browser storage can be missing or refuse the
+ * write, which costs only the memory of the last state, so it is never trusted
+ * for anything the page needs to work. */
+const RAW_REPORTS_OPEN_KEY = "open-plant-pulse.raw-reports-open";
+
+function trackRawReportsDisclosure() {
+  const log = document.getElementById("raw-report-log");
+  try {
+    log.open = window.localStorage.getItem(RAW_REPORTS_OPEN_KEY) === "true";
+  } catch (_error) {
+    log.open = false;
+  }
+  log.addEventListener("toggle", () => {
+    try {
+      window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));
+    } catch (_error) {
+      /* Nothing to do: the section still opens and closes. */
+    }
+  });
+}
+
 function renderRawReports(items) {
   const rows = document.getElementById("raw-report-list");
   if (!items.length) {
@@ -1268,4 +1293,5 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
+trackRawReportsDisclosure();
 loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(poll);

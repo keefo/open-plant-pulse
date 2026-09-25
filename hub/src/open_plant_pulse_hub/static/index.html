@@ -368,21 +368,6 @@
       </div>
     </section>
 
-    <section class="raw-report-log" data-page="detail" aria-labelledby="raw-report-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
-        <span>Latest 50 · newest first</span>
-      </div>
-      <div class="raw-report-scroll" tabindex="0" aria-label="Raw sensor report log">
-        <table>
-          <thead><tr><th>Received</th><th>Packet</th><th>Status</th><th>RSSI</th><th>Source</th><th>Service data</th></tr></thead>
-          <tbody id="raw-report-list">
-            <tr><td class="raw-report-empty" colspan="6">No raw BLE reports stored yet.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
     <section class="sensor-settings" data-page="detail" aria-labelledby="sensor-settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Configuration</h2></div>
@@ -431,6 +416,21 @@
         <output id="sensor-settings-message"></output>
       </form>
     </section>
+
+    <details class="raw-report-log" id="raw-report-log" data-page="detail" hidden>
+      <summary>
+        <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
+        <span>Latest 50 · newest first</span>
+      </summary>
+      <div class="raw-report-scroll" tabindex="0" aria-label="Raw sensor report log">
+        <table>
+          <thead><tr><th>Received</th><th>Packet</th><th>Status</th><th>RSSI</th><th>Source</th><th>Service data</th></tr></thead>
+          <tbody id="raw-report-list">
+            <tr><td class="raw-report-empty" colspan="6">No raw BLE reports stored yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
   </main>
   <script src="/onboarding.js"></script>
   <script src="/app.js"></script>

@@ -211,6 +211,13 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .care-event p, .care-log-empty { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .care-log-empty { padding: 12px 0; }
 @keyframes care-event-arrival { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.raw-report-log > summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.raw-report-log > summary::-webkit-details-marker { display: none; }
+.raw-report-log > summary:focus-visible { outline: 2px solid var(--water); outline-offset: 4px; }
+.raw-report-log > summary > span { margin-left: auto; color: var(--muted); font-size: 12px; }
+.raw-report-log > summary::after { content: ""; flex: none; width: 8px; height: 8px; margin-bottom: 3px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform 150ms ease; }
+.raw-report-log[open] > summary::after { margin-bottom: 0; transform: rotate(-135deg); }
+.raw-report-log[open] > summary { margin-bottom: 22px; }
 .raw-report-scroll { width: 100%; overflow-x: auto; }
 .raw-report-log table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .raw-report-log th, .raw-report-log td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
