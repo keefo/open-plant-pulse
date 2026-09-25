@@ -200,7 +200,10 @@
           <select id="onboarding-profile"></select>
           <label for="onboarding-interval">Reports every</label>
           <select id="onboarding-interval"></select>
-          <label class="checkbox"><input id="onboarding-wifi" type="checkbox"> Turn on this sensor's web console</label>
+          <label class="switch-row" for="onboarding-wifi">
+            <input id="onboarding-wifi" class="switch" type="checkbox">
+            <div><strong>Turn on this sensor's web console</strong></div>
+          </label>
           <small id="onboarding-wifi-note">Readings reach the hub over Bluetooth either way. Leaving it off keeps the radio idle and the battery lasting longer.</small>
           <output id="onboarding-message" aria-live="polite"></output>
         </form>
@@ -421,10 +424,12 @@
           <input id="sensor-reporting-interval" value="Not synced yet" readonly aria-readonly="true">
           <small>Read-only interval confirmed by the sensor after configuration is written and read back.</small>
         </label>
-        <label class="checkbox">
-          <input id="detail-console-toggle" type="checkbox">
-          Web console on this sensor
-          <small id="detail-console-state">Readings reach the hub over Bluetooth either way.</small>
+        <label class="switch-row" for="detail-console-toggle">
+          <input id="detail-console-toggle" class="switch" type="checkbox">
+          <div>
+            <strong>Web console on this sensor</strong>
+            <small id="detail-console-state">Readings reach the hub over Bluetooth either way.</small>
+          </div>
         </label>
         <p id="device-config-status" class="configuration-delivery" aria-live="polite"></p>
         <div class="settings-actions"><button type="submit">Save configuration</button></div>

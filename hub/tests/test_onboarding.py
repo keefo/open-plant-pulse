@@ -731,6 +731,21 @@ class InterfaceTests(unittest.TestCase):
     def test_the_rooms_tab_is_reachable_by_its_own_address(self):
         self.assertIn(b'"/settings/rooms"', self.get("/app.js"))
 
+    def test_the_console_switch_does_not_claim_more_than_it_knows(self):
+        script = self.get("/onboarding.js")
+        # Only the sensor can say its console is on, and it says so by reporting
+        # the address it joined at. Before that it is a request.
+        self.assertIn(b"not confirmed by the sensor yet", script)
+        self.assertNotIn("Web console on".encode("utf-8"), script)
+
+    def test_the_console_switch_is_a_switch_not_a_checkbox(self):
+        page = self.get("/")
+        css = self.get("/app.css")
+        self.assertIn(b'class="switch"', page)
+        self.assertIn(b".switch:checked", css)
+        # Built on a real checkbox, so keyboard use and screen readers still work.
+        self.assertIn(b'id="detail-console-toggle" class="switch" type="checkbox"', page)
+
     def test_the_console_switch_is_on_the_sensor_page_too(self):
         page = self.get("/")
         script = self.get("/app.js")

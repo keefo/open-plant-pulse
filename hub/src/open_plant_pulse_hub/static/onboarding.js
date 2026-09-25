@@ -202,14 +202,17 @@ async function deleteRoom(roomId) {
 }
 
 function describeWifi(sensor) {
-  if (!sensor.wifi_enabled) return "Web console off · radio idle";
+  if (!sensor.wifi_enabled) return "Off · the sensor is not on the network";
   if (sensor.wifi_state === "joined") {
-    return "Web console on · " + (sensor.wifi_address || "joined");
+    return "On · reachable at " + (sensor.wifi_address || "its address");
   }
   if (sensor.wifi_state === "failed") {
-    return "Web console on · " + (WIFI_FAILURE_TEXT[sensor.wifi_failure] || "did not join");
+    return "Failed · " + (WIFI_FAILURE_TEXT[sensor.wifi_failure] || "the sensor could not join");
   }
-  return "Web console on · waiting for the sensor";
+  // Only the sensor can say its console is on, and it says so by reporting the
+  // address it joined at. Before that this is a request, and it says so rather
+  // than claiming the switch did something it has not yet done.
+  return "Requested · not confirmed by the sensor yet";
 }
 
 function renderSettingsSensors() {
@@ -253,13 +256,19 @@ function renderSettingsSensors() {
     identity.textContent = sensor.sensor_id + " · " + (sensor.room || "no room");
 
     const consoleRow = document.createElement("label");
-    consoleRow.className = "checkbox";
+    consoleRow.className = "switch-row";
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.checked = Boolean(sensor.wifi_enabled);
     toggle.dataset.sensorId = sensor.sensor_id;
-    toggle.className = "console-toggle";
-    consoleRow.append(toggle, document.createTextNode(" " + describeWifi(sensor)));
+    toggle.className = "switch console-toggle";
+    const consoleText = document.createElement("div");
+    const consoleLabel = document.createElement("strong");
+    consoleLabel.textContent = "Web console";
+    const consoleDetail = document.createElement("small");
+    consoleDetail.textContent = describeWifi(sensor);
+    consoleText.append(consoleLabel, consoleDetail);
+    consoleRow.append(toggle, consoleText);
 
     const forget = document.createElement("button");
     forget.type = "button";
@@ -614,8 +623,8 @@ function consoleRow(sensor) {
     state: "waiting",
     label: "Pending",
     text: waitedTooLong()
-      ? "Web console on \u00b7 the sensor has not confirmed yet"
-      : "Web console on \u00b7 waiting for the sensor",
+      ? "Requested \u00b7 the sensor has still not confirmed"
+      : "Requested \u00b7 not confirmed by the sensor yet",
     meta: "",
   };
 }
