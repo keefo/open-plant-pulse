@@ -28,10 +28,6 @@ let historyRequestKey = null;
 let drainageAssessments = [];
 let renderedCareEventIds = new Set();
 let careLogInitialized = false;
-let clockObservedAt = null;
-let clockAnchoredAt = null;
-let clockScale = null;
-let previousClockSample = null;
 let wateringCalendarRequestKey = null;
 let wateringIntervalSummary = null;
 let selectedSensorId = null;
@@ -472,57 +468,6 @@ function formatDifference(value, metricName) {
   return Number(value).toFixed(precision);
 }
 
-function updateClockSource(payload) {
-  const observedAt = Date.parse(payload.reading.observed_at || payload.received_at);
-  const receivedAt = Date.parse(payload.received_at);
-  if (!Number.isFinite(observedAt) || !Number.isFinite(receivedAt)) return;
-  if (
-    previousClockSample &&
-    observedAt === previousClockSample.observedAt &&
-    receivedAt === previousClockSample.receivedAt
-  ) return;
-
-  if (previousClockSample) {
-    const observedDelta = observedAt - previousClockSample.observedAt;
-    const receivedDelta = receivedAt - previousClockSample.receivedAt;
-    if (observedDelta > 0 && receivedDelta > 0) {
-      clockScale = Math.max(0.1, Math.min(10000, observedDelta / receivedDelta));
-    }
-  }
-  const anchoredAt = performance.now();
-  const projectedTime = clockObservedAt == null || clockAnchoredAt == null
-    ? observedAt
-    : clockObservedAt + (anchoredAt - clockAnchoredAt) * (clockScale || 1);
-  const receivedAge = Math.max(0, Date.now() - receivedAt);
-  const incomingTime = observedAt + (
-    receivedAge <= sensorOfflineAfterMs ? receivedAge * (clockScale || 1) : 0
-  );
-  previousClockSample = { observedAt, receivedAt };
-  clockObservedAt = Math.max(projectedTime, incomingTime);
-  clockAnchoredAt = anchoredAt;
-}
-
-function renderSimulationClock() {
-  if (clockObservedAt == null || clockAnchoredAt == null) return;
-  const scale = clockScale || 1;
-  const simulatedNow = new Date(clockObservedAt + (performance.now() - clockAnchoredAt) * scale);
-  const seconds = simulatedNow.getSeconds() + simulatedNow.getMilliseconds() / 1000;
-  const minutes = simulatedNow.getMinutes() + seconds / 60;
-  const hours = simulatedNow.getHours() % 12 + minutes / 60;
-  document.getElementById("clock-hour").style.transform = `rotate(${hours * 30}deg)`;
-  document.getElementById("clock-minute").style.transform = `rotate(${minutes * 6}deg)`;
-  document.getElementById("clock-second").style.transform = `rotate(${seconds * 6}deg)`;
-
-  const scaleLabel = clockScale == null
-    ? "Syncing"
-    : `${clockScale >= 10 ? Math.round(clockScale) : clockScale.toFixed(1)}×`;
-  document.getElementById("time-scale").textContent = scaleLabel;
-  document.getElementById("simulation-clock").setAttribute(
-    "aria-label",
-    `Simulation time ${simulatedNow.toLocaleTimeString()}, running at ${scaleLabel}`
-  );
-}
-
 function assessMetric(metricName, metric, value) {
   const numericValue = Number(value);
   if (value == null || !Number.isFinite(numericValue)) return null;
@@ -748,7 +693,6 @@ function renderDrainageAssessment(profile) {
 function renderReading(payload) {
   const reading = payload.reading;
   latestReading = reading;
-  updateClockSource(payload);
   for (const [id, [key, precision]] of Object.entries(fields)) {
     const value = reading[key];
     document.getElementById(id).textContent = value == null ? "--" : Number(value).toFixed(precision);
@@ -1140,18 +1084,6 @@ async function refreshPlantJourney() {
   }
 }
 
-async function restoreClockScale() {
-  if (!selectedSensorId) return;
-  try {
-    const response = await fetch(`/api/readings/history${sensorQuery()}`);
-    if (!response.ok) return;
-    const history = (await response.json()).items;
-    history.slice(-2).forEach(updateClockSource);
-  } catch (_error) {
-    return;
-  }
-}
-
 async function refresh() {
   try {
     await refreshFleet();
@@ -1336,5 +1268,4 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
-loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(poll).then(restoreClockScale);
-setInterval(renderSimulationClock, 100);
+loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(poll);
