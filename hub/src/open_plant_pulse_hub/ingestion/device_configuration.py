@@ -147,6 +147,15 @@ class DeviceConfigurationSynchronizer:
     def has_pending(self, sensor_id: str) -> bool:
         return self._store.pending_device_configuration(sensor_id) is not None
 
+    def pending_revision(self, sensor_id: str) -> Optional[int]:
+        """Which configuration revision is waiting, if any.
+
+        The revision, not the clock, is what says whether an attempt is a fresh
+        change or a repeat of one that already failed.
+        """
+        desired = self._store.pending_device_configuration(sensor_id)
+        return None if desired is None else int(desired["revision"])
+
     def has_release_pending(self, sensor_id: str) -> bool:
         return self._store.release_is_pending(sensor_id)
 

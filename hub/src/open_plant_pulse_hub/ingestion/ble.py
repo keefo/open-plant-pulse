@@ -16,10 +16,11 @@ from .device_configuration import DeviceConfigurationSynchronizer
 
 LOGGER = logging.getLogger(__name__)
 
-# One configuration attempt per sensor per half minute. Each attempt opens a
-# connection, and on a platform where pairing is driven by the operating system
-# that means a dialog, so this is the floor on how often a person can be asked.
+# How soon a failed configuration attempt may be tried again. It exists to stop
+# a retry storm against a sensor that is advertising every few seconds, not to
+# slow down the first attempt, which happens as soon as the sensor is heard.
 CONFIGURATION_RETRY_SECONDS = 30.0
+
 ScannerFactory = Callable[..., Any]
 
 
@@ -104,8 +105,8 @@ class BleakSubscriber:
         self._state = "stopped"
         self._last_error: str | None = None
         self._last_receive_at: str | None = None
-        self._last_configuration_attempt: dict[str, bytes] = {}
         self._last_configuration_time: dict[str, float] = {}
+        self._last_attempted_revision: dict[str, int] = {}
         self._last_force_report_attempt: dict[str, bytes] = {}
 
     def start(self) -> None:
@@ -205,17 +206,32 @@ class BleakSubscriber:
                             )
                             continue
                         now = time.monotonic()
-                        configuration_due = (
-                            self._configuration_synchronizer.has_pending(sensor_id)
-                            and now - self._last_configuration_time.get(sensor_id, -math.inf)
-                            >= CONFIGURATION_RETRY_SECONDS
+                        # A revision this hub has not tried yet goes out on the
+                        # very next advertisement, however recently something
+                        # else was attempted. Only a repeat of the same revision
+                        # is throttled, because that is the case that can storm.
+                        pending_revision = getattr(
+                            self._configuration_synchronizer, "pending_revision", None
                         )
+                        revision = (
+                            pending_revision(sensor_id) if pending_revision is not None else None
+                        )
+                        if revision is None:
+                            configuration_due = False
+                        elif self._last_attempted_revision.get(sensor_id) != revision:
+                            configuration_due = True
+                        else:
+                            configuration_due = (
+                                now - self._last_configuration_time.get(sensor_id, -math.inf)
+                                >= CONFIGURATION_RETRY_SECONDS
+                            )
                         if force_report_due or configuration_due:
                             if force_report_due:
                                 self._last_force_report_attempt[sensor_id] = (
                                     advertisement.service_data
                                 )
                             if configuration_due:
+                                self._last_attempted_revision[sensor_id] = revision
                                 self._last_configuration_time[sensor_id] = now
                             await self._configuration_synchronizer.synchronize(
                                 sensor_id, advertisement.observed_identifier

@@ -3,6 +3,8 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
+#include "driver/usb_serial_jtag.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -28,6 +30,23 @@ static RTC_DATA_ATTR uint8_t bthome_packet_id;
  * appearing or disappearing inside ten seconds. It costs power, and it stops the
  * moment the sensor belongs to a hub, which is before power matters. */
 #define ONBOARDING_BEACON_INTERVAL_MS 3000
+/* How often an owned sensor makes itself reachable between reports.
+ *
+ * Reachability is not reporting. A hub can only reach a sensor while it is
+ * advertising, so a sensor that advertises every half hour takes half an hour to
+ * accept a settings change. Re-advertising the last payload unchanged reopens
+ * that door without inventing a measurement: the hub sees the same packet ID,
+ * stores nothing, and can connect. */
+/* A short gap, not a long one. Each window already costs the Bluetooth stack
+ * starting and stopping, so spacing windows out adds that cost to the delay
+ * rather than saving anything; back to back, a sensor is reachable almost
+ * continuously and a change lands in a second or two. */
+#define REACHABLE_INTERVAL_MS 250
+/* Somebody who has just changed one setting usually changes another, so a
+ * sensor stays reachable for a while after any hub connection even on battery.
+ * Outside that window a battery sensor goes back to its reporting interval,
+ * because being reachable costs the same whether or not anyone is listening. */
+#define RESPONSIVE_WINDOW_MS 120000
 #define DEVELOPMENT_BROADCAST_TASK_STACK_SIZE 4096
 #define DEVELOPMENT_BROADCAST_TASK_PRIORITY 4
 
@@ -159,6 +178,50 @@ static void run_production_cycle(void)
 #endif
 
 #if !CONFIG_OPP_PRODUCTION_LIFECYCLE
+static uint8_t last_payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
+static size_t last_payload_size;
+
+/* Mains power removes the reason to be frugal, so a plugged-in sensor is always
+ * reachable. On battery it is reachable only while somebody is working with it. */
+static bool should_stay_reachable(void)
+{
+    if (usb_serial_jtag_is_connected()) {
+        return true;
+    }
+    const int64_t last = opp_bthome_last_connection_ms();
+    if (last == 0) {
+        return false;
+    }
+    return (esp_timer_get_time() / 1000) - last < RESPONSIVE_WINDOW_MS;
+}
+
+/* Re-advertise what was last sent, unchanged.
+ *
+ * The same packet ID is the point: the hub recognises a duplicate and stores no
+ * reading, so opening the door often does not fill the database with rows that
+ * say nothing new. */
+static void advertise_onboarding_beacon(const char *local_name);
+
+static void advertise_reachable_window(const char *local_name)
+{
+    if (last_payload_size == 0) {
+        /* Nothing has been sent yet, so there is nothing to repeat. Announce
+         * presence instead: a beacon stores no reading, and it gives the next
+         * window something to echo. */
+        advertise_onboarding_beacon(local_name);
+        return;
+    }
+    esp_err_t error = opp_bthome_broadcast(
+        local_name,
+        last_payload,
+        last_payload_size,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Reachability window failed: %s", esp_err_to_name(error));
+    }
+}
+
 /* Identity only: the hub learns the sensor exists and can adopt it, and learns
  * nothing about a plant, because there is nothing to tell. */
 static void advertise_onboarding_beacon(const char *local_name)
@@ -169,6 +232,8 @@ static void advertise_onboarding_beacon(const char *local_name)
         ESP_LOGE(TAG, "Could not encode the onboarding beacon");
         return;
     }
+    memcpy(last_payload, payload, payload_size);
+    last_payload_size = payload_size;
     esp_err_t error = opp_bthome_broadcast(
         local_name,
         payload,
@@ -216,6 +281,8 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
         }
         return;
     }
+    memcpy(last_payload, payload, payload_size);
+    last_payload_size = payload_size;
     if (forced) {
         opp_force_report_started(force_request_id, sample.packet_id);
     }
@@ -248,12 +315,13 @@ static void development_broadcast_task(void *context)
         return;
     }
 
-    /* Announce immediately rather than after a first interval. A sensor that has
-     * just been plugged in should appear in the list straight away; waiting one
-     * cadence makes powering it on feel broken. */
-    if (!opp_device_identity_is_onboarded()) {
-        advertise_onboarding_beacon(local_name);
-    }
+    /* Announce immediately rather than after a first interval, claimed or not.
+     *
+     * An owned sensor used to wait a whole reporting interval before saying
+     * anything, so a reboot made it disappear from its hub for up to half an
+     * hour, and there was nothing for a reachability window to repeat. Being
+     * heard from is the first thing anyone wants after power-on. */
+    advertise_onboarding_beacon(local_name);
 
     TickType_t next_report = xTaskGetTickCount();
     while (true) {
@@ -284,8 +352,19 @@ static void development_broadcast_task(void *context)
                 broadcast_development_report(local_name, 0);
                 break;
             }
-            if (opp_force_report_wait((TickType_t)ticks_remaining, &force_request_id)) {
+            TickType_t wait_ticks = (TickType_t)ticks_remaining;
+            bool reachability_tick = false;
+            if (should_stay_reachable()) {
+                const TickType_t reachable_ticks = pdMS_TO_TICKS(REACHABLE_INTERVAL_MS);
+                if (reachable_ticks < wait_ticks) {
+                    wait_ticks = reachable_ticks;
+                    reachability_tick = true;
+                }
+            }
+            if (opp_force_report_wait(wait_ticks, &force_request_id)) {
                 broadcast_development_report(local_name, force_request_id);
+            } else if (reachability_tick) {
+                advertise_reachable_window(local_name);
             } else {
                 broadcast_development_report(local_name, 0);
                 break;

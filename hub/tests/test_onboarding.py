@@ -394,27 +394,54 @@ class OnboardingBeaconTests(unittest.TestCase):
 
 
 class ConfigurationRetryRateTests(unittest.TestCase):
-    """Each attempt asks the operating system to pair, so it must be rare."""
+    """A new change goes out at once; only a failing repeat is throttled."""
 
-    def test_the_retry_floor_is_far_slower_than_the_beacon_cadence(self):
+    def setUp(self):
+        self.source = (
+            Path(__file__).parents[1] / "src/open_plant_pulse_hub/ingestion/ble.py"
+        ).read_text()
+
+    def test_a_revision_never_tried_is_sent_on_the_next_advertisement(self):
+        # Waiting out a retry floor before the first attempt would make every
+        # setting change feel broken on a sensor that is reachable right now.
+        self.assertIn("self._last_attempted_revision.get(sensor_id) != revision", self.source)
+        self.assertIn("configuration_due = True", self.source)
+
+    def test_a_repeat_of_the_same_revision_is_throttled(self):
         from open_plant_pulse_hub.ingestion.ble import CONFIGURATION_RETRY_SECONDS
 
-        # An unclaimed sensor beacons every three seconds; without a floor every
-        # one of those produced a pairing dialog.
         self.assertGreaterEqual(CONFIGURATION_RETRY_SECONDS, 10.0)
+        self.assertIn("CONFIGURATION_RETRY_SECONDS", self.source)
 
-    def test_retries_are_not_keyed_on_the_advertisement_payload(self):
-        source = (
-            Path(__file__).parents[1]
-            / "src/open_plant_pulse_hub/ingestion/ble.py"
-        ).read_text()
+    def test_configuration_retries_are_not_keyed_on_the_payload(self):
         # Every beacon carries a new packet ID, so comparing payloads never
-        # matches and the rate limit would never apply.
-        self.assertNotIn(
-            "self._last_configuration_attempt.get(sensor_id)\n                            != advertisement.service_data",
-            source,
-        )
-        self.assertIn("CONFIGURATION_RETRY_SECONDS", source)
+        # matched and the configuration rate limit never applied. A forced
+        # report legitimately still compares payloads: that is how one specific
+        # request is identified.
+        self.assertNotIn("self._last_configuration_attempt", self.source)
+
+
+class ReachabilityTests(unittest.TestCase):
+    """Being reachable is separate from reporting, on the sensor side."""
+
+    def setUp(self):
+        self.source = (
+            Path(__file__).parents[2] / "sensor/firmware/main/app_main.c"
+        ).read_text()
+
+    def test_a_powered_sensor_stays_reachable(self):
+        self.assertIn("usb_serial_jtag_is_connected()", self.source)
+        self.assertIn("REACHABLE_INTERVAL_MS", self.source)
+
+    def test_a_battery_sensor_stays_reachable_while_being_worked_on(self):
+        self.assertIn("RESPONSIVE_WINDOW_MS", self.source)
+        self.assertIn("opp_bthome_last_connection_ms()", self.source)
+
+    def test_reachability_repeats_the_last_payload_rather_than_inventing_one(self):
+        # Re-sending the same packet ID is what stops a sensor that is reachable
+        # every few seconds from filling the database with rows saying nothing.
+        self.assertIn("advertise_reachable_window", self.source)
+        self.assertIn("last_payload", self.source)
 
 
 class ReleaseProtocolTests(unittest.TestCase):

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "device_config_protocol.h"
 #include "device_config_store.h"
 #include "device_identity.h"
@@ -49,6 +50,7 @@ static uint16_t connection_handle = BLE_HS_CONN_HANDLE_NONE;
 /* The bond cannot be dropped while it is carrying the write that asked for it,
  * so the request is noted and honoured once the link is closed. */
 static bool release_requested;
+static int64_t last_connection_ms;
 
 /* Marker, joined flag, and four address bytes. */
 #define OPP_STATION_STATUS_SIZE 6
@@ -215,6 +217,7 @@ static int gap_event(struct ble_gap_event *event, void *context)
                 return 0;
             }
             connection_handle = event->connect.conn_handle;
+            last_connection_ms = esp_timer_get_time() / 1000;
             ESP_LOGI(TAG, "Hub connected for report acknowledgement or device configuration");
         } else {
             xSemaphoreGive(advertisement_done);
@@ -414,4 +417,8 @@ esp_err_t opp_bthome_broadcast(const char *local_name,
     vSemaphoreDelete(advertisement_done);
     advertisement_done = NULL;
     return result;
+}
+int64_t opp_bthome_last_connection_ms(void)
+{
+    return last_connection_ms;
 }
