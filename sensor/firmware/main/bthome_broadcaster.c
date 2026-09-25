@@ -9,6 +9,7 @@
 #include "device_config_protocol.h"
 #include "device_config_store.h"
 #include "device_identity.h"
+#include "firmware_update.h"
 #include "web_ui.h"
 #include "wifi_credentials_store.h"
 #include "freertos/FreeRTOS.h"
@@ -59,6 +60,21 @@ static int64_t last_connection_ms;
 #define OPP_STATION_STATUS_SIZE 9
 #define OPP_STATION_STATUS_MARKER 0xA1
 
+/* What an update is doing, in front of the station status rather than after it,
+ * so the hub's existing read of the last nine bytes still finds what it has
+ * always found there. Nothing is appended when there is nothing to report. */
+static size_t append_firmware_status(uint8_t *output)
+{
+    opp_firmware_state_t state;
+    uint8_t percent;
+    opp_firmware_failure_t failure;
+    opp_firmware_update_status(&state, &percent, &failure);
+    if (state == OPP_FIRMWARE_STATE_IDLE) {
+        return 0;
+    }
+    return opp_firmware_status_encode(state, percent, failure, output);
+}
+
 static size_t append_station_status(uint8_t *output)
 {
     const bool joined = web_ui_station_joined();
@@ -103,7 +119,8 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
                        : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         opp_device_config_t config;
-        uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE + OPP_STATION_STATUS_SIZE];
+        uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE + OPP_FIRMWARE_STATUS_SIZE +
+                        OPP_STATION_STATUS_SIZE];
         opp_device_config_store_get(&config);
         size_t payload_size = opp_device_config_encode(&config, payload);
         if (payload_size == 0) {
@@ -114,6 +131,7 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
          * Bluetooth, and a console it switched on stays "waiting" until told.
          * A suffix rather than a new payload version, so a hub that does not
          * know about it still decodes the configuration it asked for. */
+        payload_size += append_firmware_status(&payload[payload_size]);
         payload_size += append_station_status(&payload[payload_size]);
         return os_mbuf_append(context->om, payload, payload_size) == 0
                    ? 0
@@ -138,6 +156,17 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
             opp_device_identity_set_onboarded(false);
             release_requested = true;
             return 0;
+        }
+        opp_firmware_update_command_t update;
+        if (opp_firmware_update_decode(payload, payload_size, &update)) {
+            /* Only the hub that owns this sensor is connected, and only over an
+             * encrypted link, so the instruction is as trustworthy as the bond.
+             * What it names is checked anyway: the image is hashed against the
+             * digest that arrived here before anything is made bootable. */
+            const esp_err_t error = opp_firmware_update_start(&update);
+            return error == ESP_OK || error == ESP_ERR_INVALID_STATE
+                       ? 0
+                       : BLE_ATT_ERR_UNLIKELY;
         }
         opp_report_ack_t ack;
         if (opp_report_ack_decode(payload, payload_size, &ack)) {

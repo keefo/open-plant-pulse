@@ -15,6 +15,7 @@
 #include "clock_sync.h"
 #include "device_config_store.h"
 #include "device_identity.h"
+#include "firmware_update.h"
 #include "force_report.h"
 #include "sht45.h"
 #include "sht45_monitor.h"
@@ -131,6 +132,7 @@ static void run_production_cycle(void)
 {
     ESP_LOGI(TAG, "Open Plant Pulse firmware %s production wake cycle",
              esp_app_get_description()->version);
+    ESP_ERROR_CHECK(opp_firmware_update_init());
     esp_err_t nvs_error = initialise_nvs();
     esp_err_t identity_error = opp_device_identity_init();
     if (identity_error != ESP_OK) {
@@ -172,6 +174,7 @@ static void run_production_cycle(void)
         ESP_LOGW(TAG, "BTHome advertising cycle failed: %s", esp_err_to_name(error));
     } else {
         ESP_LOGI(TAG, "Bounded BTHome advertising cycle complete");
+        opp_firmware_update_confirm();
     }
     enter_deep_sleep();
 }
@@ -186,6 +189,12 @@ static size_t last_payload_size;
 static bool should_stay_reachable(void)
 {
     if (usb_serial_jtag_is_connected()) {
+        return true;
+    }
+    /* An update in progress outranks any reporting interval: the hub is
+     * watching it, and a sensor that went quiet halfway through would leave
+     * whoever pressed the button with nothing to look at. */
+    if (opp_firmware_update_in_progress()) {
         return true;
     }
     const int64_t last = opp_bthome_last_connection_ms();
@@ -322,6 +331,10 @@ static void development_broadcast_task(void *context)
      * hour, and there was nothing for a reachability window to repeat. Being
      * heard from is the first thing anyone wants after power-on. */
     advertise_onboarding_beacon(local_name);
+    /* Being heard is what this sensor is for, so an image that has got this far
+     * works. A newly installed one is kept from here on; one that crashed before
+     * reaching this line is replaced by its predecessor at the next reset. */
+    opp_firmware_update_confirm();
 
     TickType_t next_report = xTaskGetTickCount();
     while (true) {
@@ -379,6 +392,7 @@ void app_main(void)
 #if CONFIG_OPP_PRODUCTION_LIFECYCLE
     run_production_cycle();
 #else
+    ESP_ERROR_CHECK(opp_firmware_update_init());
     ESP_ERROR_CHECK(web_ui_config_init());
     ESP_ERROR_CHECK(opp_device_identity_init());
     ESP_ERROR_CHECK(opp_device_config_store_init());

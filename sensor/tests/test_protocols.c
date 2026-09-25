@@ -5,6 +5,7 @@
 #include "bthome_payload.h"
 #include "clock_policy.h"
 #include "device_config_protocol.h"
+#include "firmware_update_protocol.h"
 #include "power_source.h"
 #include "report_ack_protocol.h"
 #include "wifi_credentials_protocol.h"
@@ -319,6 +320,96 @@ static void test_wifi_credentials(void)
     assert(!opp_wifi_credentials_decode(lying_length, sizeof(lying_length), &received));
 }
 
+
+static void test_firmware_update_command(void)
+{
+    opp_firmware_update_command_t command = {
+        .update_id = 7,
+        .size_bytes = 1294784,
+        .address = {192, 168, 0, 231},
+        .port = 8081,
+    };
+    for (size_t index = 0; index < sizeof(command.digest); ++index) {
+        command.digest[index] = (uint8_t)(0xab);
+    }
+
+    uint8_t payload[OPP_FIRMWARE_UPDATE_PAYLOAD_SIZE];
+    assert(opp_firmware_update_encode(&command, payload) == sizeof(payload));
+    assert(payload[0] == OPP_FIRMWARE_UPDATE_PROTOCOL_VERSION);
+
+    opp_firmware_update_command_t decoded;
+    assert(opp_firmware_update_decode(payload, sizeof(payload), &decoded));
+    assert(decoded.update_id == command.update_id);
+    assert(decoded.size_bytes == command.size_bytes);
+    assert(decoded.port == command.port);
+    assert(memcmp(decoded.address, command.address, sizeof(command.address)) == 0);
+    assert(memcmp(decoded.digest, command.digest, sizeof(command.digest)) == 0);
+
+    /* One characteristic carries several payloads. Each reader must recognise
+     * only its own, or a payload would be applied as the wrong thing. */
+    uint8_t configuration[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE];
+    const opp_device_config_t config = {
+        .revision = 3,
+        .reporting_interval_seconds = 60,
+        .plant_name = "Fern",
+        .room = "Office",
+    };
+    const size_t configuration_size = opp_device_config_encode(&config, configuration);
+    assert(configuration_size > 0);
+    assert(!opp_firmware_update_decode(configuration, configuration_size, &decoded));
+    opp_device_config_t misread;
+    assert(!opp_device_config_decode(payload, sizeof(payload), &misread));
+
+    /* A command that cannot be acted on is refused rather than half-applied. */
+    uint8_t broken[OPP_FIRMWARE_UPDATE_PAYLOAD_SIZE];
+    memcpy(broken, payload, sizeof(broken));
+    broken[1] = 0;
+    broken[2] = 0;
+    broken[3] = 0;
+    broken[4] = 0;
+    assert(!opp_firmware_update_decode(broken, sizeof(broken), &decoded));
+    assert(!opp_firmware_update_decode(payload, sizeof(payload) - 1, &decoded));
+}
+
+static void test_firmware_update_url(void)
+{
+    opp_firmware_update_command_t command = {
+        .update_id = 1,
+        .size_bytes = 1024,
+        .address = {192, 168, 0, 231},
+        .port = 8081,
+    };
+    for (size_t index = 0; index < sizeof(command.digest); ++index) {
+        command.digest[index] = (uint8_t)index;
+    }
+
+    char url[128];
+    const size_t written = opp_firmware_update_format_url(&command, url, sizeof(url));
+    assert(written > 0);
+    assert(strcmp(url,
+                  "http://192.168.0.231:8081/firmware/"
+                  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f.bin") == 0);
+
+    char cramped[32];
+    assert(opp_firmware_update_format_url(&command, cramped, sizeof(cramped)) == 0);
+}
+
+static void test_firmware_status_suffix(void)
+{
+    uint8_t status[OPP_FIRMWARE_STATUS_SIZE];
+    assert(opp_firmware_status_encode(OPP_FIRMWARE_STATE_DOWNLOADING, 41,
+                                      OPP_FIRMWARE_FAILURE_NONE, status) == sizeof(status));
+    assert(status[0] == OPP_FIRMWARE_STATUS_MARKER);
+    assert(status[1] == OPP_FIRMWARE_STATE_DOWNLOADING);
+    assert(status[2] == 41);
+    assert(status[3] == OPP_FIRMWARE_FAILURE_NONE);
+
+    /* A percentage beyond the end of the download says nothing useful. */
+    assert(opp_firmware_status_encode(OPP_FIRMWARE_STATE_INSTALLING, 240,
+                                      OPP_FIRMWARE_FAILURE_NONE, status) == sizeof(status));
+    assert(status[2] == 100);
+}
+
 int main(void)
 {
     test_modbus_request();
@@ -334,5 +425,8 @@ int main(void)
     test_power_source_policy();
     test_bthome_onboarding_beacon();
     test_wifi_credentials();
+    test_firmware_update_command();
+    test_firmware_update_url();
+    test_firmware_status_suffix();
     return 0;
 }
