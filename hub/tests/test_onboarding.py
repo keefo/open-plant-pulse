@@ -459,7 +459,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"sensor.seen_age_seconds", script)
         # Switching a sensor off must remove it while somebody is still looking,
         # so the window is a few missed beacons rather than minutes.
-        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 35", script)
+        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 10", script)
 
     def test_the_candidate_list_updates_as_beacons_arrive(self):
         script = self.get("/onboarding.js")

@@ -23,7 +23,11 @@ static const char *TAG = "plant_pulse";
 static RTC_DATA_ATTR uint8_t bthome_packet_id;
 
 #define DEVELOPMENT_REPORT_INTERVAL_MS 5000
-#define ONBOARDING_BEACON_INTERVAL_MS 10000
+/* Three seconds, which is also the advertising window, so an unclaimed sensor
+ * effectively announces itself continuously. That is what lets the hub notice it
+ * appearing or disappearing inside ten seconds. It costs power, and it stops the
+ * moment the sensor belongs to a hub, which is before power matters. */
+#define ONBOARDING_BEACON_INTERVAL_MS 3000
 #define DEVELOPMENT_BROADCAST_TASK_STACK_SIZE 4096
 #define DEVELOPMENT_BROADCAST_TASK_PRIORITY 4
 
@@ -249,6 +253,13 @@ static void development_broadcast_task(void *context)
         ESP_LOGE(TAG, "Could not format stable BTHome identity");
         vTaskDelete(NULL);
         return;
+    }
+
+    /* Announce immediately rather than after a first interval. A sensor that has
+     * just been plugged in should appear in the list straight away; waiting one
+     * cadence makes powering it on feel broken. */
+    if (!opp_device_identity_is_onboarded()) {
+        advertise_onboarding_beacon(local_name);
     }
 
     TickType_t next_report = xTaskGetTickCount();
