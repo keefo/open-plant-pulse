@@ -23,6 +23,7 @@ static const char *TAG = "plant_pulse";
 static RTC_DATA_ATTR uint8_t bthome_packet_id;
 
 #define DEVELOPMENT_REPORT_INTERVAL_MS 5000
+#define ONBOARDING_BEACON_INTERVAL_MS 10000
 #define DEVELOPMENT_BROADCAST_TASK_STACK_SIZE 4096
 #define DEVELOPMENT_BROADCAST_TASK_PRIORITY 4
 
@@ -254,10 +255,18 @@ static void development_broadcast_task(void *context)
     while (true) {
         opp_device_config_t config;
         opp_device_config_store_get(&config);
-        const TickType_t report_interval_ticks = config.revision == 0
-                                                     ? pdMS_TO_TICKS(DEVELOPMENT_REPORT_INTERVAL_MS)
-                                                     : pdMS_TO_TICKS(1000U) *
-                                                           config.reporting_interval_seconds;
+        /* An unclaimed sensor announces itself often, not on its reporting
+         * interval. Somebody is looking for it in a list that has to feel live:
+         * on a thirty-minute cadence that list cannot tell a sensor that was
+         * switched off from one that is simply between beacons. The sensor is
+         * powered and attended during setup, so the cost is acceptable, and it
+         * ends the moment the sensor belongs to a hub. */
+        const TickType_t report_interval_ticks =
+            !opp_device_identity_is_onboarded()
+                ? pdMS_TO_TICKS(ONBOARDING_BEACON_INTERVAL_MS)
+                : (config.revision == 0
+                       ? pdMS_TO_TICKS(DEVELOPMENT_REPORT_INTERVAL_MS)
+                       : pdMS_TO_TICKS(1000U) * config.reporting_interval_seconds);
         next_report += report_interval_ticks;
         while (true) {
             uint32_t force_request_id;

@@ -225,6 +225,21 @@ class OnboardingBeaconTests(unittest.TestCase):
         sensor = self.store.sensor("sensor-aabbccddeeff")
         self.assertLess(sensor["seen_age_seconds"], 300)
 
+    def test_adopting_a_sensor_always_re_delivers_its_configuration(self):
+        """The delivery is what opens the connection pairing needs."""
+        self.ingestion.ingest(self.beacon())
+        first = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
+        self.store.mark_device_configuration_applied(
+            "sensor-aabbccddeeff", first["device_config_revision"], 1800
+        )
+        self.assertEqual(self.store.sensor("sensor-aabbccddeeff")["device_config_status"], "applied")
+
+        self.store.set_sensor_onboarding_state("sensor-aabbccddeeff", "onboarding")
+        again = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
+
+        self.assertGreater(again["device_config_revision"], first["device_config_revision"])
+        self.assertEqual(again["device_config_status"], "pending")
+
     def test_a_beacon_sensor_can_be_enrolled(self):
         self.ingestion.ingest(self.beacon())
         sensor = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
@@ -442,6 +457,14 @@ class InterfaceTests(unittest.TestCase):
         # Freshness is when the device was last heard, not when it last measured:
         # a sensor beaconing for adoption has no measurement to be fresh about.
         self.assertIn(b"sensor.seen_age_seconds", script)
+        # Switching a sensor off must remove it while somebody is still looking,
+        # so the window is a few missed beacons rather than minutes.
+        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 35", script)
+
+    def test_the_candidate_list_updates_as_beacons_arrive(self):
+        script = self.get("/onboarding.js")
+        self.assertIn(b"describeLastHeard", script)
+        self.assertIn(b"heard just now", script)
 
     def test_step_one_reports_the_real_scanner_state(self):
         page = self.get("/")

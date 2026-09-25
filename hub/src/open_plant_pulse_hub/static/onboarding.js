@@ -192,7 +192,11 @@ async function forgetSensor(sensorId) {
  * reaches the hub over UDP and has no radio, so there is nothing to pair with.
  * And a sensor last heard from days ago is not in the room: offering it would
  * fail at the pairing step with no way for anyone to tell why. */
-const ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 300;
+/* An unclaimed sensor beacons every ten seconds, so three missed beacons is
+ * enough to conclude it is gone. Long enough to survive a lost advertisement,
+ * short enough that switching a sensor off removes it from the list while
+ * somebody is still looking at it. */
+const ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 35;
 
 /* Show the scanner's real state, not a decorative animation.
  *
@@ -284,7 +288,11 @@ function renderOnboardingCandidates() {
   const container = document.getElementById("onboarding-candidates");
   const candidates = onboardingCandidates();
   const renderKey = JSON.stringify([
-    candidates.map((sensor) => [sensor.sensor_id, sensor.latest_rssi]),
+    candidates.map((sensor) => [
+      sensor.sensor_id,
+      sensor.latest_rssi,
+      sensor.seen_age_seconds,
+    ]),
     onboardingSensorId,
   ]);
   if (container.dataset.renderKey === renderKey) return;
@@ -309,7 +317,8 @@ function renderOnboardingCandidates() {
     const identity = document.createElement("code");
     identity.textContent = sensor.sensor_id;
     const signal = document.createElement("span");
-    signal.textContent = describeSignal(sensor.latest_rssi);
+    signal.textContent =
+      describeSignal(sensor.latest_rssi) + " \u00b7 " + describeLastHeard(sensor.seen_age_seconds);
     choice.append(name, identity, signal);
     container.append(choice);
   });
@@ -321,6 +330,12 @@ function describeSignal(rssi) {
   if (rssi === null || rssi === undefined) return "signal unknown";
   if (rssi >= -60) return "close by";
   return "far away — possibly a neighbour's";
+}
+
+function describeLastHeard(seconds) {
+  if (typeof seconds !== "number") return "last heard unknown";
+  if (seconds <= 2) return "heard just now";
+  return "heard " + seconds + "s ago";
 }
 
 function renderOnboardingDetails() {

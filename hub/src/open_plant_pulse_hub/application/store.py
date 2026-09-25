@@ -647,7 +647,7 @@ class ReadingStore:
             current = self._database.execute(
                 """
                 SELECT plant_id, display_name, room, expected_interval_seconds,
-                       device_config_revision
+                       device_config_revision, enrollment_status
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -655,8 +655,15 @@ class ReadingStore:
             if current is None:
                 raise ValueError("sensor_id has not been observed")
             plant_id = current[0]
+            # Adopting a sensor always re-delivers its configuration, even when
+            # every field matches what the hub last sent. A sensor being adopted
+            # has just been reset or has come from another hub, so whatever it
+            # holds cannot be trusted; and the delivery is what opens the
+            # connection that pairing needs.
+            adopting = current[5] != "enrolled"
             device_config_changed = (
-                current[1] != display_name
+                adopting
+                or current[1] != display_name
                 or (current[2] or "") != room
                 or current[3] != expected_interval_seconds
                 or current[4] == 0
