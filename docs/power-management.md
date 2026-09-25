@@ -278,16 +278,13 @@ The XIAO documentation's approximate 44 microamp deep-sleep figure is only a
 board-level starting point. It is not a validated system current for this
 product.
 
-## Simulation time is separate
+## Accelerated testing needs real firmware changes
 
-The hub simulator can accelerate domain time, for example to 60 times normal
-speed, so long-duration plant behavior can be tested quickly. This does not
-change a physical ESP32-C3 timer. A physical node configured for 30 minutes
-wakes after approximately 30 real minutes.
-
-Accelerated physical testing requires a temporary shorter firmware sampling
-interval. Production firmware and hub offline detection must use the sensor's
-real expected reporting cadence rather than the dashboard's simulation scale.
+Nothing on the hub can make a physical ESP32-C3 timer run faster: a node
+configured for 30 minutes wakes after approximately 30 real minutes. Testing
+long-duration behavior quickly requires a temporarily shorter firmware sampling
+interval, and hub offline detection must use the sensor's real expected
+reporting cadence either way.
 
 ## Verification requirements
 

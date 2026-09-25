@@ -9,6 +9,6 @@
       {"status": "Critical", "max_deviation": null}
     ]
   },
-  "guidance": "Starter comparison ranges for the simulator, not fertilization instructions. NPK values depend on substrate and test method; validate against a suitable lab test.",
+  "guidance": "Starter comparison ranges, not fertilization instructions. NPK values depend on substrate and test method; validate against a suitable lab test.",
   "climate_guidance": "Comfort ranges are broad starter guidance. Brief excursions are not automatically harmful; airflow, light, season, and acclimation also affect plant response."
 }

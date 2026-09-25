@@ -5,8 +5,8 @@
 - [x] Separate sensor and hub product boundaries.
 - [x] Host-test the Modbus parser and BTHome encoder/decoder.
 - [x] Add a shared BTHome fixture.
-- [x] Run the simulated sensor, loopback UDP ingestion, SQLite store, internal HTTP
-  endpoints, and live dashboard.
+- [x] Run BLE ingestion, the SQLite store, internal HTTP endpoints, and a live
+  dashboard end to end.
 - [x] Add system architecture, development, safety, and integration documentation.
 - [x] Add repository checks in continuous integration.
 

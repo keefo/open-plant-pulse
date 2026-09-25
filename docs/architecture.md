@@ -61,7 +61,6 @@ The hub follows dependency direction toward a platform-independent domain:
 flowchart LR
     Bleak[Bleak subscriber] --> Ingest[Ingestion service]
     Replay[BLE fixture replay] --> Ingest
-    UDP[Existing loopback UDP adapter] --> Ingest
     Ingest --> Domain[Domain models and rules]
     Ingest --> Repo[Repository interface]
     SQLite[SQLite adapter] --> Repo
@@ -72,7 +71,7 @@ flowchart LR
 
 - **Domain:** telemetry, plants, thresholds, freshness, and derived results.
 - **Application:** enrollment, ingestion, deduplication, retention, and care flows.
-- **Adapters:** Bleak, fixture replay, development UDP, SQLite, household HTTP,
+- **Adapters:** Bleak, fixture replay, SQLite, household HTTP,
   and later MQTT, public APIs, and OS notifications.
 - **Client:** the first client is the hub-hosted household web application.
 

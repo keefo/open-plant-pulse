@@ -1,7 +1,6 @@
 import json
 from dataclasses import replace
 from pathlib import Path
-import socket
 import sqlite3
 import tempfile
 from threading import Thread
@@ -11,37 +10,37 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.domain import SensorReading
 from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION
-from open_plant_pulse_hub.ingestion import decode_simulation_datagram
-from open_plant_pulse_hub.ingestion.udp import SimulationUdpReceiver
 from open_plant_pulse_hub.web import create_server, server_address
 
 
-FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "simulated-reading-v1.json"
+def sample_reading():
+    """A complete reading, as a physical sensor would produce one.
 
-
-class UdpReceiverTests(unittest.TestCase):
-    def test_receives_simulated_datagram(self) -> None:
-        store = ReadingStore()
-        receiver = SimulationUdpReceiver(store, port=0)
-        receiver.start()
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-                sender.sendto(FIXTURE_PATH.read_bytes(), receiver.address)
-
-            self.assertTrue(store.wait_for_reading(timeout=1.0))
-            latest = store.latest()
-            self.assertIsNotNone(latest)
-            assert latest is not None
-            self.assertEqual(latest["reading"]["sensor_id"], "simulated-plant-01")
-            self.assertEqual(latest["reading"]["potassium_mg_kg"], 124)
-        finally:
-            receiver.close()
+    Written out in place rather than loaded from a fixture: these tests are
+    about the store, the dashboard and care events, so the reading is theirs to
+    vary and does not depend on any particular transport.
+    """
+    return SensorReading(
+        sensor_id="plant-01",
+        sequence=42,
+        observed_at="2026-09-01T12:00:00Z",
+        soil_temperature_c=21.8,
+        moisture_percent=38.4,
+        conductivity_us_cm=1180,
+        air_temperature_c=24.2,
+        air_humidity_percent=53.6,
+        soil_ph=6.4,
+        nitrogen_mg_kg=86,
+        phosphorus_mg_kg=41,
+        potassium_mg_kg=124,
+    )
 
 
 class CareLogTests(unittest.TestCase):
     def test_builds_lifetime_plant_journey(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         samples = [
             (1, "2027-01-01T00:00:00Z", 40.0),
@@ -66,7 +65,7 @@ class CareLogTests(unittest.TestCase):
         )
 
     def test_queries_drainage_history_independently_for_sensor(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         samples = [
             (1, "2027-01-01T00:00:00Z", 30.0),
@@ -85,7 +84,7 @@ class CareLogTests(unittest.TestCase):
         self.assertEqual(store.drainage_assessments("another-sensor"), [])
 
     def test_calculates_median_interval_between_distinct_watering_days(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         samples = [
             (1, "2027-01-01T08:00:00Z", 30.0),
@@ -104,7 +103,7 @@ class CareLogTests(unittest.TestCase):
         )
 
     def test_persists_detected_watering_event(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         with tempfile.TemporaryDirectory() as directory:
             database_path = str(Path(directory) / "hub.sqlite3")
             store = ReadingStore(database_path=database_path)
@@ -137,7 +136,7 @@ class CareLogTests(unittest.TestCase):
                 reopened.close()
 
     def test_uses_selected_profile_refill_marker(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         store.set_sensor_profile(reading.sensor_id, "monstera")
         store.add(replace(reading, sequence=1, moisture_percent=44.0))
@@ -149,7 +148,7 @@ class CareLogTests(unittest.TestCase):
         self.assertEqual(events[0]["changes"]["refill_below_percent"], 40.0)
 
     def test_builds_watering_and_escalating_drying_calendar(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         samples = [
             (1, "2027-01-01T00:00:00Z", 40.0),
@@ -181,7 +180,7 @@ class CareLogTests(unittest.TestCase):
         )
 
     def test_builds_watering_calendar_promptly_with_large_history(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore()
         try:
             store.add(reading)
@@ -226,7 +225,7 @@ class CareLogTests(unittest.TestCase):
 
 class ReadingPersistenceTests(unittest.TestCase):
     def test_retains_all_readings_and_restores_bounded_live_history(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         with tempfile.TemporaryDirectory() as directory:
             database_path = str(Path(directory) / "hub.sqlite3")
             store = ReadingStore(history_size=2, database_path=database_path)
@@ -259,7 +258,7 @@ class ReadingPersistenceTests(unittest.TestCase):
                 reopened.close()
 
     def test_queries_and_downsamples_an_inclusive_history_range(self) -> None:
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store = ReadingStore(history_size=2)
         try:
             for sequence in range(12):
@@ -289,7 +288,7 @@ class ReadingPersistenceTests(unittest.TestCase):
 class WebApiTests(unittest.TestCase):
     def test_serves_bounded_sensor_climate_history_range(self) -> None:
         store = ReadingStore()
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         for sequence, observed_at in enumerate(
             [
                 "2027-01-01T00:00:00Z",
@@ -326,7 +325,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_sensor_scoped_plant_journey(self) -> None:
         store = ReadingStore()
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store.add(reading)
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
@@ -361,7 +360,7 @@ class WebApiTests(unittest.TestCase):
         try:
             host, port = server_address(server)
             with urlopen(
-                f"http://{host}:{port}/api/pot-response?sensor_id=simulated-plant-01",
+                f"http://{host}:{port}/api/pot-response?sensor_id=plant-01",
                 timeout=1.0,
             ) as response:
                 payload = json.load(response)
@@ -374,7 +373,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_sensor_watering_calendar_range(self) -> None:
         store = ReadingStore()
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store.add(replace(reading, sequence=1, observed_at="2027-03-01T10:00:00Z", moisture_percent=30.0))
         store.add(replace(reading, sequence=2, observed_at="2027-03-01T10:10:00Z", moisture_percent=60.0))
         server = create_server(store, "127.0.0.1", 0)
@@ -421,7 +420,7 @@ class WebApiTests(unittest.TestCase):
             request = Request(
                 f"http://{host}:{port}/api/sensors/profile",
                 data=json.dumps(
-                    {"sensor_id": "simulated-plant-01", "profile_id": "monstera"}
+                    {"sensor_id": "plant-01", "profile_id": "monstera"}
                 ).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="PUT",
@@ -470,7 +469,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_latest_reading(self) -> None:
         store = ReadingStore()
-        store.add(decode_simulation_datagram(FIXTURE_PATH.read_bytes()))
+        store.add(sample_reading())
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -489,7 +488,7 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_detected_care_events(self) -> None:
         store = ReadingStore()
-        reading = decode_simulation_datagram(FIXTURE_PATH.read_bytes())
+        reading = sample_reading()
         store.add(replace(reading, sequence=1, moisture_percent=35.0))
         store.add(replace(reading, sequence=2, moisture_percent=70.0))
         server = create_server(store, "127.0.0.1", 0)

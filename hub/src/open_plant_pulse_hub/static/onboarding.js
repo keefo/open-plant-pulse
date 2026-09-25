@@ -417,10 +417,10 @@ async function forgetSensor(sensorId) {
 
 /* A sensor is only offered if it could actually be paired now.
  *
- * That rules out two kinds of entry the inbox legitimately holds. The simulator
- * reaches the hub over UDP and has no radio, so there is nothing to pair with.
- * And a sensor last heard from days ago is not in the room: offering it would
- * fail at the pairing step with no way for anyone to tell why. */
+ * That rules out entries the inbox legitimately holds but nobody can pair: one
+ * that reached the hub without a radio, and one last heard from days ago, which
+ * is not in the room. Offering either would fail at the pairing step with no way
+ * for anyone to tell why. */
 /* Ten seconds is the agreed ceiling for the list to react, and an unclaimed
  * sensor announces itself every three, so this is three missed beacons: long
  * enough to survive a dropped advertisement, short enough that plugging a sensor

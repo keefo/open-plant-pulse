@@ -22,8 +22,8 @@ follow-up work.
 > room, and reporting interval and verify them by read-back. The prototype service
 > is unauthenticated and must not be treated as secure provisioning.
 
-The checked-in vertical slice retains loopback UDP from the simulator and a
-standard-library HTTP dashboard. It now also includes a Bleak BTHome subscriber,
+The checked-in vertical slice serves a standard-library HTTP dashboard. It also
+includes a Bleak BTHome subscriber,
 stable sensor-owned identity, packet deduplication, deterministic replay, explicit
 SQLite migrations, partial-source storage, and separate scanner/database health.
 These paths are host-tested with captured advertisements. The browser now includes
@@ -92,21 +92,14 @@ The current contract and hub tests need no installation:
 PYTHONPATH=hub/src python3 -m unittest discover -s hub/tests
 ```
 
-Run the existing simulated vertical slice:
+Run the existing vertical slice:
 
 ```sh
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-In another terminal:
-
-```sh
-python3 simulator/sensor.py --time-scale 60
-```
-
-Visit <http://127.0.0.1:8080>. The simulator currently sends full measurement
-sets through development-only UDP on `127.0.0.1:8765`. The hub exposes these
-implementation endpoints for its current page:
+Visit <http://127.0.0.1:8080>. Readings arrive from BTHome sensors in range. The
+hub exposes these implementation endpoints for its current page:
 
 - `GET /api/health`
 - `GET /api/sensors?status=unclaimed|enrolled|archived`
@@ -130,8 +123,7 @@ browser `Origin` that does not match the request `Host`; requests without `Origi
 remain available to local command-line tools. The server binds to loopback unless
 `--host` is explicitly supplied. For LAN use, bind to a private interface only,
 restrict the port with the host firewall, and do not expose it to the Internet.
-UDP remains loopback-only test infrastructure; deterministic BLE tests use the
-advertisement replay adapter.
+Deterministic BLE tests use the advertisement replay adapter.
 
 ### Native Bluetooth setup
 
@@ -348,7 +340,7 @@ Grow toward the following boundaries without rewriting the tested vertical slice
 open_plant_pulse_hub/
 ├── domain/          Telemetry, plant profiles, freshness, and care rules
 ├── application/     Enrollment, ingestion, queries, and management use cases
-├── ingestion/       BTHome decode, Bleak subscriber, and replay/UDP test adapters
+├── ingestion/       BTHome decode, Bleak subscriber, and the replay test adapter
 ├── adapters/        SQLite, HTTP, Bluetooth platform, MQTT, and OS adapters
 └── static/          Local household web application
 ```
@@ -367,7 +359,7 @@ must shut down the scanner, HTTP server, and database cleanly on termination.
   and multi-sensor advertisements.
 - [x] Extend encoder/decoder host tests together.
 - [x] Add a deterministic advertisement replay adapter that feeds the same ingestion
-  interface as Bleak; retain loopback UDP only for existing UI regression tests.
+  interface as Bleak.
 
 **Exit:** at least three fixture-backed sensors can be replayed repeatedly without
 identity collisions, stale-value fabrication, or duplicate durable samples.
@@ -389,7 +381,7 @@ durable readings, and unavailable source groups remain null.
 restart recovery, deduplication, and isolation between at least three sensors.
 
 **Completed 2026-09-13 using captured evidence:** the production scanner callback,
-queue, ingestion, and SQLite path recovers after a simulated adapter interruption
+queue, ingestion, and SQLite path recovers after an injected adapter interruption
 and isolates the same three captured sensors. Migration, restart, deduplication,
 malformed-device isolation, bounded diagnostics, and independent health paths are
 host-tested. Native scanner startup was exercised on macOS, but physical BTHome

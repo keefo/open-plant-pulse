@@ -299,11 +299,7 @@ no status response, log, or serial output.
 > 0.6.0; earlier firmware accepted reads and writes from anything in range and
 > must not be given credentials.
 
-## Development simulation transport
+## Development transports
 
-The runnable simulator currently sends the full reading as a versioned
-JSON datagram over localhost UDP. This is not a production protocol and must never
-be accepted on a non-loopback interface by default. The
-[simulation fixture](fixtures/simulated-reading-v1.json) remains the contract for
-existing dashboard regression tests. Deterministic BLE tests use the contract-v2
-replay fixture above.
+BLE is the only transport. Deterministic tests replay the contract-v2 fixture
+above; there is no side channel a sensor may use instead.

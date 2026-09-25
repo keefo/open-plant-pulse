@@ -84,6 +84,12 @@ class ReadingStore:
         self._restore_history(history_size)
 
     def add(self, reading: SensorReading) -> None:
+        """Store a reading that arrived without advertisement metadata.
+
+        Real sensors reach the hub over BLE and go through add_advertisement().
+        This is the plain entry point: a reading and nothing else, dated by when
+        the sensor says it observed it rather than when a radio saw it.
+        """
         received_datetime = datetime.now(timezone.utc)
         received_at = received_datetime.isoformat().replace("+00:00", "Z")
         observed_datetime = self._observation_datetime(reading.observed_at, received_datetime)
@@ -91,7 +97,7 @@ class ReadingStore:
             self._ensure_sensor(
                 reading,
                 received_at,
-                transport="simulation",
+                transport="direct",
                 identity_kind="legacy",
             )
             if not self._save_reading(reading, received_at):

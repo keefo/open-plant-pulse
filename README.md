@@ -15,10 +15,10 @@ multi-system forwarding without putting those responsibilities on the battery
 device.
 
 > [!IMPORTANT]
-> This repository is in the prototype stage. The loopback simulator, SQLite
-> persistence, internal browser endpoints, dashboard, and BTHome encode/decode
-> logic are tested, but continuous BLE collection, target hardware, predictions,
-> and packaging have not been validated end to end.
+> This repository is in the prototype stage. SQLite persistence, internal
+> browser endpoints, dashboard, and BTHome encode/decode logic are tested, but
+> continuous BLE collection, target hardware, predictions, and packaging have
+> not been validated end to end.
 
 ## Repository layout
 
@@ -31,7 +31,6 @@ open-plant-pulse/
 ├── hub/                     Installable Python desktop/server product
 │   ├── src/                 Domain and adapter packages
 │   └── tests/               Hub unit and integration tests
-├── simulator/               Development sensor sending full dummy readings
 ├── protocol/                Versioned sensor-to-hub contract and fixtures
 ├── deploy/                  Future launchd/systemd and packaging assets
 ├── docs/                    System architecture, setup, roadmap, and proposals
@@ -42,7 +41,7 @@ open-plant-pulse/
 Product code stays inside `sensor/` or `hub/`. Data exchanged between them is
 specified in `protocol/`; neither product may privately redefine that contract.
 
-## Run the simulated system
+## Run the hub
 
 Start the local hub from the repository root:
 
@@ -50,15 +49,9 @@ Start the local hub from the repository root:
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-In another terminal, start the dummy sensor:
-
-```sh
-python3 simulator/sensor.py --time-scale 60
-```
-
-Open <http://127.0.0.1:8080> to view live soil, air, and nutrient readings. At the
-default `60×` scale, every real second represents one simulated minute; pass
-`--time-scale 1` to run against real time.
+Open <http://127.0.0.1:8080>. The hub listens for BTHome advertisements from
+sensors in range; add one from Settings, and its soil, air, and nutrient readings
+appear as they arrive.
 
 ## Start here
 

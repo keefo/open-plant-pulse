@@ -17,7 +17,6 @@ from .device_configuration import (
     encode_device_configuration,
     encode_report_acknowledgement,
 )
-from .simulation import decode_simulation_datagram
 
 __all__ = [
     "BTHOME_SERVICE_UUID",
@@ -32,6 +31,5 @@ __all__ = [
     "encode_device_configuration",
     "encode_report_acknowledgement",
     "has_force_report_event",
-    "decode_simulation_datagram",
     "sensor_id_from_local_name",
 ]

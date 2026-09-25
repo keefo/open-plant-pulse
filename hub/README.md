@@ -39,15 +39,10 @@ PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
 Then open the fleet at <http://127.0.0.1:8080>. Sensor monitoring is available at
-`/sensors/<sensor-id>`, where that sensor's configuration is also managed. In a
-second terminal, start the simulated sensor:
-
-```sh
-python3 simulator/sensor.py --time-scale 60
-```
-
-The hub accepts simulation datagrams only on loopback by default. Readings and
-care events persist in SQLite; a short live history is restored after restart.
+`/sensors/<sensor-id>`, where that sensor's configuration is also managed. The hub
+scans for BTHome advertisements as it runs, so a sensor in range appears under
+Settings and can be added from there. Readings and care events persist in SQLite;
+a short live history is restored after restart.
 
 The tests use only the Python standard library:
 
@@ -65,8 +60,8 @@ python3 -m pip install -e './hub[dev]'
 
 ## Current status
 
-The development hub receives full simulated readings over UDP and BTHome v2
-advertisements through Bleak, persists unique readings and bounded receive
+The development hub receives BTHome v2 advertisements through Bleak, persists
+unique readings and bounded receive
 diagnostics in migrated SQLite storage, restores a short live history after
 restart, serves JSON endpoints, and renders a local dashboard. The shared replay
 path tests three stable sensor identities, duplicate suppression, partial sources,

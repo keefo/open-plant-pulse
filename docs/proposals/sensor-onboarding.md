@@ -327,14 +327,14 @@ onboarding roughly every reporting interval.
 The customer journey is the riskiest part of this design and the cheapest to
 change, so it comes first. The hub is Python and iterates in seconds; firmware
 iterates in build, flash, and hardware cycles. Phase 1 therefore produces a
-complete, clickable experience driven by a simulated sensor, and its output is the
-contract the later firmware phases implement.
+complete, clickable experience driven by replayed advertisements, and its output
+is the contract the later firmware phases implement.
 
 **Phase 1, hub interface.** A dedicated management page, separate from the
 monitoring dashboard, covering sensors, Wi-Fi, and keys. A separate guided
-onboarding flow for adding one new sensor. Both driven end to end by a simulated
-unclaimed sensor through the existing replay and simulation paths, with no
-firmware change and no hardware.
+onboarding flow for adding one new sensor. Both driven end to end by an unclaimed
+sensor replayed from captured advertisements, with no firmware change and no
+hardware.
 
 Phase 1 is complete when the journey can be walked and reviewed, and when it has
 produced an explicit list of the states, fields, and failure reasons the firmware
@@ -404,8 +404,8 @@ form field, and the two platforms need separate validation.
 
 Host checks, build, flash, and device behaviour are separate claims.
 
-- [ ] The whole onboarding flow can be walked against a simulated sensor, with no
-      hardware, and is covered by host tests.
+- [ ] The whole onboarding flow can be walked against replayed advertisements,
+      with no hardware, and is covered by host tests.
 - [ ] The flow is validated on macOS and on Linux, whose passkey steps differ.
 - [ ] A factory-fresh sensor reaches onboarded with no router present.
 - [ ] Enrolment fails with a wrong passkey.

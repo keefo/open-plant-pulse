@@ -208,10 +208,10 @@ class MigrationTests(unittest.TestCase):
                     ) VALUES
                         ('sensor-confirmed', 'legacy', 'sensor-confirmed', 'enrolled',
                          'Confirmed', '2026-09-13T12:00:00Z', '2026-09-13T12:00:00Z',
-                         'simulation', 1, 60, 3, 3),
+                         'direct', 1, 60, 3, 3),
                         ('sensor-pending', 'legacy', 'sensor-pending', 'enrolled',
                          'Pending', '2026-09-13T12:00:00Z', '2026-09-13T12:00:00Z',
-                         'simulation', 1, 30, 4, 0)
+                         'direct', 1, 30, 4, 0)
                     """
                 )
 
@@ -232,7 +232,7 @@ class MigrationTests(unittest.TestCase):
             finally:
                 store.close()
 
-    def test_migrates_opp_identity_without_changing_simulator_identity(self) -> None:
+    def test_migrates_opp_identity_without_changing_other_sensors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = str(Path(directory) / "hub.sqlite3")
             with sqlite3.connect(database_path) as database:
@@ -248,9 +248,9 @@ class MigrationTests(unittest.TestCase):
                               'opp:aabbccddeeff', 'unclaimed',
                               '2026-09-13T12:00:00Z', '2026-09-13T12:00:00Z',
                               'bthome', 2),
-                             ('simulated-plant-01', 'legacy', 'simulated-plant-01',
+                             ('plant-01', 'legacy', 'plant-01',
                               'enrolled', '2026-09-13T12:00:00Z',
-                              '2026-09-13T12:00:00Z', 'simulation', 1)
+                              '2026-09-13T12:00:00Z', 'direct', 1)
                     """
                 )
                 database.execute(
@@ -281,7 +281,7 @@ class MigrationTests(unittest.TestCase):
                     """
                     UPDATE sensors
                     SET replaced_by_sensor_id = 'opp:aabbccddeeff'
-                    WHERE sensor_id = 'simulated-plant-01'
+                    WHERE sensor_id = 'plant-01'
                     """
                 )
                 database.execute(
@@ -304,7 +304,7 @@ class MigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     database.execute("SELECT sensor_id FROM sensors ORDER BY sensor_id").fetchall(),
-                    [("sensor-aabbccddeeff",), ("simulated-plant-01",)],
+                    [("plant-01",), ("sensor-aabbccddeeff",)],
                 )
                 self.assertEqual(
                     database.execute(
@@ -316,7 +316,7 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual(
                     database.execute(
                         "SELECT replaced_by_sensor_id FROM sensors WHERE sensor_id = ?",
-                        ("simulated-plant-01",),
+                        ("plant-01",),
                     ).fetchone()[0],
                     "sensor-aabbccddeeff",
                 )

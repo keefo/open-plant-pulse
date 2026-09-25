@@ -611,7 +611,7 @@ class OnboardingWebTests(unittest.TestCase):
 
 
 class GuidedFlowTests(unittest.TestCase):
-    """Walk the whole journey a customer takes, against a simulated sensor."""
+    """Walk the whole journey a customer takes, against replayed advertisements."""
 
     def setUp(self):
         self.store = ReadingStore()
@@ -690,8 +690,9 @@ class InterfaceTests(unittest.TestCase):
 
     def test_only_pairable_sensors_are_offered(self):
         script = self.get("/onboarding.js")
-        # A UDP simulator has no radio, and a sensor last heard days ago is not
-        # in the room; offering either fails at pairing with nothing to show why.
+        # A sensor that arrived without a radio cannot be paired, and one last
+        # heard days ago is not in the room; offering either fails at pairing
+        # with nothing to show why.
         self.assertIn(b'sensor.transport === "bthome"', script)
         self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS", script)
         # Freshness is when the device was last heard, not when it last measured:
