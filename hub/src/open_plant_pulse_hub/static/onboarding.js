@@ -297,12 +297,20 @@ function renderSettingsSensors() {
     forget.dataset.sensorId = sensor.sensor_id;
     forget.textContent = "Forget sensor";
 
-    // The destructive action sits away from the switch rather than under it, so
-    // reaching for one cannot land on the other.
+    const configure = document.createElement("a");
+    configure.className = "secondary-action";
+    configure.href = "/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings";
+    configure.textContent = "Configure";
+
+    // The actions sit away from the switch rather than under it, so reaching for
+    // one cannot land on the other, and forgetting a sensor is last.
+    const actions = document.createElement("div");
+    actions.className = "settings-sensor-actions";
+    actions.append(configure, forget);
     const body = document.createElement("div");
     body.className = "settings-sensor-body";
     body.append(heading, identity, consoleRow);
-    card.append(body, forget);
+    card.append(body, actions);
     list.append(card);
   });
 }

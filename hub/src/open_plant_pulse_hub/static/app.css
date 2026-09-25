@@ -82,6 +82,7 @@ h2 { font-size: 24px; }
 .profile-control { display: flex; align-items: center; gap: 9px; min-height: 28px; color: var(--muted); font-size: 12px; }
 .profile-control strong { color: var(--ink); }
 .profile-control span { font-style: italic; }
+.topbar-aside { display: flex; align-items: center; gap: 20px; }
 .connection { display: flex; align-items: center; justify-content: flex-end; gap: 11px; min-width: 285px; }
 .connection-copy { display: grid; gap: 2px; }
 .connection-copy strong { font-size: 14px; }
@@ -262,6 +263,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   h1 { font-size: 28px; }
   .plant-label { width: 100%; font-size: 28px; }
   .connection { justify-content: flex-start; }
+  .topbar-aside { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
   .primary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-metric { grid-column: span 2; grid-row: auto; min-height: 360px; }
   .chemistry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -331,6 +333,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .settings-page h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
 .primary-action { padding: 11px 18px; border: 1px solid var(--leaf); border-radius: 5px; color: white; background: var(--leaf); text-decoration: none; font-weight: 700; white-space: nowrap; }
 .primary-action:hover { background: #125638; }
+.secondary-action { padding: 10px 17px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; text-align: center; white-space: nowrap; }
+.secondary-action:hover { border-color: var(--leaf); color: var(--leaf); }
+.secondary-action:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
 .settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; gap: 6px; border-bottom: 1px solid var(--line); }
 .settings-tab { padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; }
 .settings-tab:hover { background: #e5f1e8; }
@@ -343,9 +348,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .settings-sensor-heading strong { font-size: 20px; }
 .settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
 .settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.settings-sensor .danger { flex-shrink: 0; width: fit-content; }
+.settings-sensor-actions { flex-shrink: 0; display: grid; gap: 8px; }
+.settings-sensor-actions .danger { width: auto; }
 @media (max-width: 720px) {
   .settings-sensor { flex-direction: column; gap: 12px; }
+  .settings-sensor-actions { grid-auto-flow: column; justify-content: start; }
 }
 .settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }

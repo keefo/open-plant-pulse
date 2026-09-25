@@ -53,6 +53,11 @@ let onboardingResult = null;
 
 function pageFromLocation() {
   const path = window.location.pathname;
+  /* A sensor's configuration is its own page.
+   *
+   * Plant care and device administration are different jobs done at different
+   * times, and the forms for the second were crowding the first. */
+  if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";
   if (path.startsWith("/sensors/")) return "detail";
   if (path === "/settings" || path.startsWith("/settings/")) return "settings";
   if (path === "/onboarding" || path.startsWith("/onboarding/")) return "onboarding";
@@ -67,8 +72,12 @@ function settingsTabFromLocation() {
 }
 
 function sensorIdFromLocation() {
-  const match = window.location.pathname.match(/^\/sensors\/(.+)$/);
+  const match = window.location.pathname.match(/^\/sensors\/([^/]+)(?:\/settings)?$/);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function sensorPath(sensorId, suffix = "") {
+  return "/sensors/" + encodeURIComponent(sensorId) + suffix;
 }
 
 function sensorQuery() {
@@ -82,6 +91,15 @@ function renderPage() {
   });
   document.getElementById("fleet-link").classList.toggle("active", page === "fleet");
   document.getElementById("settings-link").classList.toggle("active", page === "settings");
+  if (selectedSensorId) {
+    document.getElementById("detail-config-link").href = sensorPath(selectedSensorId, "/settings");
+    document.getElementById("config-back-link").href = sensorPath(selectedSensorId);
+  }
+  if (page === "config") {
+    document.getElementById("config-plant-name").textContent = selectedSensor
+      ? selectedSensor.display_name || selectedSensor.sensor_id
+      : selectedSensorId || "Sensor";
+  }
   if (page === "settings") renderSettingsTab();
   if (page === "onboarding") renderOnboarding();
   document.title = titleForPage(page);
@@ -90,6 +108,10 @@ function renderPage() {
 function titleForPage(page) {
   if (page === "detail" && selectedSensor) {
     return `${selectedSensor.display_name || selectedSensor.sensor_id} · Open Plant Pulse`;
+  }
+  if (page === "config") {
+    const name = selectedSensor?.display_name || selectedSensorId || "Sensor";
+    return `${name} · Configuration · Open Plant Pulse`;
   }
   if (page === "settings") return "Settings · Open Plant Pulse";
   if (page === "onboarding") return "Add a sensor · Open Plant Pulse";
@@ -1112,21 +1134,28 @@ async function refreshPlantJourney() {
 async function refresh() {
   try {
     await refreshFleet();
-    if (pageFromLocation() !== "detail") return;
+    const page = pageFromLocation();
+    if (page !== "detail" && page !== "config") return;
     if (!selectedSensorId || !selectedSensor) {
       document.getElementById("status").textContent = "Sensor not found";
       document.getElementById("status-dot").classList.remove("live");
       return;
     }
     const query = sensorQuery();
-    const [latestResponse, careLogResponse, rawReportsResponse] = await Promise.all([
+    // Each page asks only for what it shows. The configuration page has the raw
+    // report log and nothing that plots a reading; the plant page is the other
+    // way round, and neither should pay for the other's requests every second.
+    if (page === "config") {
+      const rawReportsResponse = await fetch(`/api/raw-reports${query}`);
+      if (rawReportsResponse.ok) renderRawReports((await rawReportsResponse.json()).items);
+      return;
+    }
+    const [latestResponse, careLogResponse] = await Promise.all([
       fetch(`/api/readings/latest${query}`),
-      fetch(`/api/care-log${query}`),
-      fetch(`/api/raw-reports${query}`)
+      fetch(`/api/care-log${query}`)
     ]);
     if (latestResponse.ok) renderReading(await latestResponse.json());
     if (careLogResponse.ok) renderCareLog((await careLogResponse.json()).items);
-    if (rawReportsResponse.ok) renderRawReports((await rawReportsResponse.json()).items);
     await Promise.all([
       refreshClimateHistory(), refreshWateringCalendar(), refreshPotResponse(), refreshPlantJourney()
     ]);

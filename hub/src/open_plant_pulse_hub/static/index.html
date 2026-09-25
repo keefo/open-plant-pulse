@@ -24,10 +24,21 @@
         <span id="scientific-name"></span>
       </div>
     </div>
-    <div class="connection" aria-live="polite">
-      <span id="status-dot" class="status-dot"></span>
-      <div class="connection-copy"><strong id="status">Waiting for sensor</strong><span id="updated">No samples yet</span></div>
+    <div class="topbar-aside">
+      <div class="connection" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <div class="connection-copy"><strong id="status">Waiting for sensor</strong><span id="updated">No samples yet</span></div>
+      </div>
+      <a id="detail-config-link" class="secondary-action" href="/settings">Configure sensor</a>
     </div>
+  </header>
+
+  <header class="topbar" data-page="config" hidden>
+    <div class="plant-identity">
+      <p class="eyebrow">SENSOR CONFIGURATION</p>
+      <h1 id="config-plant-name">Plant sensor</h1>
+    </div>
+    <a id="config-back-link" class="secondary-action" href="/">Back to plant</a>
   </header>
 
   <section id="hub-health" class="hub-health" data-page="fleet" aria-live="polite"></section>
@@ -368,7 +379,7 @@
       </div>
     </section>
 
-    <section class="sensor-settings" data-page="detail" aria-labelledby="sensor-settings-title" hidden>
+    <section class="sensor-settings" data-page="config" aria-labelledby="sensor-settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Configuration</h2></div>
         <div class="sensor-identity">
@@ -417,7 +428,7 @@
       </form>
     </section>
 
-    <details class="raw-report-log" id="raw-report-log" data-page="detail" hidden>
+    <details class="raw-report-log" id="raw-report-log" data-page="config" hidden>
       <summary>
         <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
         <span>Latest 50 · newest first</span>

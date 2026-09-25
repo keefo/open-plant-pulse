@@ -242,6 +242,13 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn(b"Configuration", detail_page)
         self.assertIn(b"Reporting interval", detail_page)
         self.assertIn(b'id="detail-setting-reporting-interval"', detail_page)
+        # Configuring a sensor and watching a plant are separate pages served by
+        # one document, so what tells them apart is the page each section is on.
+        self.assertIn(b'<section class="climate-history" data-page="detail"', detail_page)
+        self.assertIn(b'<section class="sensor-settings" data-page="config"', detail_page)
+        self.assertIn(b'id="raw-report-log" data-page="config"', detail_page)
+        self.assertIn(b'id="detail-config-link"', detail_page)
+        self.assertIn(b'id="config-back-link"', detail_page)
         self.assertNotIn(b"Global reporting interval", detail_page)
         self.assertNotIn(b"Moisture alert below", detail_page)
         self.assertNotIn(b"Conductivity alert above", detail_page)
@@ -300,6 +307,29 @@ class SensorManagementWebTests(unittest.TestCase):
             self.assertEqual(response.status, 204)
 
         self.assertIsNone(self.store.sensor(sensor_id))
+
+    def test_configuration_page_is_routed_and_reachable_from_both_lists(self) -> None:
+        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        static = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        app = (static / "app.js").read_text()
+        onboarding = (static / "onboarding.js").read_text()
+
+        # The hub serves the application for the new route as for any other page.
+        with self.request(f"/sensors/{quote(sensor_id, safe='')}/settings") as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn(b'data-page="config"', response.read())
+
+        self.assertIn(
+            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";',
+            app,
+        )
+        # The sensor is still named by the path, with or without the suffix.
+        self.assertIn(r"/^\/sensors\/([^/]+)(?:\/settings)?$/", app)
+        # Reachable from the plant page, and from the row in hub settings.
+        self.assertIn('sensorPath(selectedSensorId, "/settings")', app)
+        self.assertIn('"/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings"', onboarding)
+        # Polling follows the page: no charts to feed here, and no report log there.
+        self.assertIn('if (page === "config") {', app)
 
     def test_raw_report_log_is_collapsed_last_and_remembers_its_state(self) -> None:
         with self.request("/sensors/sensor-aabbccddeeff") as response:
