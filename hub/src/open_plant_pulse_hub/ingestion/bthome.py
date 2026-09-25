@@ -35,6 +35,23 @@ def sensor_id_from_local_name(local_name: Optional[str]) -> str:
     return f"sensor-{match.group(1).lower()}"
 
 
+def decode_beacon_packet_id(service_data: bytes) -> Optional[int]:
+    """Return the packet ID when this is an onboarding beacon, else None.
+
+    A beacon is exactly device info plus a packet ID and nothing else. An
+    unclaimed sensor sends one when it has no reading, so that a sensor whose
+    probe is absent or broken can still be found and adopted rather than being
+    invisible. The shape is checked strictly: anything carrying a partial
+    measurement source is a malformed reading, not a beacon, and must still be
+    rejected as one.
+    """
+    if len(service_data) != 3:
+        return None
+    if service_data[0] != BTHOME_V2_UNENCRYPTED or service_data[1] != 0x00:
+        return None
+    return int(service_data[2])
+
+
 def decode_service_data(
     service_data: bytes, sensor_id: str = "unenrolled-bthome"
 ) -> SensorReading:

@@ -154,12 +154,47 @@ static void run_production_cycle(void)
 #endif
 
 #if !CONFIG_OPP_PRODUCTION_LIFECYCLE
+/* Identity only: the hub learns the sensor exists and can adopt it, and learns
+ * nothing about a plant, because there is nothing to tell. */
+static void advertise_onboarding_beacon(const char *local_name)
+{
+    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
+    const size_t payload_size = opp_bthome_encode_v2_beacon(bthome_packet_id++, payload);
+    if (payload_size == 0) {
+        ESP_LOGE(TAG, "Could not encode the onboarding beacon");
+        return;
+    }
+    esp_err_t error = opp_bthome_broadcast(
+        local_name,
+        payload,
+        payload_size,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Onboarding beacon failed: %s", esp_err_to_name(error));
+    }
+}
+
 static void broadcast_development_report(const char *local_name, uint32_t force_request_id)
 {
     const bool forced = force_request_id != 0;
     opp_sht45_sample_record_t air;
     int64_t sample_age_ms;
     if (!opp_sht45_monitor_get_latest(&air, &sample_age_ms)) {
+        /* A sensor nobody owns yet still has to be findable. Advertising only
+         * when a measurement exists makes a device with an absent or broken
+         * probe invisible, at the one moment it most needs to be reachable, so
+         * an unbonded sensor sends an identity-only beacon instead. Once it
+         * belongs to a hub, silence is the honest signal and the hub's own
+         * staleness handling reports it. */
+        if (!opp_device_identity_is_onboarded()) {
+            ESP_LOGW(TAG, "No SHT45 sample; advertising an onboarding beacon instead");
+            advertise_onboarding_beacon(local_name);
+            if (forced) {
+                opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_NO_SAMPLE);
+            }
+            return;
+        }
         ESP_LOGW(TAG, "Skipping %s BLE report: no valid SHT45 sample",
                  forced ? "forced" : "scheduled");
         if (forced) {

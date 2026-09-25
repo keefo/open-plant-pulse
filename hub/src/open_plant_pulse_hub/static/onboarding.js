@@ -231,8 +231,8 @@ function onboardingCandidates() {
     (sensor) =>
       sensor.onboarding_state === "onboarding" &&
       sensor.transport === "bthome" &&
-      typeof sensor.age_seconds === "number" &&
-      sensor.age_seconds <= ONBOARDING_CANDIDATE_MAX_AGE_SECONDS
+      typeof sensor.seen_age_seconds === "number" &&
+      sensor.seen_age_seconds <= ONBOARDING_CANDIDATE_MAX_AGE_SECONDS
   );
 }
 

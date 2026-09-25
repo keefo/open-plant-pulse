@@ -223,6 +223,24 @@ static void test_power_source_policy(void)
     assert(strcmp(opp_power_source_status_value(false), "battery_inferred") == 0);
 }
 
+static void test_bthome_onboarding_beacon(void)
+{
+    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
+    const size_t size = opp_bthome_encode_v2_beacon(9, payload);
+    assert(size == 3);
+    assert(payload[0] == 0x40);
+    assert(payload[1] == 0x00);
+    assert(payload[2] == 9);
+
+    /* A beacon says only that the sensor exists. A measurement payload for the
+     * same sensor stays longer, so the two can never be confused. */
+    opp_bthome_sample_t sample = {.packet_id = 9, .air_available = true,
+                                  .air_temperature_tenths_celsius = 214,
+                                  .air_humidity_hundredths_percent = 4800};
+    uint8_t measured[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
+    assert(opp_bthome_encode_v2_service_data(&sample, measured) > size);
+}
+
 static void test_wifi_credentials(void)
 {
     opp_wifi_credentials_t sent = {
@@ -303,6 +321,7 @@ int main(void)
     test_sht45_humidity_clamping();
     test_clock_policy();
     test_power_source_policy();
+    test_bthome_onboarding_beacon();
     test_wifi_credentials();
     return 0;
 }

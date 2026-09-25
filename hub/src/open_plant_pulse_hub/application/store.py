@@ -190,6 +190,79 @@ class ReadingStore:
             self._condition.notify_all()
             return True
 
+    def record_beacon(
+        self,
+        sensor_id: str,
+        packet_id: int,
+        received_at: str,
+        observed_identifier: str,
+        source_adapter: str,
+        rssi: Optional[int],
+        service_data: bytes,
+    ) -> str:
+        """Record that an unclaimed sensor announced itself, without a reading.
+
+        A beacon says a sensor exists and is in range, which is all an unadopted
+        sensor with no working probe can honestly say. It creates the inbox entry
+        so the sensor can be onboarded, and stores no measurement, so history
+        never contains rows that only look like readings.
+        """
+        payload_sha256 = hashlib.sha256(service_data).hexdigest()
+        with self._condition, self._database:
+            beacon = SensorReading(
+                sensor_id=sensor_id,
+                sequence=packet_id,
+                observed_at=received_at,
+                soil_temperature_c=None,
+                moisture_percent=None,
+                conductivity_us_cm=None,
+                soil_source_status="unavailable",
+                air_source_status="unavailable",
+                contract_version=2,
+            )
+            self._ensure_sensor(
+                beacon,
+                received_at,
+                transport="bthome",
+                identity_kind="device-local-name",
+                rssi=rssi,
+                commit=False,
+            )
+            # One advertising burst is seen many times, each callback carrying its
+            # own timestamp, so identity cannot include the time. A beacon repeats
+            # the previous packet ID only when it is the same burst.
+            previous = self._database.execute(
+                """
+                SELECT packet_id FROM advertisements
+                WHERE sensor_id = ? AND decode_status = 'accepted'
+                ORDER BY advertisement_id DESC LIMIT 1
+                """,
+                (sensor_id,),
+            ).fetchone()
+            duplicate = previous is not None and previous[0] == packet_id
+            self._database.execute(
+                """
+                INSERT INTO advertisements (
+                    sensor_id, packet_id, received_at, transport, source_adapter,
+                    observed_identifier, rssi, contract_version, payload_sha256,
+                    decode_status, service_data
+                ) VALUES (?, ?, ?, 'bthome', ?, ?, ?, 2, ?, ?, ?)
+                """,
+                (
+                    sensor_id,
+                    packet_id,
+                    received_at,
+                    source_adapter[:64],
+                    observed_identifier[:240],
+                    rssi,
+                    payload_sha256,
+                    "duplicate" if duplicate else "accepted",
+                    service_data,
+                ),
+            )
+            self._trim_receive_diagnostics()
+        return "duplicate" if duplicate else "accepted"
+
     def record_rejected_advertisement(
         self,
         received_at: str,
@@ -1382,6 +1455,13 @@ class ReadingStore:
         else:
             sensor["device_config_status"] = "pending"
         sensor["age_seconds"] = age_seconds
+        # How long since the hub last heard the device at all, as opposed to
+        # since it last sent a measurement. A sensor beaconing for adoption has
+        # nothing to measure, so only this one says whether it is in the room.
+        seen = self._observation_datetime(sensor["last_seen_at"], datetime.now(timezone.utc))
+        sensor["seen_age_seconds"] = max(
+            0, int((datetime.now(timezone.utc) - seen).total_seconds())
+        )
         sensor["latest"] = latest
         sensor["reading_count"] = int(
             self._database.execute(

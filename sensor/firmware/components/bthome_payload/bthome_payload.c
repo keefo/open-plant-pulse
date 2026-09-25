@@ -35,6 +35,20 @@ static void append_uint16(uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE],
     output[(*offset)++] = (uint8_t)(value >> 8U);
 }
 
+size_t opp_bthome_encode_v2_beacon(
+    uint8_t packet_id,
+    uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE])
+{
+    if (output == NULL) {
+        return 0;
+    }
+    size_t offset = 0;
+    output[offset++] = 0x40;
+    output[offset++] = 0x00;
+    output[offset++] = packet_id;
+    return offset;
+}
+
 size_t opp_bthome_encode_v2_service_data(
     const opp_bthome_sample_t *sample,
     uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE])

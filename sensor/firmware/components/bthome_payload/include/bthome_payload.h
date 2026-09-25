@@ -23,6 +23,16 @@ typedef struct {
 size_t opp_bthome_encode_service_data(const opp_sensor_reading_t *reading,
                                       uint8_t output[OPP_BTHOME_SERVICE_DATA_SIZE]);
 
+/* Encode an onboarding beacon: device info and a packet ID, no measurements.
+ *
+ * An unclaimed sensor advertises this when it has no reading to send, so that a
+ * sensor whose probe is absent or broken can still be found and adopted. Without
+ * it such a device is invisible, which is the one moment it most needs to be
+ * reachable. Only an unbonded sensor sends it. */
+size_t opp_bthome_encode_v2_beacon(
+    uint8_t packet_id,
+    uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE]);
+
 size_t opp_bthome_encode_v2_service_data(
     const opp_bthome_sample_t *sample,
     uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE]);

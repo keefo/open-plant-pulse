@@ -176,6 +176,76 @@ class WifiResultTests(unittest.TestCase):
             )
 
 
+class OnboardingBeaconTests(unittest.TestCase):
+    """A sensor with nothing to measure must still be findable."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        self.ingestion = AdvertisementIngestionService(self.store)
+
+    def tearDown(self):
+        self.store.close()
+
+    def beacon(self, packet_id=1, received_at=None):
+        from datetime import datetime, timezone
+
+        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
+
+        if received_at is None:
+            received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return Advertisement(
+            received_at=received_at,
+            local_name="sensor-aabbccddeeff",
+            observed_identifier="aa:bb:cc:dd:ee:ff",
+            rssi=-48,
+            service_data=bytes([0x40, 0x00, packet_id]),
+            source_adapter="test",
+        )
+
+    def test_a_beacon_puts_the_sensor_in_the_inbox(self):
+        self.assertEqual(self.ingestion.ingest(self.beacon()), "accepted")
+        unclaimed = self.store.sensors("unclaimed")
+        self.assertEqual([s["sensor_id"] for s in unclaimed], ["sensor-aabbccddeeff"])
+        self.assertEqual(unclaimed[0]["onboarding_state"], "onboarding")
+        self.assertEqual(unclaimed[0]["latest_rssi"], -48)
+
+    def test_a_beacon_stores_no_reading(self):
+        self.ingestion.ingest(self.beacon())
+        sensor = self.store.sensor("sensor-aabbccddeeff")
+        self.assertEqual(sensor["reading_count"], 0)
+        self.assertIsNone(sensor["latest"])
+
+    def test_a_repeated_beacon_is_a_duplicate(self):
+        self.assertEqual(self.ingestion.ingest(self.beacon()), "accepted")
+        self.assertEqual(self.ingestion.ingest(self.beacon()), "duplicate")
+
+    def test_a_beacon_keeps_the_sensor_offerable_despite_old_readings(self):
+        """Age since the last reading must not hide a sensor that is beaconing now."""
+        self.ingestion.ingest(self.beacon())
+        sensor = self.store.sensor("sensor-aabbccddeeff")
+        self.assertLess(sensor["seen_age_seconds"], 300)
+
+    def test_a_beacon_sensor_can_be_enrolled(self):
+        self.ingestion.ingest(self.beacon())
+        sensor = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
+        self.assertEqual(sensor["enrollment_status"], "enrolled")
+        self.assertEqual(sensor["onboarding_state"], "onboarded")
+
+    def test_a_partial_measurement_is_still_rejected(self):
+        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
+
+        partial = Advertisement(
+            received_at="2026-09-24T18:00:00Z",
+            local_name="sensor-aabbccddeeff",
+            observed_identifier="aa:bb:cc:dd:ee:ff",
+            rssi=-48,
+            # Air temperature without humidity: a broken reading, not a beacon.
+            service_data=bytes([0x40, 0x00, 1, 0x45, 0x10, 0x09]),
+            source_adapter="test",
+        )
+        self.assertEqual(self.ingestion.ingest(partial), "rejected")
+
+
 class OnboardingWebTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
@@ -369,6 +439,9 @@ class InterfaceTests(unittest.TestCase):
         # in the room; offering either fails at pairing with nothing to show why.
         self.assertIn(b'sensor.transport === "bthome"', script)
         self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS", script)
+        # Freshness is when the device was last heard, not when it last measured:
+        # a sensor beaconing for adoption has no measurement to be fresh about.
+        self.assertIn(b"sensor.seen_age_seconds", script)
 
     def test_step_one_reports_the_real_scanner_state(self):
         page = self.get("/")
