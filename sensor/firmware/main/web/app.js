@@ -583,7 +583,13 @@ async function refreshStatus() {
       ? status.firmware_version
       : 'unknown';
 
-    document.title = `Open Plant Pulse · v${version}`;
+    // Name the tab after the plant, because somebody with several consoles open
+    // is trying to tell them apart, and the product name is the same on all of
+    // them. An unclaimed sensor has no plant yet, so it falls back to itself.
+    const plant = typeof status.plant_name === 'string' ? status.plant_name.trim() : '';
+    document.title = plant
+      ? `sensor - ${plant}`
+      : `sensor - ${status.mac || 'unclaimed'}`;
     firmwareVersion.textContent = `Sensor console · Firmware v${version}`;
     connection.className = `connection ${online ? 'online' : 'offline'}`;
     connectionLabel.textContent = online ? 'Device online' : 'Wi-Fi disconnected';

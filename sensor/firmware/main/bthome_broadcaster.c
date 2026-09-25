@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "device_config_protocol.h"
@@ -52,8 +53,10 @@ static uint16_t connection_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool release_requested;
 static int64_t last_connection_ms;
 
-/* Marker, joined flag, and four address bytes. */
-#define OPP_STATION_STATUS_SIZE 6
+/* Marker, joined flag, four address bytes, and three version bytes. The hub
+ * cannot see any of this over an advertisement, and the firmware version is what
+ * tells somebody looking at a fleet which sensors are behind. */
+#define OPP_STATION_STATUS_SIZE 9
 #define OPP_STATION_STATUS_MARKER 0xA1
 
 static size_t append_station_status(uint8_t *output)
@@ -74,6 +77,13 @@ static size_t append_station_status(uint8_t *output)
             }
         }
     }
+    unsigned int major = 0;
+    unsigned int minor = 0;
+    unsigned int patch = 0;
+    sscanf(esp_app_get_description()->version, "%u.%u.%u", &major, &minor, &patch);
+    output[6] = (uint8_t)major;
+    output[7] = (uint8_t)minor;
+    output[8] = (uint8_t)patch;
     return OPP_STATION_STATUS_SIZE;
 }
 

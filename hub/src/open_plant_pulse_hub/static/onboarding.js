@@ -245,6 +245,8 @@ function renderSettingsSensors() {
       sensor.wifi_state,
       sensor.wifi_failure,
       sensor.wifi_address,
+      sensor.firmware_version,
+      sensor.station_checked_at,
     ])
   );
   if (renderedSettingsSensorsKey === renderKey) return;
@@ -271,7 +273,8 @@ function renderSettingsSensors() {
     heading.append(name, state);
 
     const identity = document.createElement("code");
-    identity.textContent = sensor.sensor_id + " · " + (sensor.room || "no room");
+    identity.textContent =
+      sensor.sensor_id + " · " + (sensor.room || "no room") + " · " + describeFirmware(sensor);
 
     const consoleRow = document.createElement("label");
     consoleRow.className = "switch-row";
@@ -294,9 +297,28 @@ function renderSettingsSensors() {
     forget.dataset.sensorId = sensor.sensor_id;
     forget.textContent = "Forget sensor";
 
-    card.append(heading, identity, consoleRow, forget);
+    // The destructive action sits away from the switch rather than under it, so
+    // reaching for one cannot land on the other.
+    const body = document.createElement("div");
+    body.className = "settings-sensor-body";
+    body.append(heading, identity, consoleRow);
+    card.append(body, forget);
     list.append(card);
   });
+}
+
+/* The version is what the sensor last said, not what it is running now, and the
+ * two differ the moment it is reflashed. Say which it is rather than presenting
+ * a cached answer as current. */
+function describeFirmware(sensor) {
+  if (!sensor.firmware_version) return "firmware not reported yet";
+  const age = sensor.station_checked_at
+    ? Math.round((Date.now() - Date.parse(sensor.station_checked_at)) / 1000)
+    : null;
+  if (age === null) return "firmware " + sensor.firmware_version;
+  if (age < 120) return "firmware " + sensor.firmware_version;
+  if (age < 3600) return "firmware " + sensor.firmware_version + " as of " + Math.round(age / 60) + "m ago";
+  return "firmware " + sensor.firmware_version + " as of " + Math.round(age / 3600) + "h ago";
 }
 
 function renderHouseholdNetwork() {

@@ -468,10 +468,12 @@ class ReleaseProtocolTests(unittest.TestCase):
             DeviceConfiguration(revision=3, reporting_interval_seconds=1800,
                                 plant_name="fern", room="Study")
         )
-        suffix = bytes((0xA1, 1, 192, 168, 0, 111))
+        # Marker, joined, address, then the firmware version the sensor is
+        # actually running, which nothing in an advertisement carries.
+        suffix = bytes((0xA1, 1, 192, 168, 0, 111, 0, 11, 1))
         body, station = split_station_status(config + suffix)
         self.assertEqual(body, config)
-        self.assertEqual(station, (True, "192.168.0.111"))
+        self.assertEqual(station, (True, "192.168.0.111", "0.11.1"))
 
         # A hub reading a sensor that sends no suffix still gets its config.
         body, station = split_station_status(config)
@@ -772,6 +774,15 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b".switch:checked", css)
         # Built on a real checkbox, so keyboard use and screen readers still work.
         self.assertIn(b'id="detail-console-toggle" class="switch" type="checkbox"', page)
+
+    def test_the_sensor_list_shows_firmware_and_how_old_the_answer_is(self):
+        script = self.get("/onboarding.js")
+        # Nothing in an advertisement carries the version, so it is whatever the
+        # sensor last said; presenting that as current would misname a sensor
+        # that has since been reflashed.
+        self.assertIn(b"describeFirmware", script)
+        self.assertIn(b"firmware not reported yet", script)
+        self.assertIn(b"as of", script)
 
     def test_the_console_switch_is_on_the_sensor_page_too(self):
         page = self.get("/")

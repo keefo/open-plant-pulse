@@ -373,7 +373,8 @@ class ReadingStore:
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
-                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id,
+                       firmware_version, station_checked_at
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -398,7 +399,8 @@ class ReadingStore:
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
-                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id,
+                       firmware_version, station_checked_at
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -528,6 +530,33 @@ class ReadingStore:
             self._database.execute(
                 "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,)
             )
+
+    def record_station_report(
+        self, sensor_id: str, firmware_version: Optional[str]
+    ) -> None:
+        """Note what the sensor said about itself, and when it said it."""
+        checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_version = COALESCE(?, firmware_version),
+                    station_checked_at = ?
+                WHERE sensor_id = ?
+                """,
+                (firmware_version, checked_at, sensor_id),
+            )
+
+    def station_report_age_seconds(self, sensor_id: str) -> Optional[int]:
+        """How long since the sensor last told the hub about itself."""
+        with self._condition:
+            row = self._database.execute(
+                "SELECT station_checked_at FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        checked = self._observation_datetime(row[0], datetime.now(timezone.utc))
+        return max(0, int((datetime.now(timezone.utc) - checked).total_seconds()))
 
     def release_is_pending(self, sensor_id: str) -> bool:
         """Has this sensor been forgotten without being told yet?"""
@@ -1590,6 +1619,8 @@ class ReadingStore:
             "wifi_failure": row[25],
             "wifi_address": row[26],
             "room_id": row[27],
+            "firmware_version": row[28],
+            "station_checked_at": row[29],
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:

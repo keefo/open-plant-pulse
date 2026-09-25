@@ -20,6 +20,9 @@ LOGGER = logging.getLogger(__name__)
 # a retry storm against a sensor that is advertising every few seconds, not to
 # slow down the first attempt, which happens as soon as the sensor is heard.
 CONFIGURATION_RETRY_SECONDS = 30.0
+# How often to ask a sensor whether its console reached the network. Joining
+# takes a few seconds, so asking more often than this mostly asks too early.
+STATION_STATUS_POLL_SECONDS = 10.0
 
 ScannerFactory = Callable[..., Any]
 
@@ -107,6 +110,7 @@ class BleakSubscriber:
         self._last_receive_at: str | None = None
         self._last_configuration_time: dict[str, float] = {}
         self._last_attempted_revision: dict[str, int] = {}
+        self._last_status_time: dict[str, float] = {}
         self._last_force_report_attempt: dict[str, bytes] = {}
 
     def start(self) -> None:
@@ -225,6 +229,29 @@ class BleakSubscriber:
                                 now - self._last_configuration_time.get(sensor_id, -math.inf)
                                 >= CONFIGURATION_RETRY_SECONDS
                             )
+                        # A console that has been switched on but has not yet
+                        # said whether it joined is worth asking again, or the
+                        # answer never arrives.
+                        needs_status = getattr(
+                            self._configuration_synchronizer, "needs_station_status", None
+                        )
+                        status_due = (
+                            not configuration_due
+                            and not force_report_due
+                            and needs_status is not None
+                            and needs_status(sensor_id)
+                            and now - self._last_status_time.get(sensor_id, -math.inf)
+                            >= STATION_STATUS_POLL_SECONDS
+                        )
+                        if status_due:
+                            self._last_status_time[sensor_id] = now
+                            await self._configuration_synchronizer.refresh_station(
+                                sensor_id,
+                                advertisement.observed_identifier
+                                if advertisement.connection_target is None
+                                else advertisement.connection_target,
+                            )
+                            continue
                         if force_report_due or configuration_due:
                             if force_report_due:
                                 self._last_force_report_attempt[sensor_id] = (

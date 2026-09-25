@@ -18,7 +18,11 @@ DEVICE_RELEASE_PAYLOAD = bytes((5, 0x5A))
 # household network and the address it was given, neither of which the hub can
 # see over Bluetooth.
 STATION_STATUS_MARKER = 0xA1
-STATION_STATUS_SIZE = 6
+STATION_STATUS_SIZE = 9
+# How long a reported firmware version is trusted before the hub asks again. A
+# version cached for ever keeps naming the firmware a sensor ran before it was
+# reflashed, which is exactly when it changes.
+STATION_REPORT_MAX_AGE_SECONDS = 900
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 DEVICE_CONFIG_PAYLOAD_MAX_SIZE = 171
 MIN_REPORTING_INTERVAL_SECONDS = 1
@@ -92,7 +96,7 @@ def encode_device_configuration(config: DeviceConfiguration) -> bytes:
     )
 
 
-def split_station_status(payload: bytes) -> tuple[bytes, Optional[tuple[bool, str]]]:
+def split_station_status(payload: bytes) -> tuple[bytes, Optional[tuple[bool, str, str]]]:
     """Separate a configuration read-back from the station status appended to it.
 
     Returned as a suffix rather than a new payload version so that a hub which
@@ -105,7 +109,8 @@ def split_station_status(payload: bytes) -> tuple[bytes, Optional[tuple[bool, st
         return payload, None
     joined = suffix[1] == 1
     address = ".".join(str(octet) for octet in suffix[2:6]) if joined else ""
-    return payload[:-STATION_STATUS_SIZE], (joined, address)
+    version = f"{suffix[6]}.{suffix[7]}.{suffix[8]}"
+    return payload[:-STATION_STATUS_SIZE], (joined, address, version)
 
 
 def decode_device_configuration(payload: bytes) -> DeviceConfiguration:
@@ -162,6 +167,50 @@ class DeviceConfigurationSynchronizer:
         """
         desired = self._store.pending_device_configuration(sensor_id)
         return None if desired is None else int(desired["revision"])
+
+    def needs_station_status(self, sensor_id: str) -> bool:
+        """Is a console waiting on an answer the sensor has not given yet?
+
+        The sensor only reports whether it reached the network when the hub
+        connects, and the hub only connects when something is pending. Without
+        this, a console that joined seconds after being switched on would read
+        as waiting for ever.
+        """
+        sensor = self._store.sensor(sensor_id)
+        if sensor is None or sensor["enrollment_status"] != "enrolled":
+            return False
+        if sensor["wifi_enabled"] and sensor["wifi_state"] == "pending":
+            return True
+        # Nothing has ever been reported, or what was reported is old enough to
+        # be describing a sensor that has since been reflashed.
+        age = self._store.station_report_age_seconds(sensor_id)
+        return age is None or age >= STATION_REPORT_MAX_AGE_SECONDS
+
+    async def refresh_station(self, sensor_id: str, observed_identifier: str) -> str:
+        """Read the sensor's network state without changing anything."""
+        try:
+            factory = self._client_factory or self._load_client_factory()
+            async with factory(observed_identifier) as client:
+                payload = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
+            _, station = split_station_status(payload)
+            if station is None:
+                return "unknown"
+            joined, address, version = station
+            self._store.record_station_report(sensor_id, version)
+            sensor = self._store.sensor(sensor_id)
+            if sensor and sensor["wifi_enabled"]:
+                self._store.record_sensor_wifi_result(
+                    sensor_id,
+                    "joined" if joined else "pending",
+                    None,
+                    address or None,
+                )
+            return "joined" if joined else "pending"
+        except Exception as error:  # noqa: BLE001 - the sensor may simply be away
+            LOGGER.warning(
+                "could not read %s network state: %s", sensor_id, str(error)[:240]
+            )
+            return "failed"
 
     def has_release_pending(self, sensor_id: str) -> bool:
         return self._store.release_is_pending(sensor_id)
@@ -229,13 +278,17 @@ class DeviceConfigurationSynchronizer:
                     if station is not None:
                         # The sensor is the only one who knows whether it reached
                         # the network, so a console switched on stops saying it is
-                        # waiting the moment the sensor answers.
-                        joined, address = station
+                        # waiting the moment the sensor answers. A console that is
+                        # switched off is not waiting for anything, so not being
+                        # joined is simply off rather than pending.
+                        joined, address, version = station
+                        self._store.record_station_report(sensor_id, version)
+                        if not config.console_enabled:
+                            state, address = "off", None
+                        else:
+                            state = "joined" if joined else "pending"
                         self._store.record_sensor_wifi_result(
-                            sensor_id,
-                            "joined" if joined else "pending",
-                            None,
-                            address or None,
+                            sensor_id, state, None, address or None
                         )
             if config is not None and force_report_packet_id is not None:
                 return "applied-and-acknowledged"
