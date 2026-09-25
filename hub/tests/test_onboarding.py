@@ -656,7 +656,7 @@ class InterfaceTests(unittest.TestCase):
         # The console has to join and a reading has to arrive, both slower than
         # a person reads the page, so the summary re-reads the live sensor.
         self.assertIn(b"fleetSensors.find", script)
-        self.assertIn(b"Waiting for the first reading", script)
+        self.assertIn(b"Waiting for the sensor to report", script)
         self.assertIn(b"Web console reachable", script)
 
     def test_a_reading_must_arrive_after_setup_to_count_as_the_first(self):
@@ -666,13 +666,15 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"onboardingFinishedAt", script)
         self.assertIn(b"Date.parse(latest.received_at) >= onboardingFinishedAt", script)
 
-    def test_a_sensor_with_no_probe_gets_a_verdict_not_a_spinner(self):
+    def test_reporting_in_completes_setup_even_without_a_probe(self):
         script = self.get("/onboarding.js")
-        # Heard, but measuring nothing, is an answer. Waiting longer cannot
-        # change it, so the row must stop spinning and say so.
-        self.assertIn(b"measuring nothing", script)
+        # Setup proves the sensor reached the hub. A sensor announcing itself
+        # with nothing to measure has done that; a missing probe is a note, not
+        # a failed setup.
+        self.assertIn(b"no measurements yet", script)
+        self.assertIn(b'label: "Reporting"', script)
         self.assertIn(b"Nothing heard from the sensor", script)
-        self.assertIn(b'label: "No probe"', script)
+        self.assertNotIn(b'label: "No probe"', script)
 
     def test_the_finished_step_no_longer_promises_a_pairing_code(self):
         page = self.get("/")

@@ -620,27 +620,21 @@ function consoleRow(sensor) {
   };
 }
 
+/* Onboarding proves the sensor reached the hub, not that its probe works.
+ *
+ * A sensor announcing itself with nothing to measure has still done everything
+ * setup is about: it is claimed, it is in range, and the hub is hearing it. A
+ * missing probe is a separate fault, reported as a note rather than as a failed
+ * setup. */
 function readingRow(sensor) {
-  const latest = sensor.latest;
-  const arrived =
-    latest &&
-    latest.received_at &&
-    onboardingFinishedAt !== null &&
-    Date.parse(latest.received_at) >= onboardingFinishedAt;
-  if (!arrived) {
-    // Being heard without a reading is an answer, not a delay: the sensor is
-    // alive and saying it has nothing to measure. Waiting longer cannot change
-    // it, so stop spinning and say what is wrong.
-    const heardRecently =
-      typeof sensor.seen_age_seconds === "number" && sensor.seen_age_seconds <= 60;
-    if (waitedTooLong() && heardRecently) {
-      return {
-        state: "failed",
-        label: "No probe",
-        text: "The sensor is reporting but measuring nothing \u00b7 check its probe",
-        meta: describeLastHeard(sensor.seen_age_seconds),
-      };
-    }
+  const heardAt =
+    typeof sensor.seen_age_seconds === "number"
+      ? Date.now() - sensor.seen_age_seconds * 1000
+      : null;
+  const reportedSinceSetup =
+    heardAt !== null && onboardingFinishedAt !== null && heardAt >= onboardingFinishedAt - 2000;
+
+  if (!reportedSinceSetup) {
     if (waitedTooLong()) {
       return {
         state: "failed",
@@ -652,15 +646,24 @@ function readingRow(sensor) {
     return {
       state: "waiting",
       label: "Waiting",
-      text: "Waiting for the first reading",
+      text: "Waiting for the sensor to report",
       meta: "",
     };
   }
+
+  const latest = sensor.latest;
+  const measured =
+    latest &&
+    latest.received_at &&
+    onboardingFinishedAt !== null &&
+    Date.parse(latest.received_at) >= onboardingFinishedAt;
   return {
     state: "done",
-    label: "Reading",
-    text: describeReading(latest.reading),
-    meta: describeLastHeard(sensor.age_seconds),
+    label: "Reporting",
+    text: measured
+      ? describeReading(latest.reading)
+      : "Reporting in \u00b7 no measurements yet, its probe is not reading",
+    meta: describeLastHeard(sensor.seen_age_seconds),
   };
 }
 
