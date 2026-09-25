@@ -78,6 +78,73 @@ class OnboardingStateTests(unittest.TestCase):
             self.store.set_sensor_onboarding_state(self.sensor_id, "paired")
 
 
+class RoomTests(unittest.TestCase):
+    """Rooms are chosen, not typed, and carry what shapes a plant's needs."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_a_room_records_what_shapes_a_plant(self):
+        room = self.store.create_room("Study", "north", "low", "Small windows")
+        self.assertEqual(room["aspect"], "north")
+        self.assertEqual(room["light"], "low")
+        self.assertEqual(room["notes"], "Small windows")
+        self.assertEqual(room["sensor_count"], 0)
+
+    def test_two_rooms_cannot_share_a_name(self):
+        self.store.create_room("Study")
+        with self.assertRaises(ValueError):
+            self.store.create_room("Study")
+
+    def test_an_invalid_aspect_or_light_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.store.create_room("Study", aspect="up")
+        with self.assertRaises(ValueError):
+            self.store.create_room("Study", light="dazzling")
+
+    def test_a_sensor_joins_a_room_by_identity(self):
+        room = self.store.create_room("Study")
+        sensor = self.store.manage_sensor(
+            self.sensor_id, "fern", "", "monstera", None, None, 1800, room_id=room["room_id"]
+        )
+        self.assertEqual(sensor["room"], "Study")
+        self.assertEqual(sensor["room_id"], room["room_id"])
+        self.assertEqual(self.store.rooms()[0]["sensor_count"], 1)
+
+    def test_renaming_a_room_renames_it_for_its_sensors(self):
+        room = self.store.create_room("Study")
+        self.store.manage_sensor(
+            self.sensor_id, "fern", "", "monstera", None, None, 1800, room_id=room["room_id"]
+        )
+        self.store.update_room(room["room_id"], "Back study", "east", "medium", None)
+        self.assertEqual(self.store.sensor(self.sensor_id)["room"], "Back study")
+
+    def test_a_room_holding_sensors_is_not_deleted(self):
+        room = self.store.create_room("Study")
+        self.store.manage_sensor(
+            self.sensor_id, "fern", "", "monstera", None, None, 1800, room_id=room["room_id"]
+        )
+        with self.assertRaises(ValueError):
+            self.store.delete_room(room["room_id"])
+        self.assertEqual(len(self.store.rooms()), 1)
+
+    def test_an_empty_room_is_deleted(self):
+        room = self.store.create_room("Spare")
+        self.store.delete_room(room["room_id"])
+        self.assertEqual(self.store.rooms(), [])
+
+    def test_an_unknown_room_is_refused_at_enrolment(self):
+        with self.assertRaises(ValueError):
+            self.store.manage_sensor(
+                self.sensor_id, "fern", "", "monstera", None, None, 1800, room_id=999
+            )
+
+
 class HouseholdNetworkTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
@@ -384,6 +451,26 @@ class OnboardingWebTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 400)
         raised.exception.close()
 
+    def test_rooms_round_trip_over_the_api(self):
+        with self.request(
+            "/api/rooms",
+            method="POST",
+            payload={"name": "Study", "aspect": "north", "light": "low", "notes": "Small windows"},
+        ) as response:
+            created = json.load(response)
+        self.assertEqual(created["name"], "Study")
+        with self.request("/api/rooms") as response:
+            self.assertEqual([r["name"] for r in json.load(response)["items"]], ["Study"])
+        with self.request(
+            "/api/rooms/%d" % created["room_id"],
+            method="PUT",
+            payload={"name": "Back study", "aspect": "east", "light": "medium"},
+        ) as response:
+            self.assertEqual(json.load(response)["name"], "Back study")
+        self.request("/api/rooms/%d" % created["room_id"], method="DELETE").close()
+        with self.request("/api/rooms") as response:
+            self.assertEqual(json.load(response)["items"], [])
+
     def test_resetting_a_sensor_returns_it_to_onboarding(self):
         with self.request(
             self.sensor_path("/onboarding"),
@@ -522,6 +609,17 @@ class InterfaceTests(unittest.TestCase):
         page = self.get("/")
         self.assertNotIn(b"You will need its pairing code again", page)
         self.assertIn(b"refuses every other hub", page)
+
+    def test_the_rooms_tab_is_reachable_by_its_own_address(self):
+        self.assertIn(b'"/settings/rooms"', self.get("/app.js"))
+
+    def test_the_room_is_picked_rather_than_typed(self):
+        page = self.get("/")
+        script = self.get("/onboarding.js")
+        self.assertIn(b'<select id="onboarding-room"', page)
+        self.assertIn(b'id="settings-rooms-panel"', page)
+        self.assertIn(b"renderRoomChoices", script)
+        self.assertIn(b"room_id:", script)
 
     def test_forgetting_a_sensor_asks_first(self):
         self.assertIn(b"window.confirm", self.get("/onboarding.js"))

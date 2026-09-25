@@ -91,12 +91,46 @@
       </div>
       <div class="settings-tabs" role="tablist">
         <a id="settings-tab-sensors" class="settings-tab" href="/settings" role="tab">Sensors</a>
+        <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
       </div>
 
       <div id="settings-sensors-panel" class="settings-panel-group">
         <div id="settings-sensor-list" class="settings-sensor-list"></div>
         <p class="settings-note">A sensor belongs to one hub. To move one to a different hub, forget it here, or power-cycle it five times if this hub is unreachable. Either way it returns to onboarding and must be added again.</p>
+      </div>
+
+      <div id="settings-rooms-panel" class="settings-panel-group" hidden>
+        <form id="room-form" class="settings-panel">
+          <h2 id="room-form-title">Add a room</h2>
+          <p>Where a plant lives shapes what it needs. What you record here is used when judging its readings.</p>
+          <input type="hidden" id="room-id" value="">
+          <label for="room-name">Name</label>
+          <input id="room-name" maxlength="80" required placeholder="Living room">
+          <label for="room-aspect">Windows face</label>
+          <select id="room-aspect">
+            <option value="unknown">Not sure</option>
+            <option value="north">North</option>
+            <option value="east">East</option>
+            <option value="south">South</option>
+            <option value="west">West</option>
+          </select>
+          <label for="room-light">Daylight</label>
+          <select id="room-light">
+            <option value="unknown">Not sure</option>
+            <option value="low">Low · small or shaded windows</option>
+            <option value="medium">Medium</option>
+            <option value="bright">Bright · direct sun for part of the day</option>
+          </select>
+          <label for="room-notes">Anything else</label>
+          <textarea id="room-notes" maxlength="500" rows="2" placeholder="Draughty in winter, radiator under the sill"></textarea>
+          <div class="inline-control">
+            <button id="save-room" type="submit">Add room</button>
+            <button id="cancel-room-edit" type="button" hidden>Cancel</button>
+            <output id="room-message" aria-live="polite"></output>
+          </div>
+        </form>
+        <div id="room-list" class="settings-sensor-list"></div>
       </div>
 
       <div id="settings-wifi-panel" class="settings-panel-group" hidden>
@@ -154,7 +188,8 @@
           <label for="onboarding-name">Plant name</label>
           <input id="onboarding-name" maxlength="80" required>
           <label for="onboarding-room">Room</label>
-          <input id="onboarding-room" maxlength="80" required>
+          <select id="onboarding-room" required></select>
+          <small id="onboarding-room-note"></small>
           <label for="onboarding-profile">Plant profile</label>
           <select id="onboarding-profile"></select>
           <label for="onboarding-interval">Reports every</label>

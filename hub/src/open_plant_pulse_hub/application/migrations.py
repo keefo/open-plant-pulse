@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 11
+DATABASE_SCHEMA_VERSION = 12
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -324,6 +324,25 @@ MIGRATIONS: Dict[int, str] = {
         ALTER TABLE sensors ADD COLUMN wifi_address TEXT;
         UPDATE sensors SET onboarding_state = 'onboarded' WHERE enrollment_status != 'unclaimed';
         ALTER TABLE hub_settings ADD COLUMN wifi_ssid TEXT;
+    """,
+    12: """
+        CREATE TABLE rooms (
+            room_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            aspect TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (aspect IN ('unknown', 'north', 'east', 'south', 'west')),
+            light TEXT NOT NULL DEFAULT 'unknown'
+                CHECK (light IN ('unknown', 'low', 'medium', 'bright')),
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        ALTER TABLE sensors ADD COLUMN room_id INTEGER REFERENCES rooms(room_id);
+        INSERT INTO rooms (name)
+            SELECT DISTINCT TRIM(room) FROM sensors
+            WHERE room IS NOT NULL AND TRIM(room) != '';
+        UPDATE sensors
+        SET room_id = (SELECT room_id FROM rooms WHERE rooms.name = TRIM(sensors.room))
+        WHERE room IS NOT NULL AND TRIM(room) != '';
     """,
 }
 

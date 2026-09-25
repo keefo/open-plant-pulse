@@ -48,6 +48,8 @@ def create_server(
                 self._send_json(store.hub_settings())
             elif path == "/api/settings/wifi":
                 self._send_json(store.hub_wifi_settings())
+            elif path == "/api/rooms":
+                self._send_json({"items": store.rooms()})
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
             elif path.startswith("/api/sensors/"):
@@ -93,8 +95,10 @@ def create_server(
         def do_PUT(self) -> None:
             path = urlparse(self.path).path
             if (
-                path not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
+                path
+                not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
                 and not path.startswith("/api/sensors/")
+                and not path.startswith("/api/rooms/")
             ):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -109,6 +113,14 @@ def create_server(
                 elif path == "/api/settings":
                     result = store.set_reporting_interval(
                         int(payload.get("reporting_interval_minutes", 0))
+                    )
+                elif path.startswith("/api/rooms/"):
+                    result = store.update_room(
+                        int(path[len("/api/rooms/") :]),
+                        str(payload.get("name", "")),
+                        str(payload.get("aspect", "unknown")),
+                        str(payload.get("light", "unknown")),
+                        self._optional_str(payload.get("notes")),
                     )
                 elif path == "/api/settings/wifi":
                     wifi_ssid = payload.get("wifi_ssid")
@@ -128,6 +140,7 @@ def create_server(
                         self._optional_float(payload.get("moisture_low_percent")),
                         self._optional_int(payload.get("conductivity_high_us_cm")),
                         int(payload.get("expected_interval_seconds", 1800)),
+                        self._optional_int(payload.get("room_id")),
                     )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
@@ -136,6 +149,18 @@ def create_server(
 
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/rooms/"):
+                try:
+                    self._require_same_origin()
+                    store.delete_room(int(path[len("/api/rooms/") :]))
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if not path.startswith("/api/sensors/"):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -171,6 +196,13 @@ def create_server(
                         sensor_id,
                         str(payload.get("replacement_sensor_id", "")),
                         merge_history,
+                    )
+                elif path == "/api/rooms":
+                    result = store.create_room(
+                        str(payload.get("name", "")),
+                        str(payload.get("aspect", "unknown")),
+                        str(payload.get("light", "unknown")),
+                        self._optional_str(payload.get("notes")),
                     )
                 elif path.startswith("/api/sensors/") and path.endswith("/wifi"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/wifi")])

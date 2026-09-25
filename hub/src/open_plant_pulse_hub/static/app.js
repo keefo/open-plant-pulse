@@ -46,6 +46,7 @@ let sensorSettingsSubmitSequence = 0;
 let householdNetwork = null;
 let scannerHealth = null;
 let onboardingFinishedAt = null;
+let rooms = [];
 let householdNetworkDraft = false;
 let renderedSettingsSensorsKey = null;
 let onboardingStep = "find";
@@ -63,7 +64,10 @@ function pageFromLocation() {
 }
 
 function settingsTabFromLocation() {
-  return window.location.pathname === "/settings/wifi" ? "wifi" : "sensors";
+  const path = window.location.pathname;
+  if (path === "/settings/wifi") return "wifi";
+  if (path === "/settings/rooms") return "rooms";
+  return "sensors";
 }
 
 function sensorIdFromLocation() {
@@ -356,6 +360,7 @@ async function refreshFleet() {
   renderSensorSettings();
   renderSettingsSensors();
   renderHouseholdNetwork();
+  renderRoomChoices();
   renderPage();
 }
 
@@ -1242,6 +1247,18 @@ document.getElementById("fleet-link").addEventListener("click", (event) => {
   event.preventDefault();
   navigate("/");
 });
+document.getElementById("room-form").addEventListener("submit", saveRoom);
+document.getElementById("cancel-room-edit").addEventListener("click", clearRoomForm);
+document.getElementById("room-list").addEventListener("click", (event) => {
+  const edit = event.target.closest(".edit-room");
+  if (edit) {
+    startRoomEdit(Number(edit.dataset.roomId));
+    return;
+  }
+  const remove = event.target.closest(".delete-room");
+  if (remove) deleteRoom(Number(remove.dataset.roomId));
+});
+document.getElementById("onboarding-room").addEventListener("change", renderRoomChoices);
 document.querySelectorAll(".settings-tab").forEach((tab) => {
   tab.addEventListener("click", (event) => {
     event.preventDefault();
@@ -1321,5 +1338,5 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
-loadProfiles().then(refreshHouseholdNetwork).then(poll).then(restoreClockScale);
+loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(poll).then(restoreClockScale);
 setInterval(renderSimulationClock, 100);

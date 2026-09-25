@@ -15,10 +15,184 @@ const ONBOARDING_STEPS = ["find", "pair", "details", "done"];
 
 function renderSettingsTab() {
   const tab = settingsTabFromLocation();
-  document.getElementById("settings-sensors-panel").hidden = tab !== "sensors";
-  document.getElementById("settings-wifi-panel").hidden = tab !== "wifi";
-  document.getElementById("settings-tab-sensors").classList.toggle("active", tab === "sensors");
-  document.getElementById("settings-tab-wifi").classList.toggle("active", tab === "wifi");
+  ["sensors", "rooms", "wifi"].forEach((name) => {
+    document.getElementById("settings-" + name + "-panel").hidden = tab !== name;
+    document.getElementById("settings-tab-" + name).classList.toggle("active", tab === name);
+  });
+}
+
+const ROOM_ASPECT_TEXT = {
+  unknown: "aspect not recorded",
+  north: "faces north",
+  east: "faces east",
+  south: "faces south",
+  west: "faces west",
+};
+const ROOM_LIGHT_TEXT = {
+  unknown: "daylight not recorded",
+  low: "low daylight",
+  medium: "medium daylight",
+  bright: "bright",
+};
+
+function describeRoom(room) {
+  return ROOM_ASPECT_TEXT[room.aspect] + " \u00b7 " + ROOM_LIGHT_TEXT[room.light];
+}
+
+async function refreshRooms() {
+  const response = await fetch("/api/rooms");
+  if (!response.ok) return;
+  rooms = (await response.json()).items;
+  renderRooms();
+  renderRoomChoices();
+}
+
+function renderRooms() {
+  const list = document.getElementById("room-list");
+  if (list === null) return;
+  const renderKey = JSON.stringify(rooms);
+  if (list.dataset.renderKey === renderKey) return;
+  list.dataset.renderKey = renderKey;
+  list.textContent = "";
+  if (!rooms.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No rooms yet. Add the first one above.";
+    list.append(empty);
+    return;
+  }
+  rooms.forEach((room) => {
+    const card = document.createElement("div");
+    card.className = "settings-sensor";
+
+    const heading = document.createElement("div");
+    heading.className = "settings-sensor-heading";
+    const name = document.createElement("strong");
+    name.textContent = room.name;
+    const count = document.createElement("small");
+    count.textContent =
+      room.sensor_count === 1 ? "1 sensor" : room.sensor_count + " sensors";
+    heading.append(name, count);
+
+    const detail = document.createElement("code");
+    detail.textContent = describeRoom(room);
+
+    card.append(heading, detail);
+    if (room.notes) {
+      const notes = document.createElement("span");
+      notes.textContent = room.notes;
+      card.append(notes);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "inline-control";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "edit-room";
+    edit.dataset.roomId = room.room_id;
+    edit.textContent = "Edit";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger delete-room";
+    remove.dataset.roomId = room.room_id;
+    remove.textContent = "Delete";
+    // A room still holding sensors cannot be deleted, and saying so before the
+    // click is kinder than refusing after it.
+    remove.disabled = room.sensor_count > 0;
+    remove.title = room.sensor_count > 0 ? "Move its sensors out first" : "";
+    actions.append(edit, remove);
+    card.append(actions);
+    list.append(card);
+  });
+}
+
+/* The room is picked, never typed, so two sensors in one room always agree on
+ * which room that is. */
+function renderRoomChoices() {
+  const select = document.getElementById("onboarding-room");
+  if (select === null) return;
+  const chosen = select.value;
+  const renderKey = JSON.stringify(rooms.map((room) => [room.room_id, room.name]));
+  if (select.dataset.renderKey !== renderKey) {
+    select.dataset.renderKey = renderKey;
+    select.textContent = "";
+    rooms.forEach((room) => {
+      const option = document.createElement("option");
+      option.value = room.room_id;
+      option.textContent = room.name;
+      select.append(option);
+    });
+    if (chosen) select.value = chosen;
+  }
+  const note = document.getElementById("onboarding-room-note");
+  const current = rooms.find((room) => String(room.room_id) === select.value);
+  select.disabled = rooms.length === 0;
+  note.textContent = rooms.length
+    ? current
+      ? describeRoom(current)
+      : ""
+    : "No rooms yet. Add one in Settings first.";
+}
+
+function startRoomEdit(roomId) {
+  const room = rooms.find((candidate) => candidate.room_id === roomId);
+  if (!room) return;
+  document.getElementById("room-id").value = room.room_id;
+  document.getElementById("room-name").value = room.name;
+  document.getElementById("room-aspect").value = room.aspect;
+  document.getElementById("room-light").value = room.light;
+  document.getElementById("room-notes").value = room.notes || "";
+  document.getElementById("room-form-title").textContent = "Edit " + room.name;
+  document.getElementById("save-room").textContent = "Save room";
+  document.getElementById("cancel-room-edit").hidden = false;
+  document.getElementById("room-message").textContent = "";
+}
+
+function clearRoomForm() {
+  document.getElementById("room-id").value = "";
+  document.getElementById("room-name").value = "";
+  document.getElementById("room-aspect").value = "unknown";
+  document.getElementById("room-light").value = "unknown";
+  document.getElementById("room-notes").value = "";
+  document.getElementById("room-form-title").textContent = "Add a room";
+  document.getElementById("save-room").textContent = "Add room";
+  document.getElementById("cancel-room-edit").hidden = true;
+}
+
+async function saveRoom(event) {
+  event.preventDefault();
+  const message = document.getElementById("room-message");
+  const roomId = document.getElementById("room-id").value;
+  const body = JSON.stringify({
+    name: document.getElementById("room-name").value.trim(),
+    aspect: document.getElementById("room-aspect").value,
+    light: document.getElementById("room-light").value,
+    notes: document.getElementById("room-notes").value.trim(),
+  });
+  const response = await fetch(roomId ? "/api/rooms/" + roomId : "/api/rooms", {
+    method: roomId ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    message.textContent = payload.error || "Could not save the room";
+    return;
+  }
+  clearRoomForm();
+  message.textContent = "Saved.";
+  await refreshRooms();
+}
+
+async function deleteRoom(roomId) {
+  const response = await fetch("/api/rooms/" + roomId, { method: "DELETE" });
+  if (!response.ok) {
+    const payload = await response.json();
+    document.getElementById("room-message").textContent =
+      payload.error || "Could not delete the room";
+    return;
+  }
+  await refreshRooms();
 }
 
 function describeWifi(sensor) {
@@ -495,7 +669,7 @@ async function finishOnboarding() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       display_name: document.getElementById("onboarding-name").value.trim(),
-      room: document.getElementById("onboarding-room").value.trim(),
+      room_id: Number(document.getElementById("onboarding-room").value) || null,
       profile_id: document.getElementById("onboarding-profile").value,
       expected_interval_seconds: Number(document.getElementById("onboarding-interval").value),
     }),

@@ -28,6 +28,9 @@ ONBOARDING_STATES = ("onboarding", "onboarded")
 WIFI_STATES = ("off", "pending", "joined", "failed")
 # Every reason a sensor can give for failing to join, so the browser never has to
 # show "it did not work" without saying what went wrong.
+ROOM_ASPECTS = ("unknown", "north", "east", "south", "west")
+ROOM_LIGHT_LEVELS = ("unknown", "low", "medium", "bright")
+ROOM_NOTES_MAX_BYTES = 500
 WIFI_FAILURES = (
     "wrong_password",
     "network_not_found",
@@ -355,7 +358,7 @@ class ReadingStore:
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
-                       wifi_enabled, wifi_state, wifi_failure, wifi_address
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -380,7 +383,7 @@ class ReadingStore:
                        device_config_revision, device_config_applied_revision,
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
-                       wifi_enabled, wifi_state, wifi_failure, wifi_address
+                       wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -407,6 +410,109 @@ class ReadingStore:
                 (reporting_interval_minutes,),
             )
         return self.hub_settings()
+
+    def rooms(self) -> List[Dict[str, Any]]:
+        """Every room, with how many sensors are in it."""
+        with self._condition:
+            return [
+                {
+                    "room_id": row[0],
+                    "name": row[1],
+                    "aspect": row[2],
+                    "light": row[3],
+                    "notes": row[4],
+                    "sensor_count": row[5],
+                }
+                for row in self._database.execute(
+                    """
+                    SELECT rooms.room_id, rooms.name, rooms.aspect, rooms.light, rooms.notes,
+                           (SELECT COUNT(*) FROM sensors
+                            WHERE sensors.room_id = rooms.room_id
+                              AND sensors.enrollment_status = 'enrolled')
+                    FROM rooms ORDER BY rooms.name
+                    """
+                )
+            ]
+
+    def _validate_room(self, name: str, aspect: str, light: str, notes: Optional[str]) -> str:
+        name = name.strip()
+        self._validate_device_text(name, "name", required=True)
+        if aspect not in ROOM_ASPECTS:
+            raise ValueError("aspect is invalid")
+        if light not in ROOM_LIGHT_LEVELS:
+            raise ValueError("light is invalid")
+        if notes is not None and len(notes.encode("utf-8")) > ROOM_NOTES_MAX_BYTES:
+            raise ValueError("notes is too long")
+        return name
+
+    def create_room(
+        self,
+        name: str,
+        aspect: str = "unknown",
+        light: str = "unknown",
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        name = self._validate_room(name, aspect, light, notes)
+        with self._condition, self._database:
+            existing = self._database.execute(
+                "SELECT 1 FROM rooms WHERE name = ?", (name,)
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("a room with that name already exists")
+            self._database.execute(
+                "INSERT INTO rooms (name, aspect, light, notes) VALUES (?, ?, ?, ?)",
+                (name, aspect, light, notes or None),
+            )
+        return next(room for room in self.rooms() if room["name"] == name)
+
+    def update_room(
+        self,
+        room_id: int,
+        name: str,
+        aspect: str = "unknown",
+        light: str = "unknown",
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        name = self._validate_room(name, aspect, light, notes)
+        with self._condition, self._database:
+            clash = self._database.execute(
+                "SELECT 1 FROM rooms WHERE name = ? AND room_id != ?", (name, room_id)
+            ).fetchone()
+            if clash is not None:
+                raise ValueError("a room with that name already exists")
+            updated = self._database.execute(
+                "UPDATE rooms SET name = ?, aspect = ?, light = ?, notes = ? WHERE room_id = ?",
+                (name, aspect, light, notes or None, room_id),
+            ).rowcount
+            if updated == 0:
+                raise ValueError("room_id is unknown")
+            # The sensor keeps a readable copy of its room, so renaming a room
+            # must not leave sensors labelled with the old name.
+            self._database.execute(
+                "UPDATE sensors SET room = ? WHERE room_id = ?", (name, room_id)
+            )
+        return next(room for room in self.rooms() if room["room_id"] == room_id)
+
+    def delete_room(self, room_id: int) -> None:
+        """Remove a room. A room still holding sensors is kept."""
+        with self._condition, self._database:
+            occupied = self._database.execute(
+                """
+                SELECT COUNT(*) FROM sensors
+                WHERE room_id = ? AND enrollment_status = 'enrolled'
+                """,
+                (room_id,),
+            ).fetchone()[0]
+            if occupied:
+                raise ValueError("move the sensors out of this room first")
+            deleted = self._database.execute(
+                "DELETE FROM rooms WHERE room_id = ?", (room_id,)
+            ).rowcount
+            if deleted == 0:
+                raise ValueError("room_id is unknown")
+            self._database.execute(
+                "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,)
+            )
 
     def hub_wifi_settings(self) -> Dict[str, Any]:
         """Return the household network name, without any password."""
@@ -626,8 +732,19 @@ class ReadingStore:
         moisture_low_percent: Optional[float],
         conductivity_high_us_cm: Optional[int],
         expected_interval_seconds: int,
+        room_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         display_name = display_name.strip()
+        # Rooms are chosen, not typed. The name is still stored on the sensor so
+        # every existing reader keeps working, but the room it points at is what
+        # the household actually manages.
+        if room_id is not None:
+            named = self._database.execute(
+                "SELECT name FROM rooms WHERE room_id = ?", (room_id,)
+            ).fetchone()
+            if named is None:
+                raise ValueError("room_id is unknown")
+            room = named[0]
         room = room.strip()
         catalog = load_plant_profiles()
         self._validate_device_text(display_name, "display_name", required=True)
@@ -690,7 +807,7 @@ class ReadingStore:
                 UPDATE sensors
                 SET enrollment_status = 'enrolled', archived = 0,
                     onboarding_state = 'onboarded',
-                    display_name = ?, room = ?, plant_id = ?, profile_id = ?,
+                    display_name = ?, room = ?, room_id = ?, plant_id = ?, profile_id = ?,
                     moisture_low_percent = ?, conductivity_high_us_cm = ?,
                     expected_interval_seconds = ?, replaced_by_sensor_id = NULL,
                     device_config_revision = ?,
@@ -700,6 +817,7 @@ class ReadingStore:
                 (
                     display_name,
                     room or None,
+                    room_id,
                     plant_id,
                     profile_id,
                     moisture_low_percent,
@@ -1438,6 +1556,7 @@ class ReadingStore:
             "wifi_state": row[24],
             "wifi_failure": row[25],
             "wifi_address": row[26],
+            "room_id": row[27],
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:
