@@ -68,6 +68,7 @@ function settingsTabFromLocation() {
   const path = window.location.pathname;
   if (path === "/settings/wifi") return "wifi";
   if (path === "/settings/rooms") return "rooms";
+  if (path === "/settings/firmware") return "firmware";
   return "sensors";
 }
 
@@ -99,6 +100,7 @@ function renderPage() {
     document.getElementById("config-plant-name").textContent = selectedSensor
       ? selectedSensor.display_name || selectedSensor.sensor_id
       : selectedSensorId || "Sensor";
+    renderSensorFirmware();
   }
   if (page === "settings") renderSettingsTab();
   if (page === "onboarding") renderOnboarding();
@@ -1135,6 +1137,10 @@ async function refresh() {
   try {
     await refreshFleet();
     const page = pageFromLocation();
+    if (page === "settings") {
+      if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
+      return;
+    }
     if (page !== "detail" && page !== "config") return;
     if (!selectedSensorId || !selectedSensor) {
       document.getElementById("status").textContent = "Sensor not found";
@@ -1148,6 +1154,7 @@ async function refresh() {
     if (page === "config") {
       const rawReportsResponse = await fetch(`/api/raw-reports${query}`);
       if (rawReportsResponse.ok) renderRawReports((await rawReportsResponse.json()).items);
+      await refreshFirmwareImages();
       return;
     }
     const [latestResponse, careLogResponse] = await Promise.all([
@@ -1163,6 +1170,220 @@ async function refresh() {
     document.getElementById("status").textContent = "Hub unavailable";
     document.getElementById("status-dot").classList.remove("live");
   }
+}
+
+/* Firmware images, and what a sensor is doing with one.
+ *
+ * The image is read by the hub, not described by whoever uploaded it, so the
+ * list here shows what each image says about itself: its version, when it was
+ * built, and the digest a sensor will check what it downloaded against. */
+let firmwareImages = [];
+
+function formatBytes(bytes) {
+  return (bytes / 1024 / 1024).toFixed(2) + " MB";
+}
+
+async function refreshFirmwareImages() {
+  try {
+    const response = await fetch("/api/firmware");
+    if (!response.ok) return;
+    firmwareImages = (await response.json()).items;
+  } catch (_error) {
+    return;
+  }
+  renderFirmwareImages();
+  renderSensorFirmware();
+}
+
+function renderFirmwareImages() {
+  const list = document.getElementById("firmware-list");
+  if (list === null) return;
+  const renderKey = JSON.stringify(firmwareImages);
+  if (list.dataset.renderKey === renderKey) return;
+  list.dataset.renderKey = renderKey;
+  list.textContent = "";
+  if (!firmwareImages.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No firmware images yet. Add the image you built above.";
+    list.append(empty);
+    return;
+  }
+  firmwareImages.forEach((image) => {
+    const card = document.createElement("div");
+    card.className = "settings-sensor";
+
+    const heading = document.createElement("div");
+    heading.className = "settings-sensor-heading";
+    const name = document.createElement("strong");
+    name.textContent = image.version;
+    const state = document.createElement("small");
+    state.textContent = image.available ? "Ready" : "File missing";
+    heading.append(name, state);
+
+    const identity = document.createElement("code");
+    identity.textContent =
+      formatBytes(image.size_bytes) +
+      " · built " + (image.built_at || "at an unrecorded time") +
+      " · " + image.idf_version +
+      " · " + image.digest.slice(0, 12);
+
+    const body = document.createElement("div");
+    body.className = "settings-sensor-body";
+    body.append(heading, identity);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => deleteFirmwareImage(image));
+
+    const actions = document.createElement("div");
+    actions.className = "settings-sensor-actions";
+    actions.append(remove);
+    card.append(body, actions);
+    list.append(card);
+  });
+}
+
+async function uploadFirmwareImage(file) {
+  const message = document.getElementById("firmware-upload-message");
+  message.textContent = "Reading " + file.name + "…";
+  try {
+    const response = await fetch("/api/firmware", { method: "POST", body: file });
+    const payload = await response.json();
+    if (!response.ok) {
+      message.textContent = payload.error || "Could not store that image";
+      return;
+    }
+    message.textContent = "Stored firmware " + payload.version + ".";
+  } catch (_error) {
+    message.textContent = "Could not store that image";
+    return;
+  }
+  await refreshFirmwareImages();
+}
+
+async function deleteFirmwareImage(image) {
+  const confirmed = window.confirm(
+    "Delete firmware " + image.version + " from the hub?\n\n" +
+    "Any sensor waiting for it stops waiting. Sensors already running it are unaffected."
+  );
+  if (!confirmed) return;
+  await fetch("/api/firmware/" + encodeURIComponent(image.digest), { method: "DELETE" });
+  await refreshFirmwareImages();
+}
+
+/* What an update is doing, in the sensor's own terms.
+ *
+ * Every state says who is acting and what would move it on, because the only
+ * thing worse than a slow update is one that has silently stopped. */
+function describeFirmwareUpdate(sensor) {
+  const target = sensor.firmware_update_version || "the chosen image";
+  switch (sensor.firmware_update_state) {
+    case "pending":
+      return "Waiting to reach the sensor · sent the next time it reports";
+    case "commanded":
+      return "The sensor has been told to install " + target;
+    case "downloading":
+      return "Downloading " + target + " · " + sensor.firmware_update_percent + "%";
+    case "installing":
+      return "Installing " + target;
+    case "rebooting":
+      return "Restarting to run " + target;
+    case "succeeded":
+      return "Updated to " + target;
+    case "failed":
+      return "Update failed · " + (sensor.firmware_update_error || "no reason given");
+    default:
+      return "No update in progress.";
+  }
+}
+
+function firmwareUpdateIsRunning(sensor) {
+  return ["pending", "commanded", "downloading", "installing", "rebooting"].includes(
+    sensor.firmware_update_state
+  );
+}
+
+function renderSensorFirmware() {
+  const choice = document.getElementById("firmware-choice");
+  if (choice === null || !selectedSensor) return;
+  document.getElementById("firmware-current").textContent = selectedSensor.firmware_version
+    ? "Running " + selectedSensor.firmware_version
+    : "Version not reported yet";
+  document.getElementById("firmware-update-state").textContent =
+    describeFirmwareUpdate(selectedSensor);
+
+  const running = firmwareUpdateIsRunning(selectedSensor);
+  const progress = document.getElementById("firmware-progress");
+  progress.hidden = !running;
+  document.getElementById("firmware-progress-bar").style.width =
+    Math.max(2, selectedSensor.firmware_update_percent || 0) + "%";
+  document.getElementById("firmware-cancel").hidden = !running;
+
+  const renderKey = JSON.stringify(firmwareImages.map((image) => [image.version, image.digest]));
+  if (choice.dataset.renderKey !== renderKey) {
+    choice.dataset.renderKey = renderKey;
+    choice.textContent = "";
+    firmwareImages
+      .filter((image) => image.available)
+      .forEach((image) => {
+        const option = document.createElement("option");
+        option.value = image.digest;
+        option.textContent = image.version + " · " + formatBytes(image.size_bytes);
+        choice.append(option);
+      });
+  }
+
+  /* The sensor downloads over Wi-Fi, so being on the network is a precondition
+   * rather than something to discover halfway through an update. Say so where
+   * the button is, and do not offer the button. */
+  const onNetwork = Boolean(selectedSensor.wifi_enabled && selectedSensor.wifi_state === "joined");
+  const note = document.getElementById("firmware-precondition");
+  const install = document.getElementById("firmware-install");
+  if (!firmwareImages.some((image) => image.available)) {
+    note.textContent =
+      "No firmware images are stored on this hub. Add one under Settings · Firmware.";
+  } else if (!onNetwork) {
+    note.textContent =
+      "This sensor downloads firmware over the household network. Switch its web console on " +
+      "above and wait until it reports an address, then come back.";
+  } else {
+    note.textContent =
+      "The hub tells the sensor which image to fetch over Bluetooth; the sensor downloads it " +
+      "from the hub over Wi-Fi and restarts. It keeps its pairing, plant and settings.";
+  }
+  install.disabled = running || !onNetwork || choice.options.length === 0;
+}
+
+async function installFirmware() {
+  const choice = document.getElementById("firmware-choice");
+  if (!selectedSensorId || !choice.value) return;
+  const image = firmwareImages.find((candidate) => candidate.digest === choice.value);
+  const confirmed = window.confirm(
+    "Send firmware " + (image ? image.version : "") + " to " +
+    (selectedSensor.display_name || selectedSensorId) + "?\n\n" +
+    "The sensor downloads it, installs it and restarts. If the new firmware does not start, " +
+    "the sensor goes back to the one it is running now."
+  );
+  if (!confirmed) return;
+  await fetch("/api/sensors/" + encodeURIComponent(selectedSensorId) + "/firmware", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ digest: choice.value }),
+  });
+  await refreshFleet();
+}
+
+async function cancelFirmwareUpdate() {
+  if (!selectedSensorId) return;
+  await fetch("/api/sensors/" + encodeURIComponent(selectedSensorId) + "/firmware", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ digest: "" }),
+  });
+  await refreshFleet();
 }
 
 document.getElementById("open-inbox").addEventListener("click", () => document.getElementById("inbox-dialog").showModal());
@@ -1318,5 +1539,12 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
+document.getElementById("firmware-file").addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (file) uploadFirmwareImage(file);
+  event.target.value = "";
+});
+document.getElementById("firmware-install").addEventListener("click", installFirmware);
+document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 trackRawReportsDisclosure();
-loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(poll);
+loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(refreshFirmwareImages).then(poll);

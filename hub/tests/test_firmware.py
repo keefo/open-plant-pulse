@@ -361,6 +361,56 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(json.load(response)["items"], [])
 
 
+class InterfaceTests(unittest.TestCase):
+    """The served page and script carry the pieces an update needs."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.server = create_server(self.store, "127.0.0.1", 0)
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = server_address(self.server)
+        self.base_url = f"http://{host}:{port}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=1.0)
+        self.store.close()
+
+    def get(self, path: str) -> bytes:
+        with urlopen(self.base_url + path, timeout=1.0) as response:
+            return response.read()
+
+    def test_images_are_managed_in_settings_and_installed_from_a_sensor(self) -> None:
+        page = self.get("/")
+        script = self.get("/app.js")
+
+        self.assertIn(b'href="/settings/firmware"', page)
+        self.assertIn(b'id="settings-firmware-panel"', page)
+        self.assertIn(b'<section class="sensor-firmware" data-page="config"', page)
+        self.assertIn(b'if (path === "/settings/firmware") return "firmware";', script)
+        self.assertIn(b'fetch("/api/firmware", { method: "POST", body: file })', script)
+        self.assertIn(b'/firmware", {\n    method: "POST"', script)
+
+    def test_the_interface_refuses_to_start_what_the_sensor_could_not_finish(self) -> None:
+        script = self.get("/app.js")
+
+        # Downloading needs the household network, which is a precondition, not
+        # something to discover halfway through.
+        self.assertIn(b'selectedSensor.wifi_enabled && selectedSensor.wifi_state === "joined"', script)
+        self.assertIn(b"install.disabled = running", script)
+        self.assertIn(b"downloads firmware over the household network", script)
+
+    def test_progress_is_what_the_sensor_said_and_names_every_state(self) -> None:
+        script = self.get("/app.js")
+
+        for state in ("pending", "commanded", "downloading", "installing", "rebooting",
+                      "succeeded", "failed"):
+            self.assertIn(f'case "{state}":'.encode(), script)
+        self.assertIn(b"firmware_update_percent", script)
+
+
 class StoreStateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()

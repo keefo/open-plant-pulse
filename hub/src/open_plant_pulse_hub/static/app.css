@@ -353,6 +353,17 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 @media (max-width: 720px) {
   .settings-sensor { align-items: stretch; flex-direction: column; gap: 12px; }
 }
+.sensor-firmware { padding: 24px; display: grid; gap: 14px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
+.sensor-firmware .section-heading { margin-bottom: 0; }
+.sensor-firmware .inline-control { flex-wrap: wrap; }
+.sensor-firmware select { min-width: 220px; padding: 9px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: white; }
+.sensor-firmware button:not(.danger) { color: white; background: var(--leaf); border-color: var(--leaf); }
+.sensor-firmware button[disabled] { color: var(--muted); background: #eef2ed; border-color: var(--line); cursor: not-allowed; }
+.firmware-choice-label { color: var(--muted); font-size: 12px; font-weight: 700; }
+/* Progress the sensor reports, not an animation that runs regardless: an
+   update that has stopped must look stopped. */
+.firmware-progress { height: 8px; border-radius: 4px; background: #e5eae3; overflow: hidden; }
+.firmware-progress i { display: block; height: 100%; background: var(--leaf); transition: width 400ms ease; }
 .settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
 .onboarding-card { max-width: 820px; margin-inline: auto; padding: 26px 30px; display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }

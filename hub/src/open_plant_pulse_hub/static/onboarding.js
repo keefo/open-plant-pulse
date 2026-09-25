@@ -15,7 +15,7 @@ const ONBOARDING_STEPS = ["find", "pair", "details", "done"];
 
 function renderSettingsTab() {
   const tab = settingsTabFromLocation();
-  ["sensors", "rooms", "wifi"].forEach((name) => {
+  ["sensors", "rooms", "wifi", "firmware"].forEach((name) => {
     document.getElementById("settings-" + name + "-panel").hidden = tab !== name;
     document.getElementById("settings-tab-" + name).classList.toggle("active", tab === name);
   });

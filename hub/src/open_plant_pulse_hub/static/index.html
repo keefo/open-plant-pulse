@@ -95,6 +95,7 @@
         <a id="settings-tab-sensors" class="settings-tab" href="/settings" role="tab">Sensors</a>
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
+        <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
       </div>
 
       <div id="settings-sensors-panel" class="settings-panel-group">
@@ -163,6 +164,20 @@
           <p id="wifi-usage-count" class="usage-count">No sensors are using it</p>
           <a href="/settings">Switch consoles on or off per sensor</a>
         </div>
+      </div>
+
+      <div id="settings-firmware-panel" class="settings-panel-group" hidden>
+        <div class="settings-panel">
+          <h2>Firmware images</h2>
+          <p>Add a built image here, then install it on a sensor from its configuration page. The hub reads the version out of the image itself.</p>
+          <div class="inline-control">
+            <label id="firmware-upload-label" class="secondary-action" for="firmware-file">Add an image…</label>
+            <input id="firmware-file" type="file" accept=".bin,application/octet-stream" hidden>
+            <output id="firmware-upload-message" aria-live="polite"></output>
+          </div>
+          <small>Built by <code>sensor/firmware/build.sh</code> as <code>sensor/build/open_plant_pulse.bin</code>.</small>
+        </div>
+        <div id="firmware-list" class="settings-sensor-list"></div>
       </div>
     </section>
 
@@ -426,6 +441,22 @@
         <div class="settings-actions"><button type="submit">Save configuration</button></div>
         <output id="sensor-settings-message"></output>
       </form>
+    </section>
+
+    <section class="sensor-firmware" data-page="config" aria-labelledby="sensor-firmware-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-firmware-title">Firmware</h2></div>
+        <span id="firmware-current">Version not reported yet</span>
+      </div>
+      <p id="firmware-update-state" class="configuration-delivery" aria-live="polite">No update in progress.</p>
+      <div id="firmware-progress" class="firmware-progress" hidden><i id="firmware-progress-bar"></i></div>
+      <div class="inline-control">
+        <label for="firmware-choice" class="firmware-choice-label">Install</label>
+        <select id="firmware-choice"></select>
+        <button id="firmware-install" type="button">Send to sensor</button>
+        <button id="firmware-cancel" class="danger" type="button" hidden>Cancel</button>
+      </div>
+      <p id="firmware-precondition" class="settings-note"></p>
     </section>
 
     <details class="raw-report-log" id="raw-report-log" data-page="config" hidden>
