@@ -98,8 +98,15 @@ Run the existing vertical slice:
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-Visit <http://127.0.0.1:8080>. Readings arrive from BTHome sensors in range. The
-hub exposes these implementation endpoints for its current page:
+Visit <http://127.0.0.1:8080>. Readings arrive from BTHome sensors in range.
+
+Firmware images are served separately on `0.0.0.0:8081`, because a sensor
+downloads an update over the household network and cannot reach loopback. That
+server answers one shape of request — `GET /firmware/<sha256>.bin` — and holds
+nothing private. `--firmware-host`, `--firmware-port` and `--no-firmware-server`
+change or disable it.
+
+The hub exposes these implementation endpoints for its current page:
 
 - `GET /api/health`
 - `GET /api/sensors?status=unclaimed|enrolled|archived`
@@ -116,6 +123,10 @@ hub exposes these implementation endpoints for its current page:
 - `DELETE /api/sensors/<sensor-id>`
 - `POST /api/sensors/<sensor-id>/archive`
 - `POST /api/sensors/<sensor-id>/replace`
+- `GET /api/firmware`
+- `POST /api/firmware` (the image itself as the request body)
+- `POST /api/sensors/<sensor-id>/firmware` (a digest to install, or none to stop)
+- `DELETE /api/firmware/<sha256>`
 
 These routes are an internal browser contract, not the promised public HTTP API.
 They may evolve as the multi-sensor UI is built. State-changing routes reject a

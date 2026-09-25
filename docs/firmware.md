@@ -70,9 +70,29 @@ development values, not proof of a sensor's register map:
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
 | `OPP_SAMPLE_INTERVAL_MINUTES` | 30 | Initial delay before hub device configuration is applied |
 
-The default ESP-IDF partition selection is the 1.5 MiB single-app layout. This fits
-the combined development Wi-Fi and BLE image on the XIAO ESP32-C3's flash while
-retaining the existing NVS partition; OTA is not enabled.
+### Partitions and over-the-air updates
+
+`sensor/partitions.csv` gives the board two 1600 KiB application slots inside its
+4 MB of flash, with `nvs` at the offset and size it has always had:
+
+```
+nvs        0x9000    24K
+otadata    0xf000     8K
+phy_init   0x11000    4K
+ota_0      0x20000  1600K
+ota_1      0x1b0000 1600K
+```
+
+Because `nvs` did not move, the one cable flash that introduces this layout keeps
+a sensor's bond, pairing code and configuration. Firmware from before 0.12.0 has
+a single slot and cannot install anything over the air, so a sensor running one
+needs that flash by cable. Everything after it is installed from the hub: see
+[the proposal](proposals/firmware-over-the-air.md) for how, and `sensor/version.txt`
+for what is running.
+
+A newly installed image boots on trial. It is kept once it has advertised, which
+is what the sensor is for; one that crashes before that is replaced by its
+predecessor at the next reset, with no help from anybody.
 
 ### Web UI diagnostics
 

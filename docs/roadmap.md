@@ -77,6 +77,20 @@ browser without a terminal, with device changes clearly shown as pending or appl
 probe power, and build, flash, running version, BLE delivery, and power results are
 recorded separately.
 
+## M4.5: Firmware over the air
+
+- [x] Keep built images on the hub, parsed and identified by what they contain.
+- [x] Give the sensor two application slots without losing its bond.
+- [x] Command an update over the bonded link and download it over the household network.
+- [x] Verify the digest before an image is made bootable, and roll back one that
+      does not start.
+- [ ] Update several sensors, and a sensor that sleeps between reports.
+- [ ] Sign images, which needs a key that outlives any one hub.
+
+**Exit:** a sensor is updated from the browser with no cable, and a bad image
+costs nothing. Reached on 2026-09-25 for one powered sensor; a sleeping sensor
+and more than one at a time are untested.
+
 ## M5: Service packaging and resilience
 
 - [ ] Package launchd and systemd services with native Bluetooth permissions.

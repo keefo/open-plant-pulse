@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed 2026-09-25. Implementation in progress; see the worklog for what has run
-on hardware.
+Implemented 2026-09-25 and validated on one sensor. Firmware 0.12.1 was installed
+over the air in about fifteen seconds, and a deliberately broken image was rolled
+back without help. What has and has not run on hardware is in the worklog.
 
 ## Goal
 
@@ -155,15 +156,19 @@ Per sensor, alongside the existing configuration state:
 
 Host checks, build, flash, and device behaviour are separate claims.
 
-- [ ] An uploaded image is parsed, stored once per digest, and served.
-- [ ] Anything that is not an `open_plant_pulse` esp32c3 image is refused.
-- [ ] The command encodes and decodes, and is distinguishable from every other
+- [x] An uploaded image is parsed, stored once per digest, and served.
+- [x] Anything that is not an `open_plant_pulse` esp32c3 image is refused.
+- [x] The command encodes and decodes, and is distinguishable from every other
       payload version on the characteristic.
-- [ ] The whole flow is covered by host tests with no hardware.
-- [ ] The OTA-capable image builds and is flashed by cable, keeping its bond.
-- [ ] A sensor updates over the air and returns reporting the new version.
-- [ ] An image that does not match its digest is refused by the sensor.
-- [ ] A deliberately broken image rolls back without help.
+- [x] The whole flow is covered by host tests with no hardware.
+- [x] The OTA-capable image builds and is flashed by cable, keeping its bond.
+- [x] A sensor updates over the air and returns reporting the new version.
+- [ ] An image that does not match its digest is refused by the sensor. The hub
+      cannot serve a mismatching image — it checks the file against the name it
+      is stored under — so proving this needs a server that is trying to, which
+      has not been built.
+- [x] A deliberately broken image rolls back without help, and the hub says so
+      rather than saying "restarting" for ever.
 
 ## Not in this proposal
 

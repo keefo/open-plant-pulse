@@ -44,6 +44,11 @@ scans for BTHome advertisements as it runs, so a sensor in range appears under
 Settings and can be added from there. Readings and care events persist in SQLite;
 a short live history is restored after restart.
 
+A second server, on port 8081, serves firmware images to sensors on the household
+network; the management interface above stays on loopback. Add an image under
+Settings · Firmware and install it from a sensor's configuration page. Run with
+`--no-firmware-server` to keep images without serving them.
+
 The tests use only the Python standard library:
 
 ```sh

@@ -460,3 +460,65 @@
 - The cause is not established. Treat the 0.6.0 firmware as compiling, and nothing
   more: it has not been shown to produce a correct image, it has not been flashed,
   and no pairing, credential, or Wi-Fi behaviour has run on hardware.
+
+## 2026-09-25
+
+### Removed the simulator, and split plant care from sensor configuration
+
+- Deleted `simulator/`, the loopback UDP transport, the simulation fixture and the
+  tests that only covered them. The dashboard tests now build their reading in
+  place rather than decoding a fixture, so they no longer depend on a transport
+  that does not exist. Removed the `simulated-plant-01` row and its 39,017 dummy
+  readings from the running hub.
+- Moved the raw report log below the configuration and made it a collapsible
+  section whose state is remembered per browser.
+- Gave each sensor a configuration page at `/sensors/<id>/settings`, reachable
+  from the plant page and from each row in hub settings, and took the console
+  switch out of that list so it exists in one place. Each page now fetches only
+  what it shows.
+
+### Why every report is recorded twice
+
+- The receive log shows two rows per report because the sensor puts its BTHome
+  service data in the advertisement and its name in the scan response, and
+  CoreBluetooth always active-scans: two packets are received per advertising
+  event, 0.1 to 1 ms apart, at different RSSI in 39% of cases. Nothing is stored
+  twice; the second row is a diagnostics entry marked duplicate. Not changed.
+
+### Firmware over the air
+
+- Wrote `docs/proposals/firmware-over-the-air.md`: the hub commands over the
+  bonded BLE link, the sensor downloads over the household network.
+- **Hub.** Images are parsed out of the ESP-IDF application descriptor, so an
+  upload that is not an `esp32c3` `open_plant_pulse` image is refused and the
+  version is read rather than typed. Images are stored once per digest under
+  `~/.open-plant-pulse/firmware/` and served by a separate read-only HTTP server
+  on the household network (default port 8081); the management API stays on
+  loopback. Settings gained a Firmware tab, and a sensor's configuration page an
+  update button with progress.
+- **Sensor.** `sensor/partitions.csv` replaces the single-app layout with two
+  1600 KiB slots inside the 4 MB the board has always had, keeping `nvs` at its
+  offset so the cable flash that introduces it costs nothing. Payload version 7
+  starts an update; the sensor streams the image into the spare slot, hashes what
+  it wrote, and refuses to make it bootable unless the hash matches.
+- **Validated on hardware, 2026-09-25.** 0.12.0 was flashed by cable at
+  1,418,944 bytes and came back with its pairing code and its place on the
+  network intact. 0.12.1 was then installed **over the air in about fifteen
+  seconds**, with the hub showing it downloading and then reporting the new
+  version. A reset afterwards booted 0.12.1 from `ota_1`, which is only possible
+  if the image had confirmed itself.
+- **Rollback, also on hardware.** A deliberately broken 0.12.2 was installed over
+  the air, aborted on its first boot, and the bootloader loaded the previous slot:
+  `Loaded app from partition at offset 0x1b0000` followed by `Running firmware
+  0.12.1 from ota_1`. That image was never committed, and both it and the pre-OTA
+  0.11.2 image were deleted from the hub afterwards — installing a single-slot
+  image over the air would be a one-way trip back to the cable.
+- The bad case exposed a gap: the hub went on saying "restarting" for ever,
+  because success is the sensor returning with the new version and nothing
+  watched for it never doing so. An update still in flight after five minutes is
+  now failed, naming the version the sensor is actually running. Observed
+  flipping to `failed` five minutes after the rolled-back install.
+- **Not validated.** A sensor that sleeps between reports, more than one sensor
+  at a time, and the sensor's refusal of an image whose digest does not match:
+  the hub checks its files against the name they are stored under, so it cannot
+  serve a mismatching image, and proving that path needs a server built to lie.
