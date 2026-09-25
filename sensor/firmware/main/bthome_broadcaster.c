@@ -1,11 +1,14 @@
 #include "bthome_broadcaster.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
 #include "device_config_protocol.h"
 #include "device_config_store.h"
 #include "device_identity.h"
+#include "web_ui.h"
+#include "wifi_credentials_store.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "force_report.h"
@@ -43,6 +46,34 @@ static uint32_t advertisement_window_ms;
 static uint32_t advertisement_interval_ms;
 static int start_result;
 static uint16_t connection_handle = BLE_HS_CONN_HANDLE_NONE;
+/* The bond cannot be dropped while it is carrying the write that asked for it,
+ * so the request is noted and honoured once the link is closed. */
+static bool release_requested;
+
+/* Marker, joined flag, and four address bytes. */
+#define OPP_STATION_STATUS_SIZE 6
+#define OPP_STATION_STATUS_MARKER 0xA1
+
+static size_t append_station_status(uint8_t *output)
+{
+    const bool joined = web_ui_station_joined();
+    output[0] = OPP_STATION_STATUS_MARKER;
+    output[1] = joined ? 1U : 0U;
+    output[2] = 0;
+    output[3] = 0;
+    output[4] = 0;
+    output[5] = 0;
+    if (joined) {
+        unsigned int octets[4] = {0};
+        if (sscanf(web_ui_station_address(), "%u.%u.%u.%u",
+                   &octets[0], &octets[1], &octets[2], &octets[3]) == 4) {
+            for (size_t index = 0; index < 4; ++index) {
+                output[2 + index] = (uint8_t)octets[index];
+            }
+        }
+    }
+    return OPP_STATION_STATUS_SIZE;
+}
 
 static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
                                 struct ble_gatt_access_ctxt *context, void *argument)
@@ -60,12 +91,18 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
                        : BLE_ATT_ERR_INSUFFICIENT_RES;
         }
         opp_device_config_t config;
-        uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE];
+        uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE + OPP_STATION_STATUS_SIZE];
         opp_device_config_store_get(&config);
-        const size_t payload_size = opp_device_config_encode(&config, payload);
+        size_t payload_size = opp_device_config_encode(&config, payload);
         if (payload_size == 0) {
             return BLE_ATT_ERR_ATTR_NOT_FOUND;
         }
+        /* Append what only the sensor knows: whether it is on the household
+         * network and at which address. The hub cannot see either over
+         * Bluetooth, and a console it switched on stays "waiting" until told.
+         * A suffix rather than a new payload version, so a hub that does not
+         * know about it still decodes the configuration it asked for. */
+        payload_size += append_station_status(&payload[payload_size]);
         return os_mbuf_append(context->om, payload, payload_size) == 0
                    ? 0
                    : BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -78,6 +115,17 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
         uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE];
         if (ble_hs_mbuf_to_flat(context->om, payload, payload_size, NULL) != 0) {
             return BLE_ATT_ERR_UNLIKELY;
+        }
+        if (opp_device_release_matches(payload, payload_size)) {
+            /* Only the hub that owns this sensor is connected at all, and only
+             * over an encrypted link, so reaching here is sufficient proof. */
+            ESP_LOGW(TAG, "Released by its hub; forgetting configuration and network");
+            web_ui_stop();
+            opp_wifi_credentials_store_clear();
+            opp_device_config_store_clear();
+            opp_device_identity_set_onboarded(false);
+            release_requested = true;
+            return 0;
         }
         opp_report_ack_t ack;
         if (opp_report_ack_decode(payload, payload_size, &ack)) {
@@ -173,6 +221,11 @@ static int gap_event(struct ble_gap_event *event, void *context)
         }
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
+        if (release_requested) {
+            release_requested = false;
+            ble_store_clear();
+            ESP_LOGW(TAG, "Bond cleared; this sensor belongs to nobody again");
+        }
         xSemaphoreGive(advertisement_done);
     } else if (event->type == BLE_GAP_EVENT_REPEAT_PAIRING) {
         /* Re-pairing from the hub that already owns this sensor is allowed, so a

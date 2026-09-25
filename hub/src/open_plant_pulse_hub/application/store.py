@@ -529,6 +529,21 @@ class ReadingStore:
                 "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,)
             )
 
+    def release_is_pending(self, sensor_id: str) -> bool:
+        """Has this sensor been forgotten without being told yet?"""
+        with self._condition:
+            row = self._database.execute(
+                "SELECT release_pending FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone()
+        return bool(row and row[0])
+
+    def mark_released(self, sensor_id: str) -> None:
+        """The sensor has been told, so stop trying."""
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE sensors SET release_pending = 0 WHERE sensor_id = ?", (sensor_id,)
+            )
+
     def hub_wifi_settings(self) -> Dict[str, Any]:
         """Return the household network name, without any password."""
         with self._condition:
@@ -655,13 +670,14 @@ class ReadingStore:
                 SET onboarding_state = ?,
                     enrollment_status = CASE ?
                         WHEN 'onboarding' THEN 'unclaimed' ELSE enrollment_status END,
+                    release_pending = CASE ? WHEN 'onboarding' THEN 1 ELSE 0 END,
                     wifi_enabled = CASE ? WHEN 'onboarding' THEN 0 ELSE wifi_enabled END,
                     wifi_state = CASE ? WHEN 'onboarding' THEN 'off' ELSE wifi_state END,
                     wifi_failure = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_failure END,
                     wifi_address = CASE ? WHEN 'onboarding' THEN NULL ELSE wifi_address END
                 WHERE sensor_id = ?
                 """,
-                (onboarding_state,) * 6 + (sensor_id,),
+                (onboarding_state,) * 7 + (sensor_id,),
             ).rowcount
         if updated == 0:
             raise ValueError("sensor_id has not been observed")

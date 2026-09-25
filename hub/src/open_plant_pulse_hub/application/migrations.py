@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 13
+DATABASE_SCHEMA_VERSION = 14
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -356,6 +356,13 @@ MIGRATIONS: Dict[int, str] = {
                               'north', 'north_east', 'east', 'south_east',
                               'south', 'south_west', 'west', 'north_west'));
         UPDATE rooms SET aspect = superseded_aspect;
+    """,
+    14: """
+        /* Forgetting a sensor has to reach the sensor, and the sensor may be
+           asleep or out of range when the person clicks. The intent is recorded
+           and carried out the next time it is heard from. */
+        ALTER TABLE sensors ADD COLUMN release_pending INTEGER NOT NULL DEFAULT 0
+            CHECK (release_pending IN (0, 1));
     """,
 }
 

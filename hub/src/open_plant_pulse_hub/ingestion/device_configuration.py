@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from open_plant_pulse_hub.application.store import ReadingStore
 
@@ -11,6 +11,14 @@ LOGGER = logging.getLogger(__name__)
 DEVICE_CONFIG_CHARACTERISTIC_UUID = "7f510002-1b15-4c28-9a4a-8d0f4f505000"
 REPORT_ACK_CHARACTERISTIC_UUID = DEVICE_CONFIG_CHARACTERISTIC_UUID
 DEVICE_CONFIG_PROTOCOL_VERSION = 2
+# Written to give a sensor up. The sensor forgets its configuration and network,
+# leaves the household network, stops serving its console, and drops the bond.
+DEVICE_RELEASE_PAYLOAD = bytes((5, 0x5A))
+# Appended by the sensor to a configuration read-back: whether it is on the
+# household network and the address it was given, neither of which the hub can
+# see over Bluetooth.
+STATION_STATUS_MARKER = 0xA1
+STATION_STATUS_SIZE = 6
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 DEVICE_CONFIG_PAYLOAD_MAX_SIZE = 171
 MIN_REPORTING_INTERVAL_SECONDS = 1
@@ -81,6 +89,22 @@ def encode_device_configuration(config: DeviceConfiguration) -> bytes:
     )
 
 
+def split_station_status(payload: bytes) -> tuple[bytes, Optional[tuple[bool, str]]]:
+    """Separate a configuration read-back from the station status appended to it.
+
+    Returned as a suffix rather than a new payload version so that a hub which
+    knows nothing about it still decodes the configuration it asked for.
+    """
+    if len(payload) <= STATION_STATUS_SIZE:
+        return payload, None
+    suffix = payload[-STATION_STATUS_SIZE:]
+    if suffix[0] != STATION_STATUS_MARKER:
+        return payload, None
+    joined = suffix[1] == 1
+    address = ".".join(str(octet) for octet in suffix[2:6]) if joined else ""
+    return payload[:-STATION_STATUS_SIZE], (joined, address)
+
+
 def decode_device_configuration(payload: bytes) -> DeviceConfiguration:
     if not 11 <= len(payload) <= DEVICE_CONFIG_PAYLOAD_MAX_SIZE:
         raise ValueError("device configuration payload length is invalid")
@@ -123,6 +147,29 @@ class DeviceConfigurationSynchronizer:
     def has_pending(self, sensor_id: str) -> bool:
         return self._store.pending_device_configuration(sensor_id) is not None
 
+    def has_release_pending(self, sensor_id: str) -> bool:
+        return self._store.release_is_pending(sensor_id)
+
+    async def release(self, sensor_id: str, observed_identifier: str) -> str:
+        """Tell a sensor it is no longer owned, over the link it is owned by.
+
+        Only the hub that owns the sensor can connect at all, so arriving here is
+        the proof. The sensor forgets its configuration and network, leaves the
+        household network, stops serving its console, and drops the bond.
+        """
+        try:
+            factory = self._client_factory or self._load_client_factory()
+            async with factory(observed_identifier) as client:
+                await client.write_gatt_char(
+                    DEVICE_CONFIG_CHARACTERISTIC_UUID, DEVICE_RELEASE_PAYLOAD, response=True
+                )
+            self._store.mark_released(sensor_id)
+            LOGGER.info("released %s", sensor_id)
+            return "released"
+        except Exception as error:  # noqa: BLE001 - the sensor may simply be gone
+            LOGGER.warning("could not reach %s to release it: %s", sensor_id, str(error)[:240])
+            return "unreachable"
+
     async def synchronize(
         self,
         sensor_id: str,
@@ -154,6 +201,7 @@ class DeviceConfigurationSynchronizer:
                     acknowledgement = bytes(
                         await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID)
                     )
+                    acknowledgement, station = split_station_status(acknowledgement)
                     if acknowledgement != payload:
                         raise ValueError("sensor configuration acknowledgement did not match")
                     acknowledged = decode_device_configuration(acknowledgement)
@@ -162,6 +210,17 @@ class DeviceConfigurationSynchronizer:
                         acknowledged.revision,
                         acknowledged.reporting_interval_seconds,
                     )
+                    if station is not None:
+                        # The sensor is the only one who knows whether it reached
+                        # the network, so a console switched on stops saying it is
+                        # waiting the moment the sensor answers.
+                        joined, address = station
+                        self._store.record_sensor_wifi_result(
+                            sensor_id,
+                            "joined" if joined else "pending",
+                            None,
+                            address or None,
+                        )
             if config is not None and force_report_packet_id is not None:
                 return "applied-and-acknowledged"
             return "applied" if config is not None else "acknowledged"

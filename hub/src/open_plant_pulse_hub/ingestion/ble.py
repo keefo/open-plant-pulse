@@ -190,6 +190,20 @@ class BleakSubscriber:
                         # itself every three seconds, and each attempt asks the
                         # operating system to pair, which made a popup storm out
                         # of a retry that was invisible at a slower cadence.
+                        # A sensor that has been forgotten is told so the next
+                        # time it is heard from, because it may have been asleep
+                        # or out of range when somebody clicked.
+                        pending_release = getattr(
+                            self._configuration_synchronizer, "has_release_pending", None
+                        )
+                        if pending_release is not None and pending_release(sensor_id):
+                            await self._configuration_synchronizer.release(
+                                sensor_id,
+                                advertisement.observed_identifier
+                                if advertisement.connection_target is None
+                                else advertisement.connection_target,
+                            )
+                            continue
                         now = time.monotonic()
                         configuration_due = (
                             self._configuration_synchronizer.has_pending(sensor_id)

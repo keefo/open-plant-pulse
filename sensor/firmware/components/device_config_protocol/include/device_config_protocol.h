@@ -5,6 +5,15 @@
 #include <stdint.h>
 
 #define OPP_DEVICE_CONFIG_PROTOCOL_VERSION 2
+/* Written by the hub that owns this sensor to give it up. The sensor forgets
+ * its configuration, its network and its bond, and returns to announcing itself
+ * for adoption. Distinguished from the other payloads by its version byte, as
+ * they all are, and deliberately tiny so it cannot be confused with one. */
+#define OPP_DEVICE_RELEASE_PROTOCOL_VERSION 5
+#define OPP_DEVICE_RELEASE_PAYLOAD_SIZE 2
+#define OPP_DEVICE_RELEASE_CONFIRM 0x5A
+
+bool opp_device_release_matches(const uint8_t *payload, size_t payload_size);
 #define OPP_DEVICE_CONFIG_TEXT_MAX_BYTES 80
 #define OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE 171
 #define OPP_DEVICE_CONFIG_MIN_INTERVAL_SECONDS 1

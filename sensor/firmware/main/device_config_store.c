@@ -115,3 +115,24 @@ esp_err_t opp_device_config_store_apply(const opp_device_config_t *config)
     xSemaphoreGive(config_mutex);
     return error;
 }
+esp_err_t opp_device_config_store_clear(void)
+{
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(CONFIG_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        return error;
+    }
+    error = nvs_erase_key(handle, CONFIG_KEY);
+    if (error == ESP_ERR_NVS_NOT_FOUND) {
+        error = ESP_OK;
+    }
+    if (error == ESP_OK) {
+        error = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    if (error == ESP_OK) {
+        memset(&current_config, 0, sizeof(current_config));
+        ESP_LOGI(TAG, "Forgot the plant, room and interval");
+    }
+    return error;
+}

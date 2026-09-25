@@ -73,6 +73,23 @@ class OnboardingStateTests(unittest.TestCase):
 
         self.assertEqual(self.store.sensor(self.sensor_id)["reading_count"], before)
 
+    def test_forgetting_leaves_a_release_to_deliver(self):
+        """The sensor may be asleep when somebody clicks, so the intent persists."""
+        enrolled_sensor(self.store, self.sensor_id)
+        self.assertFalse(self.store.release_is_pending(self.sensor_id))
+
+        self.store.set_sensor_onboarding_state(self.sensor_id, "onboarding")
+
+        self.assertTrue(self.store.release_is_pending(self.sensor_id))
+        self.store.mark_released(self.sensor_id)
+        self.assertFalse(self.store.release_is_pending(self.sensor_id))
+
+    def test_claiming_a_sensor_clears_any_stale_release(self):
+        enrolled_sensor(self.store, self.sensor_id)
+        self.store.set_sensor_onboarding_state(self.sensor_id, "onboarding")
+        self.store.set_sensor_onboarding_state(self.sensor_id, "onboarded")
+        self.assertFalse(self.store.release_is_pending(self.sensor_id))
+
     def test_rejects_an_unknown_onboarding_state(self):
         with self.assertRaises(ValueError):
             self.store.set_sensor_onboarding_state(self.sensor_id, "paired")
@@ -359,6 +376,41 @@ class ConfigurationRetryRateTests(unittest.TestCase):
             source,
         )
         self.assertIn("CONFIGURATION_RETRY_SECONDS", source)
+
+
+class ReleaseProtocolTests(unittest.TestCase):
+    def test_the_release_payload_is_distinct_from_every_other(self):
+        from open_plant_pulse_hub.ingestion.device_configuration import (
+            DEVICE_RELEASE_PAYLOAD,
+            decode_device_configuration,
+        )
+
+        self.assertEqual(DEVICE_RELEASE_PAYLOAD, bytes((5, 0x5A)))
+        # Two bytes, and a version nothing else uses, so it cannot be mistaken
+        # for a configuration or an acknowledgement.
+        with self.assertRaises(ValueError):
+            decode_device_configuration(DEVICE_RELEASE_PAYLOAD)
+
+    def test_the_station_status_suffix_is_separated_from_the_configuration(self):
+        from open_plant_pulse_hub.ingestion.device_configuration import (
+            DeviceConfiguration,
+            encode_device_configuration,
+            split_station_status,
+        )
+
+        config = encode_device_configuration(
+            DeviceConfiguration(revision=3, reporting_interval_seconds=1800,
+                                plant_name="fern", room="Study")
+        )
+        suffix = bytes((0xA1, 1, 192, 168, 0, 111))
+        body, station = split_station_status(config + suffix)
+        self.assertEqual(body, config)
+        self.assertEqual(station, (True, "192.168.0.111"))
+
+        # A hub reading a sensor that sends no suffix still gets its config.
+        body, station = split_station_status(config)
+        self.assertEqual(body, config)
+        self.assertIsNone(station)
 
 
 class OnboardingWebTests(unittest.TestCase):

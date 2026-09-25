@@ -735,6 +735,41 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
     }
 }
 
+void web_ui_stop(void)
+{
+    if (reconnect_timer != NULL) {
+        esp_timer_stop(reconnect_timer);
+    }
+    if (address_timer != NULL) {
+        esp_timer_stop(address_timer);
+    }
+#if CONFIG_OPP_WEB_UI_ENABLED
+    if (http_server != NULL) {
+        httpd_stop(http_server);
+        http_server = NULL;
+        ESP_LOGI(TAG, "Stopped serving the console");
+    }
+#endif
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    station_connected = false;
+    consecutive_failures = 0;
+    station_failure = "";
+    strlcpy(station_ip, "disconnected", sizeof(station_ip));
+    opp_clock_sync_set_network_available(false);
+    ESP_LOGI(TAG, "Left the household network");
+}
+
+bool web_ui_station_joined(void)
+{
+    return station_connected;
+}
+
+const char *web_ui_station_address(void)
+{
+    return station_connected ? station_ip : "";
+}
+
 esp_err_t web_ui_start(void)
 {
 #if !CONFIG_OPP_WEB_UI_ENABLED && !CONFIG_OPP_CLOCK_SYNC_ENABLED
@@ -745,6 +780,13 @@ esp_err_t web_ui_start(void)
 #endif
     if (CONFIG_OPP_WIFI_SSID[0] == '\0') {
         ESP_LOGW(TAG, "Wi-Fi disabled: configure OPP_WIFI_SSID in menuconfig");
+        return ESP_OK;
+    }
+    /* A sensor nobody owns does not belong on the household network. Until a hub
+     * claims it, it speaks only Bluetooth, which is also what makes releasing it
+     * meaningful: the console goes away and does not come back at the next boot. */
+    if (!opp_device_identity_is_onboarded()) {
+        ESP_LOGI(TAG, "Not claimed by a hub yet; staying off the network");
         return ESP_OK;
     }
 #if CONFIG_OPP_CLOCK_SYNC_ENABLED && !CONFIG_OPP_WEB_UI_ENABLED

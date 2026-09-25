@@ -140,3 +140,9 @@ bool opp_device_config_equal(const opp_device_config_t *left,
            strcmp(left->plant_name, right->plant_name) == 0 &&
            strcmp(left->room, right->room) == 0;
 }
+bool opp_device_release_matches(const uint8_t *payload, size_t payload_size)
+{
+    return payload != NULL && payload_size == OPP_DEVICE_RELEASE_PAYLOAD_SIZE &&
+           payload[0] == OPP_DEVICE_RELEASE_PROTOCOL_VERSION &&
+           payload[1] == OPP_DEVICE_RELEASE_CONFIRM;
+}
