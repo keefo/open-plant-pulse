@@ -226,6 +226,29 @@ function selectReportingInterval(select, intervalSeconds) {
   select.value = value;
 }
 
+/* Configuration is delivered rather than saved, so the number that matters is
+ * the one the sensor has acknowledged. Flashing it when it moves is how somebody
+ * watching sees that a change actually travelled, rather than inferring it from
+ * a status line that reads the same either way. */
+let renderedConfigRevision = null;
+
+function renderConfigRevision(sensor) {
+  const element = document.getElementById("settings-config-revision");
+  const applied = sensor.device_config_applied_revision;
+  const text =
+    applied > 0 ? `revision ${applied}` : "no configuration delivered yet";
+  if (element.textContent === text) return;
+  element.textContent = text;
+  if (renderedConfigRevision !== null && applied !== renderedConfigRevision) {
+    element.classList.remove("just-changed");
+    // Reading offsetWidth restarts the animation when the value changes twice
+    // in quick succession.
+    void element.offsetWidth;
+    element.classList.add("just-changed");
+  }
+  renderedConfigRevision = applied;
+}
+
 function renderSensorSettings() {
   if (!selectedSensor || !profiles) return;
   const preserveDraft = sensorSettingsDraftSensorId === selectedSensor.sensor_id;
@@ -244,6 +267,7 @@ function renderSensorSettings() {
   if (renderedSettingsKey === renderKey) return;
   renderedSettingsKey = renderKey;
   document.getElementById("settings-sensor-id").textContent = selectedSensor.sensor_id;
+  renderConfigRevision(selectedSensor);
   if (!preserveDraft) {
     document.getElementById("detail-setting-name").value = selectedSensor.display_name || "";
     renderRoomChoices();
@@ -267,6 +291,18 @@ function renderSensorSettings() {
   consoleState.textContent = consoleToggle.disabled
     ? "No household network saved yet. Add one in Settings to switch this on."
     : describeWifi(selectedSensor);
+  // Only offered once the sensor has said it reached the network and given its
+  // address. Before that there is nothing at the other end of the link.
+  const consoleLink = document.getElementById("detail-console-link");
+  const reachable =
+    selectedSensor.wifi_enabled &&
+    selectedSensor.wifi_state === "joined" &&
+    selectedSensor.wifi_address;
+  consoleLink.hidden = !reachable;
+  if (reachable) {
+    consoleLink.href = "http://" + selectedSensor.wifi_address + "/";
+    consoleLink.textContent = "Open this sensor's console at " + selectedSensor.wifi_address;
+  }
   const sensorInterval = selectedSensor.sensor_reporting_interval_seconds;
   document.getElementById("sensor-reporting-interval").value = sensorInterval == null
     ? "Not synced yet"

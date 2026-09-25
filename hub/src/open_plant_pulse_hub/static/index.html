@@ -395,7 +395,10 @@
     <section class="sensor-settings" data-page="detail" aria-labelledby="sensor-settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Configuration</h2></div>
-        <code id="settings-sensor-id"></code>
+        <div class="sensor-identity">
+          <code id="settings-sensor-id"></code>
+          <span id="settings-config-revision" class="config-revision" aria-live="polite"></span>
+        </div>
       </div>
       <form id="sensor-settings-form" class="sensor-settings-form">
         <label>Plant name<input id="detail-setting-name" maxlength="80" required></label>
@@ -429,6 +432,7 @@
           <div>
             <strong>Web console on this sensor</strong>
             <small id="detail-console-state">Readings reach the hub over Bluetooth either way.</small>
+            <a id="detail-console-link" class="console-link" target="_blank" rel="noopener" hidden></a>
           </div>
         </label>
         <p id="device-config-status" class="configuration-delivery" aria-live="polite"></p>

@@ -311,6 +311,18 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .switch-row > div { display: grid; gap: 2px; }
 .switch-row strong { font-weight: 600; }
 .switch-row small { color: var(--muted); }
+.console-link { justify-self: start; color: var(--leaf); font-size: 13px; }
+.sensor-identity { display: grid; justify-items: end; gap: 3px; }
+.config-revision { padding: 3px 9px; border-radius: 12px; color: var(--muted); background: #eef1ec; font-size: 12px; font-weight: 700; }
+.config-revision.just-changed { animation: revision-landed 1600ms ease-out; }
+@keyframes revision-landed {
+  0% { color: white; background: var(--leaf); transform: scale(1.06); }
+  60% { color: white; background: var(--leaf); transform: scale(1); }
+  100% { color: var(--muted); background: #eef1ec; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .config-revision.just-changed { animation: none; color: var(--leaf); background: #e5f1e8; }
+}
 @media (prefers-reduced-motion: reduce) {
   .switch, .switch::after { transition: none; }
 }

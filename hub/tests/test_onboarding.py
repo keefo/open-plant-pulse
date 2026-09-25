@@ -784,6 +784,27 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"firmware not reported yet", script)
         self.assertIn(b"as of", script)
 
+    def test_the_delivered_revision_is_shown_and_flashes_when_it_moves(self):
+        page = self.get("/")
+        script = self.get("/app.js")
+        css = self.get("/app.css")
+        self.assertIn(b'id="settings-config-revision"', page)
+        # The number that matters is the one the sensor acknowledged, not the one
+        # the hub wants.
+        self.assertIn(b"device_config_applied_revision", script)
+        self.assertIn(b"just-changed", script)
+        self.assertIn(b"revision-landed", css)
+        self.assertIn(b"prefers-reduced-motion", css)
+
+    def test_a_reachable_console_is_offered_as_a_link(self):
+        page = self.get("/")
+        script = self.get("/app.js")
+        self.assertIn(b'id="detail-console-link"', page)
+        # Only once the sensor has reported that it joined and given an address;
+        # before that there is nothing at the other end of the link.
+        self.assertIn(b'selectedSensor.wifi_state === "joined"', script)
+        self.assertIn(b"selectedSensor.wifi_address", script)
+
     def test_the_console_switch_is_on_the_sensor_page_too(self):
         page = self.get("/")
         script = self.get("/app.js")
