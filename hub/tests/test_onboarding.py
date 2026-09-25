@@ -503,6 +503,26 @@ class InterfaceTests(unittest.TestCase):
     def test_the_scan_pulse_respects_reduced_motion(self):
         self.assertIn(b"prefers-reduced-motion", self.get("/app.css"))
 
+    def test_the_last_step_keeps_working_after_it_is_reached(self):
+        script = self.get("/onboarding.js")
+        # The console has to join and a reading has to arrive, both slower than
+        # a person reads the page, so the summary re-reads the live sensor.
+        self.assertIn(b"fleetSensors.find", script)
+        self.assertIn(b"Waiting for the first reading", script)
+        self.assertIn(b"Web console reachable", script)
+
+    def test_a_reading_must_arrive_after_setup_to_count_as_the_first(self):
+        script = self.get("/onboarding.js")
+        # An older reading from a previous life of the same sensor must not be
+        # reported as the one this setup just produced.
+        self.assertIn(b"onboardingFinishedAt", script)
+        self.assertIn(b"Date.parse(latest.received_at) >= onboardingFinishedAt", script)
+
+    def test_the_finished_step_no_longer_promises_a_pairing_code(self):
+        page = self.get("/")
+        self.assertNotIn(b"You will need its pairing code again", page)
+        self.assertIn(b"refuses every other hub", page)
+
     def test_forgetting_a_sensor_asks_first(self):
         self.assertIn(b"window.confirm", self.get("/onboarding.js"))
 

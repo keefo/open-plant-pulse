@@ -363,38 +363,128 @@ function renderOnboardingDetails() {
     : "No household network is saved yet, so the console cannot be switched on. Add one in Settings.";
 }
 
+/* The last step keeps working after it is reached.
+ *
+ * Claiming finishes in a moment, but the console has to join a network and the
+ * first reading has to arrive, and both take longer than a person takes to read
+ * the page. Freezing the summary at the instant Finish was pressed made it
+ * assert things that had not happened yet, so it re-reads the sensor on every
+ * poll and each row says where it has actually got to. */
 function renderOnboardingSummary() {
   const summary = document.getElementById("onboarding-summary");
   if (!onboardingResult) return;
+  const live =
+    fleetSensors.find((sensor) => sensor.sensor_id === onboardingResult.sensor_id) ||
+    onboardingResult;
+
   document.getElementById("onboarding-done-title").textContent =
-    (onboardingResult.display_name || onboardingResult.sensor_id) + " is set up";
-  summary.textContent = "";
-  const rows = [["Claimed", "Encrypted Bluetooth link", onboardingResult.sensor_id]];
-  if (onboardingResult.wifi_enabled) {
-    rows.push([
-      onboardingResult.wifi_state === "joined" ? "Joined" : "Pending",
-      describeWifi(onboardingResult),
-      onboardingResult.wifi_address || "",
-    ]);
+    (live.display_name || live.sensor_id) + " is set up";
+
+  const rows = [
+    { state: "done", label: "Claimed", text: "Encrypted Bluetooth link", meta: live.sensor_id },
+  ];
+  if (live.wifi_enabled) {
+    rows.push(consoleRow(live));
   }
-  const latest = onboardingResult.latest;
-  rows.push(
-    latest && latest.reading
-      ? ["Reading", "First reading stored", "just now"]
-      : ["Waiting", "First reading", "not yet received"]
-  );
+  rows.push(readingRow(live));
+
+  const renderKey = JSON.stringify(rows);
+  if (summary.dataset.renderKey === renderKey) return;
+  summary.dataset.renderKey = renderKey;
+  summary.textContent = "";
   rows.forEach((row) => {
     const line = document.createElement("div");
-    line.className = "onboarding-summary-row";
+    line.className = "onboarding-summary-row " + row.state;
     const tag = document.createElement("small");
-    tag.textContent = row[0];
+    tag.textContent = row.label;
     const text = document.createElement("span");
-    text.textContent = row[1];
+    text.textContent = row.text;
     const meta = document.createElement("code");
-    meta.textContent = row[2];
-    line.append(tag, text, meta);
+    meta.textContent = row.meta || "";
+    if (row.state === "waiting") {
+      const spinner = document.createElement("i");
+      spinner.className = "row-spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      line.append(tag, spinner, text, meta);
+    } else {
+      line.append(tag, text, meta);
+    }
     summary.append(line);
   });
+}
+
+function consoleRow(sensor) {
+  if (sensor.wifi_state === "joined") {
+    return {
+      state: "done",
+      label: "Joined",
+      text: "Web console reachable",
+      meta: sensor.wifi_address || "",
+    };
+  }
+  if (sensor.wifi_state === "failed") {
+    return {
+      state: "failed",
+      label: "Failed",
+      text: WIFI_FAILURE_TEXT[sensor.wifi_failure] || "The sensor could not join",
+      meta: "",
+    };
+  }
+  return {
+    state: "waiting",
+    label: "Pending",
+    text: waitedTooLong()
+      ? "Web console on \u00b7 the sensor has not confirmed yet"
+      : "Web console on \u00b7 waiting for the sensor",
+    meta: "",
+  };
+}
+
+function readingRow(sensor) {
+  const latest = sensor.latest;
+  const arrived =
+    latest &&
+    latest.received_at &&
+    onboardingFinishedAt !== null &&
+    Date.parse(latest.received_at) >= onboardingFinishedAt;
+  if (!arrived) {
+    return {
+      state: "waiting",
+      label: "Waiting",
+      text: waitedTooLong()
+        ? "No reading yet \u00b7 check the sensor's probe"
+        : "Waiting for the first reading",
+      meta: "",
+    };
+  }
+  return {
+    state: "done",
+    label: "Reading",
+    text: describeReading(latest.reading),
+    meta: describeLastHeard(sensor.age_seconds),
+  };
+}
+
+function describeReading(reading) {
+  if (!reading) return "First reading stored";
+  const parts = [];
+  if (typeof reading.air_temperature_c === "number") {
+    parts.push(reading.air_temperature_c.toFixed(1) + " \u00b0C");
+  }
+  if (typeof reading.air_humidity_percent === "number") {
+    parts.push(Math.round(reading.air_humidity_percent) + "% humidity");
+  }
+  if (typeof reading.moisture_percent === "number") {
+    parts.push(Math.round(reading.moisture_percent) + "% moisture");
+  }
+  return parts.length ? parts.join(" \u00b7 ") : "First reading stored";
+}
+
+// Long enough that a slow but working setup is not accused of failing.
+const ONBOARDING_PATIENCE_MS = 60000;
+
+function waitedTooLong() {
+  return onboardingFinishedAt !== null && Date.now() - onboardingFinishedAt > ONBOARDING_PATIENCE_MS;
 }
 
 async function finishOnboarding() {
@@ -420,6 +510,9 @@ async function finishOnboarding() {
   }
   const refreshed = await fetch("/api/sensors/" + encodeURIComponent(onboardingSensorId));
   onboardingResult = refreshed.ok ? await refreshed.json() : payload;
+  // Anything that arrives from here on is a result of this setup, which is what
+  // lets the reading row tell a new reading from one stored days ago.
+  onboardingFinishedAt = Date.now();
   return true;
 }
 
@@ -428,6 +521,9 @@ function resetOnboarding() {
   onboardingSensorId = null;
   onboardingDraft = false;
   onboardingResult = null;
+  onboardingFinishedAt = null;
+  const summary = document.getElementById("onboarding-summary");
+  if (summary) summary.dataset.renderKey = "";
   const container = document.getElementById("onboarding-candidates");
   if (container) container.dataset.renderKey = "";
 }

@@ -45,6 +45,7 @@ let sensorSettingsDraftSensorId = null;
 let sensorSettingsSubmitSequence = 0;
 let householdNetwork = null;
 let scannerHealth = null;
+let onboardingFinishedAt = null;
 let householdNetworkDraft = false;
 let renderedSettingsSensorsKey = null;
 let onboardingStep = "find";
