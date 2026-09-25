@@ -244,8 +244,13 @@ static int gap_event(struct ble_gap_event *event, void *context)
     } else if (event->type == BLE_GAP_EVENT_ENC_CHANGE) {
         const bool encrypted = peer_is_bonded(event->enc_change.conn_handle);
         ESP_LOGI(TAG, "Link encryption %s", encrypted ? "established" : "not established");
-        if (encrypted) {
+        if (encrypted && !opp_device_identity_is_onboarded()) {
             opp_device_identity_set_onboarded(true);
+            /* Report at once rather than at the next interval. Somebody is
+             * watching the last step of setup, and half an hour of nothing is
+             * indistinguishable from a failure. */
+            uint32_t request_id;
+            opp_force_report_request(&request_id);
         }
     }
     return 0;

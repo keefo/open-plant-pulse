@@ -186,22 +186,15 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
     opp_sht45_sample_record_t air;
     int64_t sample_age_ms;
     if (!opp_sht45_monitor_get_latest(&air, &sample_age_ms)) {
-        /* A sensor nobody owns yet still has to be findable. Advertising only
-         * when a measurement exists makes a device with an absent or broken
-         * probe invisible, at the one moment it most needs to be reachable, so
-         * an unbonded sensor sends an identity-only beacon instead. Once it
-         * belongs to a hub, silence is the honest signal and the hub's own
-         * staleness handling reports it. */
-        if (!opp_device_identity_is_onboarded()) {
-            ESP_LOGW(TAG, "No SHT45 sample; advertising an onboarding beacon instead");
-            advertise_onboarding_beacon(local_name);
-            if (forced) {
-                opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_NO_SAMPLE);
-            }
-            return;
-        }
-        ESP_LOGW(TAG, "Skipping %s BLE report: no valid SHT45 sample",
-                 forced ? "forced" : "scheduled");
+        /* Say "I am here with nothing to report" rather than saying nothing.
+         *
+         * Silence cannot be told apart from a flat battery or a sensor out of
+         * range, so a hub waiting for a first reading waits for ever and never
+         * learns why. A beacon carries no measurement, which is the truth when
+         * the probe is absent or broken, and lets the hub say so. It is also
+         * what makes an unowned sensor findable in the first place. */
+        ESP_LOGW(TAG, "No SHT45 sample; sending a beacon with no measurement");
+        advertise_onboarding_beacon(local_name);
         if (forced) {
             opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_NO_SAMPLE);
         }

@@ -666,6 +666,14 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"onboardingFinishedAt", script)
         self.assertIn(b"Date.parse(latest.received_at) >= onboardingFinishedAt", script)
 
+    def test_a_sensor_with_no_probe_gets_a_verdict_not_a_spinner(self):
+        script = self.get("/onboarding.js")
+        # Heard, but measuring nothing, is an answer. Waiting longer cannot
+        # change it, so the row must stop spinning and say so.
+        self.assertIn(b"measuring nothing", script)
+        self.assertIn(b"Nothing heard from the sensor", script)
+        self.assertIn(b'label: "No probe"', script)
+
     def test_the_finished_step_no_longer_promises_a_pairing_code(self):
         page = self.get("/")
         self.assertNotIn(b"You will need its pairing code again", page)

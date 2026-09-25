@@ -628,12 +628,31 @@ function readingRow(sensor) {
     onboardingFinishedAt !== null &&
     Date.parse(latest.received_at) >= onboardingFinishedAt;
   if (!arrived) {
+    // Being heard without a reading is an answer, not a delay: the sensor is
+    // alive and saying it has nothing to measure. Waiting longer cannot change
+    // it, so stop spinning and say what is wrong.
+    const heardRecently =
+      typeof sensor.seen_age_seconds === "number" && sensor.seen_age_seconds <= 60;
+    if (waitedTooLong() && heardRecently) {
+      return {
+        state: "failed",
+        label: "No probe",
+        text: "The sensor is reporting but measuring nothing \u00b7 check its probe",
+        meta: describeLastHeard(sensor.seen_age_seconds),
+      };
+    }
+    if (waitedTooLong()) {
+      return {
+        state: "failed",
+        label: "Silent",
+        text: "Nothing heard from the sensor \u00b7 check it is powered and in range",
+        meta: "",
+      };
+    }
     return {
       state: "waiting",
       label: "Waiting",
-      text: waitedTooLong()
-        ? "No reading yet \u00b7 check the sensor's probe"
-        : "Waiting for the first reading",
+      text: "Waiting for the first reading",
       meta: "",
     };
   }
