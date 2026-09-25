@@ -115,6 +115,7 @@ function renderRooms() {
 /* The room is picked, never typed, so two sensors in one room always agree on
  * which room that is. */
 function renderRoomChoices() {
+  fillRoomSelect(document.getElementById("detail-setting-room"));
   const select = document.getElementById("onboarding-room");
   if (select === null) return;
   const chosen = select.value;
@@ -138,6 +139,23 @@ function renderRoomChoices() {
       ? describeRoom(current)
       : ""
     : "No rooms yet. Add one in Settings first.";
+}
+
+function fillRoomSelect(select) {
+  if (select === null) return;
+  const renderKey = JSON.stringify(rooms.map((room) => [room.room_id, room.name]));
+  if (select.dataset.renderKey === renderKey) return;
+  const chosen = select.value;
+  select.dataset.renderKey = renderKey;
+  select.textContent = "";
+  rooms.forEach((room) => {
+    const option = document.createElement("option");
+    option.value = room.room_id;
+    option.textContent = room.name;
+    select.append(option);
+  });
+  if (chosen) select.value = chosen;
+  select.disabled = rooms.length === 0;
 }
 
 function startRoomEdit(roomId) {

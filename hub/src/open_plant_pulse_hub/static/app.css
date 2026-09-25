@@ -247,8 +247,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .sensor-settings .section-heading { margin-bottom: 0; }
 .sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
-.sensor-settings-form label, .replacement-control label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.sensor-settings-form input, .sensor-settings-form select, .replacement-control select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
+.sensor-settings-form label:not(.switch-row), .replacement-control label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.sensor-settings-form input:not(.switch), .sensor-settings-form select, .replacement-control select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .sensor-settings-form input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
 .settings-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
@@ -299,13 +299,15 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 
 /* A switch, built on a real checkbox so it keeps its keyboard behaviour and
    announces itself correctly; only its appearance is replaced. */
-.switch { appearance: none; -webkit-appearance: none; flex-shrink: 0; position: relative; width: 44px; height: 26px; margin: 0; border: 1px solid var(--line); border-radius: 13px; background: #e7ece6; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: white; box-shadow: 0 1px 3px #17211b33; transition: transform 160ms ease; }
-.switch:checked { background: var(--leaf); border-color: var(--leaf); }
-.switch:checked::after { transform: translateX(18px); }
+.switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; display: inline-block; position: relative; width: 52px; min-width: 52px; max-width: 52px; height: 30px; padding: 0; margin: 0; border: 0; border-radius: 999px; background: #cfd8d1; cursor: pointer; transition: background 160ms ease; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 26px; height: 26px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #17211b40; transition: transform 160ms ease; }
+.switch:hover { background: #c3ccc5; }
+.switch:checked { background: var(--leaf); }
+.switch:checked:hover { background: #15613f; }
+.switch:checked::after { transform: translateX(22px); }
 .switch:disabled { cursor: not-allowed; opacity: 0.5; }
 .switch:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
-.switch-row { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
+.switch-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 6px 0; cursor: pointer; }
 .switch-row > div { display: grid; gap: 2px; }
 .switch-row strong { font-weight: 600; }
 .switch-row small { color: var(--muted); }

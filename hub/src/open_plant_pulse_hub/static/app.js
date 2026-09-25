@@ -246,7 +246,9 @@ function renderSensorSettings() {
   document.getElementById("settings-sensor-id").textContent = selectedSensor.sensor_id;
   if (!preserveDraft) {
     document.getElementById("detail-setting-name").value = selectedSensor.display_name || "";
-    document.getElementById("detail-setting-room").value = selectedSensor.room || "";
+    renderRoomChoices();
+    const detailRoom = document.getElementById("detail-setting-room");
+    if (selectedSensor.room_id != null) detailRoom.value = String(selectedSensor.room_id);
     document.getElementById("detail-setting-profile").value = selectedSensor.profile_id || profiles.default_profile;
     selectReportingInterval(
       document.getElementById("detail-setting-reporting-interval"),
@@ -1170,7 +1172,7 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       display_name: document.getElementById("detail-setting-name").value,
-      room: document.getElementById("detail-setting-room").value,
+      room_id: Number(document.getElementById("detail-setting-room").value) || null,
       profile_id: document.getElementById("detail-setting-profile").value,
       expected_interval_seconds: Number(
         document.getElementById("detail-setting-reporting-interval").value
