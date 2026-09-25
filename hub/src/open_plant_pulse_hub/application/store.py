@@ -26,6 +26,19 @@ MIN_REPORTING_INTERVAL_SECONDS = 1
 MAX_REPORTING_INTERVAL_SECONDS = 86400
 ONBOARDING_STATES = ("onboarding", "onboarded")
 WIFI_STATES = ("off", "pending", "joined", "failed")
+# How far an over-the-air update has got. Progress belongs to the sensor, which
+# is the only one doing any of it; the hub records what it is told and, at the
+# end, what it can see for itself — the version the sensor comes back reporting.
+FIRMWARE_UPDATE_STATES = (
+    "idle",
+    "pending",
+    "commanded",
+    "downloading",
+    "installing",
+    "rebooting",
+    "succeeded",
+    "failed",
+)
 # Every reason a sensor can give for failing to join, so the browser never has to
 # show "it did not work" without saying what went wrong.
 # Eight compass points, plus the two answers that are not a direction at all.
@@ -380,7 +393,10 @@ class ReadingStore:
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
                        wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id,
-                       firmware_version, station_checked_at
+                       firmware_version, station_checked_at, firmware_update_digest,
+                       firmware_update_version, firmware_update_state,
+                       firmware_update_id, firmware_update_percent,
+                       firmware_update_error, firmware_update_started_at
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -406,7 +422,10 @@ class ReadingStore:
                        device_config_attempted_at, device_config_error,
                        sensor_reporting_interval_seconds, onboarding_state,
                        wifi_enabled, wifi_state, wifi_failure, wifi_address, room_id,
-                       firmware_version, station_checked_at
+                       firmware_version, station_checked_at, firmware_update_digest,
+                       firmware_update_version, firmware_update_state,
+                       firmware_update_id, firmware_update_percent,
+                       firmware_update_error, firmware_update_started_at
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -552,6 +571,23 @@ class ReadingStore:
                 """,
                 (firmware_version, checked_at, sensor_id),
             )
+            # An update succeeds when the sensor comes back running the image,
+            # not when it says it installed one. A sensor that reports success
+            # and then does not return has not updated anything.
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_update_state = 'succeeded',
+                    firmware_update_percent = 100,
+                    firmware_update_error = NULL
+                WHERE sensor_id = ?
+                  AND firmware_update_version IS NOT NULL
+                  AND firmware_version = firmware_update_version
+                  AND firmware_update_state IN
+                      ('pending', 'commanded', 'downloading', 'installing', 'rebooting')
+                """,
+                (sensor_id,),
+            )
 
     def station_report_age_seconds(self, sensor_id: str) -> Optional[int]:
         """How long since the sensor last told the hub about itself."""
@@ -578,6 +614,176 @@ class ReadingStore:
             self._database.execute(
                 "UPDATE sensors SET release_pending = 0 WHERE sensor_id = ?", (sensor_id,)
             )
+
+    def add_firmware_image(self, image: Dict[str, Any]) -> Dict[str, Any]:
+        """Record an image the hub holds. The same image twice is one row."""
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                INSERT INTO firmware_images (
+                    digest, version, project, idf_version, size_bytes, built_at, uploaded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(digest) DO NOTHING
+                """,
+                (
+                    image["digest"],
+                    image["version"],
+                    image["project"],
+                    image["idf_version"],
+                    int(image["size_bytes"]),
+                    image.get("built_at"),
+                    image["uploaded_at"],
+                ),
+            )
+        stored = self.firmware_image(image["digest"])
+        assert stored is not None
+        return stored
+
+    def firmware_images(self) -> List[Dict[str, Any]]:
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at
+                FROM firmware_images
+                ORDER BY uploaded_at DESC, version DESC
+                """
+            ).fetchall()
+        return [self._firmware_payload(row) for row in rows]
+
+    def firmware_image(self, digest: str) -> Optional[Dict[str, Any]]:
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at
+                FROM firmware_images WHERE digest = ?
+                """,
+                (digest,),
+            ).fetchone()
+        return None if row is None else self._firmware_payload(row)
+
+    def delete_firmware_image(self, digest: str) -> bool:
+        with self._condition, self._database:
+            cursor = self._database.execute(
+                "DELETE FROM firmware_images WHERE digest = ?", (digest,)
+            )
+            # A sensor still waiting for this image would wait for ever, so the
+            # request goes with it rather than becoming a promise nothing keeps.
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_update_state = 'failed',
+                    firmware_update_error = 'the image was removed from the hub'
+                WHERE firmware_update_digest = ?
+                  AND firmware_update_state IN ('pending', 'commanded', 'downloading')
+                """,
+                (digest,),
+            )
+        return cursor.rowcount > 0
+
+    def request_firmware_update(self, sensor_id: str, digest: str) -> Dict[str, Any]:
+        """Ask a sensor to install a stored image, once it can be reached."""
+        image = self.firmware_image(digest)
+        if image is None:
+            raise ValueError("unknown firmware image")
+        sensor = self.sensor(sensor_id)
+        if sensor is None:
+            raise ValueError("unknown sensor")
+        if sensor["enrollment_status"] != "enrolled":
+            raise ValueError("only an enrolled sensor can be updated")
+        started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_update_digest = ?,
+                    firmware_update_version = ?,
+                    firmware_update_state = 'pending',
+                    firmware_update_id = firmware_update_id + 1,
+                    firmware_update_percent = 0,
+                    firmware_update_error = NULL,
+                    firmware_update_started_at = ?
+                WHERE sensor_id = ?
+                """,
+                (digest, image["version"], started_at, sensor_id),
+            )
+        updated = self.sensor(sensor_id)
+        assert updated is not None
+        return updated
+
+    def pending_firmware_update(self, sensor_id: str) -> Optional[Dict[str, Any]]:
+        """The update this sensor has not been told about yet, if any."""
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT s.firmware_update_digest, s.firmware_update_id,
+                       s.firmware_update_version, f.size_bytes
+                FROM sensors s
+                JOIN firmware_images f ON f.digest = s.firmware_update_digest
+                WHERE s.sensor_id = ? AND s.firmware_update_state = 'pending'
+                """,
+                (sensor_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "digest": row[0],
+            "update_id": int(row[1]),
+            "version": row[2],
+            "size_bytes": int(row[3]),
+        }
+
+    def record_firmware_update_state(
+        self,
+        sensor_id: str,
+        state: str,
+        percent: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Note where an update has got to, as the sensor reports it."""
+        if state not in FIRMWARE_UPDATE_STATES:
+            raise ValueError(f"unknown firmware update state: {state}")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_update_state = ?,
+                    firmware_update_percent = COALESCE(?, firmware_update_percent),
+                    firmware_update_error = ?
+                WHERE sensor_id = ?
+                """,
+                (state, percent, error, sensor_id),
+            )
+        sensor = self.sensor(sensor_id)
+        assert sensor is not None
+        return sensor
+
+    def cancel_firmware_update(self, sensor_id: str) -> Dict[str, Any]:
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET firmware_update_state = 'idle',
+                    firmware_update_percent = 0,
+                    firmware_update_error = NULL
+                WHERE sensor_id = ?
+                """,
+                (sensor_id,),
+            )
+        sensor = self.sensor(sensor_id)
+        assert sensor is not None
+        return sensor
+
+    @staticmethod
+    def _firmware_payload(row: Tuple[Any, ...]) -> Dict[str, Any]:
+        return {
+            "digest": row[0],
+            "version": row[1],
+            "project": row[2],
+            "idf_version": row[3],
+            "size_bytes": row[4],
+            "built_at": row[5],
+            "uploaded_at": row[6],
+        }
 
     def hub_wifi_settings(self) -> Dict[str, Any]:
         """Return the household network name, without any password."""
@@ -1627,6 +1833,13 @@ class ReadingStore:
             "room_id": row[27],
             "firmware_version": row[28],
             "station_checked_at": row[29],
+            "firmware_update_digest": row[30],
+            "firmware_update_version": row[31],
+            "firmware_update_state": row[32],
+            "firmware_update_id": row[33],
+            "firmware_update_percent": row[34],
+            "firmware_update_error": row[35],
+            "firmware_update_started_at": row[36],
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:

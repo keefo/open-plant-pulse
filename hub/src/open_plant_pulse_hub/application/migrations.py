@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 15
+DATABASE_SCHEMA_VERSION = 16
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -372,6 +372,30 @@ MIGRATIONS: Dict[int, str] = {
            keep naming the firmware a sensor ran before it was reflashed, so the
            hub re-asks and the interface can say how old the answer is. */
         ALTER TABLE sensors ADD COLUMN station_checked_at TEXT;
+    """,
+    16: """
+        /* Firmware images the hub holds, identified by what they contain.
+           The digest is the identity: the same image uploaded twice is one row
+           and one file, and a sensor is told a digest rather than a file name. */
+        CREATE TABLE firmware_images (
+            digest TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            project TEXT NOT NULL,
+            idf_version TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            built_at TEXT,
+            uploaded_at TEXT NOT NULL
+        );
+        /* What a sensor was last asked to install, and how far it got. The
+           target version is kept beside the digest so a finished update can
+           still be described after its image is deleted. */
+        ALTER TABLE sensors ADD COLUMN firmware_update_digest TEXT;
+        ALTER TABLE sensors ADD COLUMN firmware_update_version TEXT;
+        ALTER TABLE sensors ADD COLUMN firmware_update_state TEXT NOT NULL DEFAULT 'idle';
+        ALTER TABLE sensors ADD COLUMN firmware_update_id INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE sensors ADD COLUMN firmware_update_percent INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE sensors ADD COLUMN firmware_update_error TEXT;
+        ALTER TABLE sensors ADD COLUMN firmware_update_started_at TEXT;
     """,
 }
 

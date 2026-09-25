@@ -14,6 +14,10 @@ STATIC_DIR = Path(__file__).with_name("static")
 # Top-level paths the browser application owns. Each one, and anything beneath it,
 # is served the same shell so a reload or a pasted link lands on the right view.
 APPLICATION_PAGES = ("/sensors", "/settings", "/onboarding")
+# A firmware image for this sensor is about 1.3 MB; the ceiling is a slot's worth
+# with room to spare, so an accidental upload of something enormous is refused
+# before it is read rather than after.
+MAX_FIRMWARE_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
 def create_server(
@@ -21,6 +25,7 @@ def create_server(
     host: str,
     port: int,
     scanner_health: Optional[Callable[[], Dict[str, Optional[str]]]] = None,
+    firmware: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -50,6 +55,11 @@ def create_server(
                 self._send_json(store.hub_wifi_settings())
             elif path == "/api/rooms":
                 self._send_json({"items": store.rooms()})
+            elif path == "/api/firmware":
+                self._send_json(
+                    {"items": firmware.images() if firmware is not None else [],
+                     "storage": firmware is not None}
+                )
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
             elif path.startswith("/api/sensors/"):
@@ -161,6 +171,20 @@ def create_server(
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            if path.startswith("/api/firmware/"):
+                try:
+                    self._require_same_origin()
+                    if firmware is None:
+                        raise ValueError("this hub is not storing firmware")
+                    firmware.delete(unquote(path[len("/api/firmware/") :]))
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if not path.startswith("/api/sensors/"):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -180,7 +204,9 @@ def create_server(
             path = urlparse(self.path).path
             try:
                 self._require_same_origin()
-                payload = self._read_json()
+                # An image is megabytes of binary, so this one route reads its
+                # own body; everything else here is a small JSON object.
+                payload = {} if path == "/api/firmware" else self._read_json()
                 if path.startswith("/api/sensors/") and path.endswith("/archive"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/archive")])
                     archived = payload.get("archived")
@@ -217,6 +243,18 @@ def create_server(
                         str(payload.get("wifi_state", "")),
                         self._optional_str(payload.get("wifi_failure")),
                         self._optional_str(payload.get("wifi_address")),
+                    )
+                elif path == "/api/firmware":
+                    result = self._store_firmware()
+                    if result is None:
+                        return
+                elif path.startswith("/api/sensors/") and path.endswith("/firmware"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/firmware")])
+                    digest = self._optional_str(payload.get("digest"))
+                    result = (
+                        store.request_firmware_update(sensor_id, digest)
+                        if digest
+                        else store.cancel_firmware_update(sensor_id)
                     )
                 elif path.startswith("/api/sensors/") and path.endswith("/onboarding"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/onboarding")])
@@ -272,6 +310,19 @@ def create_server(
                 self._send_json({"error": "sensor not found"}, HTTPStatus.NOT_FOUND)
                 return
             self._send_json({"items": store.raw_sensor_reports(sensor_id)})
+
+        def _store_firmware(self) -> Optional[Dict[str, Any]]:
+            """Take an uploaded image, or say why it is not one.
+
+            The version is read out of the image rather than taken from the
+            request, so what the hub offers is what the sensor will report.
+            """
+            if firmware is None:
+                raise ValueError("this hub is not storing firmware")
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > MAX_FIRMWARE_UPLOAD_BYTES:
+                raise ValueError("firmware upload size is invalid")
+            return firmware.add(self.rfile.read(content_length))
 
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))

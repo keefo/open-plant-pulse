@@ -112,6 +112,8 @@ class BleakSubscriber:
         self._last_attempted_revision: dict[str, int] = {}
         self._last_status_time: dict[str, float] = {}
         self._last_force_report_attempt: dict[str, bytes] = {}
+        self._last_attempted_update: dict[str, int] = {}
+        self._last_update_time: dict[str, float] = {}
 
     def start(self) -> None:
         self._thread.start()
@@ -229,6 +231,25 @@ class BleakSubscriber:
                                 now - self._last_configuration_time.get(sensor_id, -math.inf)
                                 >= CONFIGURATION_RETRY_SECONDS
                             )
+                        # An update the sensor has not been told about goes out
+                        # on the next advertisement, throttled the same way and
+                        # for the same reason: a sensor that is out of range or
+                        # refusing must not be retried every three seconds.
+                        pending_update = getattr(
+                            self._configuration_synchronizer, "pending_firmware_update_id", None
+                        )
+                        update_id = (
+                            pending_update(sensor_id) if pending_update is not None else None
+                        )
+                        if update_id is None:
+                            update_due = False
+                        elif self._last_attempted_update.get(sensor_id) != update_id:
+                            update_due = True
+                        else:
+                            update_due = (
+                                now - self._last_update_time.get(sensor_id, -math.inf)
+                                >= CONFIGURATION_RETRY_SECONDS
+                            )
                         # A console that has been switched on but has not yet
                         # said whether it joined is worth asking again, or the
                         # answer never arrives.
@@ -238,6 +259,7 @@ class BleakSubscriber:
                         status_due = (
                             not configuration_due
                             and not force_report_due
+                            and not update_due
                             and needs_status is not None
                             and needs_status(sensor_id)
                             and now - self._last_status_time.get(sensor_id, -math.inf)
@@ -246,6 +268,16 @@ class BleakSubscriber:
                         if status_due:
                             self._last_status_time[sensor_id] = now
                             await self._configuration_synchronizer.refresh_station(
+                                sensor_id,
+                                advertisement.observed_identifier
+                                if advertisement.connection_target is None
+                                else advertisement.connection_target,
+                            )
+                            continue
+                        if update_due and not configuration_due and not force_report_due:
+                            self._last_attempted_update[sensor_id] = update_id
+                            self._last_update_time[sensor_id] = now
+                            await self._configuration_synchronizer.send_firmware_update(
                                 sensor_id,
                                 advertisement.observed_identifier
                                 if advertisement.connection_target is None
