@@ -20,6 +20,11 @@
 #define MAX_SERVICE_DATA_SIZE 22
 #define MAX_LOCAL_NAME_SIZE 20
 #define SHUTDOWN_GRACE_MS 2000
+/* A person has to read a code off a label and type it. The bounded advertising
+ * window exists to protect battery life, but enforcing it against a connection
+ * that is in the middle of pairing just cuts the pairing off, and the phone or
+ * laptop asks again, forever. Once someone is connected, give them a minute. */
+#define PAIRING_WINDOW_MS 60000
 
 static const ble_uuid128_t device_config_service_uuid = BLE_UUID128_INIT(
     0x00, 0x50, 0x50, 0x4f, 0x0f, 0x8d, 0x4a, 0x9a,
@@ -290,9 +295,19 @@ esp_err_t opp_bthome_broadcast(const char *local_name,
         ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
         ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
         nimble_port_freertos_init(host_task);
-        if (xSemaphoreTake(
-                advertisement_done,
-                pdMS_TO_TICKS(window_ms + SHUTDOWN_GRACE_MS)) != pdTRUE) {
+        bool window_expired = xSemaphoreTake(
+                                  advertisement_done,
+                                  pdMS_TO_TICKS(window_ms + SHUTDOWN_GRACE_MS)) != pdTRUE;
+        if (window_expired && connection_handle != BLE_HS_CONN_HANDLE_NONE) {
+            /* Someone is connected, so the window has done its job: it found a
+             * hub. Wait for them to finish rather than hanging up on them. */
+            ESP_LOGI(TAG, "Connected at the end of the window; allowing %d ms to pair",
+                     PAIRING_WINDOW_MS);
+            ble_gap_adv_stop();
+            window_expired =
+                xSemaphoreTake(advertisement_done, pdMS_TO_TICKS(PAIRING_WINDOW_MS)) != pdTRUE;
+        }
+        if (window_expired) {
             ESP_LOGE(TAG, "Advertising exceeded its %lu ms bounded window",
                      (unsigned long)window_ms);
             ble_gap_adv_stop();
