@@ -776,6 +776,17 @@ class InterfaceTests(unittest.TestCase):
         # Built on a real checkbox, so keyboard use and screen readers still work.
         self.assertIn(b'id="detail-console-toggle" class="switch" type="checkbox"', page)
 
+    def test_the_sensor_list_leaves_the_console_switch_to_the_sensor_page(self):
+        script = self.get("/onboarding.js")
+        app = self.get("/app.js")
+        # The switch lives with the rest of what a sensor can be told to do,
+        # rather than in two places: the list says which sensors the hub has,
+        # and opens or lets go of one.
+        self.assertNotIn(b"switch console-toggle", script)
+        self.assertNotIn(b'closest(".console-toggle")', app)
+        self.assertIn(b'configure.textContent = "Configure"', script)
+        self.assertIn(b'forget.textContent = "Forget sensor"', script)
+
     def test_the_sensor_list_shows_firmware_and_how_old_the_answer_is(self):
         script = self.get("/onboarding.js")
         # Nothing in an advertisement carries the version, so it is whatever the

@@ -1254,10 +1254,6 @@ document.getElementById("wifi-ssid").addEventListener("input", () => {
   householdNetworkDraft = true;
 });
 document.getElementById("forget-household-network").addEventListener("click", forgetHouseholdNetwork);
-document.getElementById("settings-sensor-list").addEventListener("change", (event) => {
-  const toggle = event.target.closest(".console-toggle");
-  if (toggle) setSensorConsole(toggle.dataset.sensorId, toggle.checked);
-});
 document.getElementById("settings-sensor-list").addEventListener("click", (event) => {
   const forget = event.target.closest(".forget-sensor");
   if (forget) forgetSensor(forget.dataset.sensorId);

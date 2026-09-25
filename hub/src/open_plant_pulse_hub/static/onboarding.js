@@ -241,10 +241,6 @@ function renderSettingsSensors() {
       sensor.display_name,
       sensor.room,
       sensor.onboarding_state,
-      sensor.wifi_enabled,
-      sensor.wifi_state,
-      sensor.wifi_failure,
-      sensor.wifi_address,
       sensor.firmware_version,
       sensor.station_checked_at,
     ])
@@ -276,21 +272,6 @@ function renderSettingsSensors() {
     identity.textContent =
       sensor.sensor_id + " · " + (sensor.room || "no room") + " · " + describeFirmware(sensor);
 
-    const consoleRow = document.createElement("label");
-    consoleRow.className = "switch-row";
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = Boolean(sensor.wifi_enabled);
-    toggle.dataset.sensorId = sensor.sensor_id;
-    toggle.className = "switch console-toggle";
-    const consoleText = document.createElement("div");
-    const consoleLabel = document.createElement("strong");
-    consoleLabel.textContent = "Web console";
-    const consoleDetail = document.createElement("small");
-    consoleDetail.textContent = describeWifi(sensor);
-    consoleText.append(consoleLabel, consoleDetail);
-    consoleRow.append(toggle, consoleText);
-
     const forget = document.createElement("button");
     forget.type = "button";
     forget.className = "danger forget-sensor";
@@ -302,14 +283,15 @@ function renderSettingsSensors() {
     configure.href = "/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings";
     configure.textContent = "Configure";
 
-    // The actions sit away from the switch rather than under it, so reaching for
-    // one cannot land on the other, and forgetting a sensor is last.
+    // This list says which sensors the hub has and lets one be opened or let
+    // go. The console switch lives on the sensor's own page, with the rest of
+    // what it can be told to do, rather than in two places.
     const actions = document.createElement("div");
     actions.className = "settings-sensor-actions";
     actions.append(configure, forget);
     const body = document.createElement("div");
     body.className = "settings-sensor-body";
-    body.append(heading, identity, consoleRow);
+    body.append(heading, identity);
     card.append(body, actions);
     list.append(card);
   });

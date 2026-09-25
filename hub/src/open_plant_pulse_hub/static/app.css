@@ -342,17 +342,16 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .settings-tab.active { color: white; background: var(--leaf); }
 .settings-panel-group { display: grid; gap: 14px; }
 .settings-sensor-list { display: grid; gap: 12px; }
-.settings-sensor { padding: 19px; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.settings-sensor { padding: 19px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .settings-sensor-body { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .settings-sensor-heading { display: flex; align-items: center; gap: 10px; }
 .settings-sensor-heading strong { font-size: 20px; }
 .settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
 .settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.settings-sensor-actions { flex-shrink: 0; display: grid; gap: 8px; }
-.settings-sensor-actions .danger { width: auto; }
+.settings-sensor-actions { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+.settings-sensor-actions .danger { padding: 10px 17px; font-weight: 700; }
 @media (max-width: 720px) {
-  .settings-sensor { flex-direction: column; gap: 12px; }
-  .settings-sensor-actions { grid-auto-flow: column; justify-content: start; }
+  .settings-sensor { align-items: stretch; flex-direction: column; gap: 12px; }
 }
 .settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
