@@ -363,6 +363,26 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b'"Not paired"', script)
         self.assertNotIn(b'"Onboarding"', script)
 
+    def test_only_pairable_sensors_are_offered(self):
+        script = self.get("/onboarding.js")
+        # A UDP simulator has no radio, and a sensor last heard days ago is not
+        # in the room; offering either fails at pairing with nothing to show why.
+        self.assertIn(b'sensor.transport === "bthome"', script)
+        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS", script)
+
+    def test_step_one_reports_the_real_scanner_state(self):
+        page = self.get("/")
+        script = self.get("/onboarding.js")
+        self.assertIn(b'id="onboarding-scan-state"', page)
+        self.assertIn(b'class="scan-pulse"', page)
+        # It must be able to say the scanner is NOT running; an indicator that
+        # always animates would hide exactly the fault it exists to surface.
+        self.assertIn(b"is not running", script)
+        self.assertIn(b'status === "scanning"', script)
+
+    def test_the_scan_pulse_respects_reduced_motion(self):
+        self.assertIn(b"prefers-reduced-motion", self.get("/app.css"))
+
     def test_forgetting_a_sensor_asks_first(self):
         self.assertIn(b"window.confirm", self.get("/onboarding.js"))
 

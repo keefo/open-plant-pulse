@@ -186,8 +186,54 @@ async function forgetSensor(sensorId) {
   await refreshFleet();
 }
 
+/* A sensor is only offered if it could actually be paired now.
+ *
+ * That rules out two kinds of entry the inbox legitimately holds. The simulator
+ * reaches the hub over UDP and has no radio, so there is nothing to pair with.
+ * And a sensor last heard from days ago is not in the room: offering it would
+ * fail at the pairing step with no way for anyone to tell why. */
+const ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 300;
+
+/* Show the scanner's real state, not a decorative animation.
+ *
+ * An indicator that always spins would have hidden this morning's actual fault,
+ * where the hub served pages happily while its scanner sat stopped and silent.
+ * When nothing is arriving, the most useful thing this step can say is whether
+ * the hub is even listening. */
+function renderScanState() {
+  const line = document.getElementById("onboarding-scan-state");
+  const text = document.getElementById("onboarding-scan-text");
+  if (line === null || text === null) return;
+  const status = scannerHealth ? scannerHealth.status : "unknown";
+  const scanning = status === "scanning";
+  line.classList.toggle("scanning", scanning);
+  line.classList.toggle("stalled", !scanning);
+  if (scanning) {
+    const count = onboardingCandidates().length;
+    text.textContent = count
+      ? "Scanning · " + count + (count === 1 ? " sensor found" : " sensors found")
+      : "Scanning for sensors nearby…";
+    return;
+  }
+  if (status === "disabled") {
+    text.textContent = "Bluetooth collection is switched off, so no sensor can be found.";
+    return;
+  }
+  text.textContent =
+    "The Bluetooth scanner is not running (" +
+    status +
+    "), so no sensor can be found" +
+    (scannerHealth && scannerHealth.last_error ? ": " + scannerHealth.last_error : ".");
+}
+
 function onboardingCandidates() {
-  return unclaimedSensors.filter((sensor) => sensor.onboarding_state === "onboarding");
+  return unclaimedSensors.filter(
+    (sensor) =>
+      sensor.onboarding_state === "onboarding" &&
+      sensor.transport === "bthome" &&
+      typeof sensor.age_seconds === "number" &&
+      sensor.age_seconds <= ONBOARDING_CANDIDATE_MAX_AGE_SECONDS
+  );
 }
 
 function renderOnboarding() {
@@ -226,7 +272,10 @@ function renderOnboarding() {
     done: "Readings appear on the Plants page as they arrive.",
   }[onboardingStep];
 
-  if (onboardingStep === "find") renderOnboardingCandidates();
+  if (onboardingStep === "find") {
+    renderScanState();
+    renderOnboardingCandidates();
+  }
   if (onboardingStep === "details") renderOnboardingDetails();
   if (onboardingStep === "done") renderOnboardingSummary();
 }
@@ -244,7 +293,8 @@ function renderOnboardingCandidates() {
   if (!candidates.length) {
     const waiting = document.createElement("p");
     waiting.className = "empty-state";
-    waiting.textContent = "Listening for a new sensor…";
+    waiting.textContent =
+      "Listening for a new sensor… Power one on and keep it near this computer.";
     container.append(waiting);
     return;
   }

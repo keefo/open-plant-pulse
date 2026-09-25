@@ -44,6 +44,7 @@ let fleetRequestSequence = 0;
 let sensorSettingsDraftSensorId = null;
 let sensorSettingsSubmitSequence = 0;
 let householdNetwork = null;
+let scannerHealth = null;
 let householdNetworkDraft = false;
 let renderedSettingsSensorsKey = null;
 let onboardingStep = "find";
@@ -310,6 +311,8 @@ function renderRawReports(items) {
 
 function renderHubHealth(health) {
   const scanner = health.scanner || { status: "unknown" };
+  scannerHealth = scanner;
+  renderScanState();
   document.getElementById("hub-health").replaceChildren(
     Object.assign(document.createElement("span"), { textContent: `Hub started ${new Date(health.started_at).toLocaleString()}` }),
     Object.assign(document.createElement("span"), { textContent: `Database: ${health.database.status}` }),

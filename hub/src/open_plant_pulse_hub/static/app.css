@@ -328,6 +328,18 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .onboarding-step p { margin: 0; color: var(--muted); line-height: 1.55; }
 .onboarding-step input, .onboarding-step select { padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
 .onboarding-step label:not(.checkbox) { font-weight: 700; }
+.scan-state { margin: 0; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.scan-state.stalled { color: #9a3f29; }
+.scan-pulse { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; background: var(--leaf); }
+.scan-state.scanning .scan-pulse { animation: scan-pulse 1.6s ease-in-out infinite; }
+.scan-state.stalled .scan-pulse { background: #9a3f29; }
+@keyframes scan-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 #19734c66; }
+  50% { opacity: 0.55; box-shadow: 0 0 0 7px #19734c00; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan-state.scanning .scan-pulse { animation: none; }
+}
 .onboarding-candidates { display: grid; gap: 10px; }
 .onboarding-candidate { padding: 18px 20px; display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: white; text-align: left; cursor: pointer; }
 .onboarding-candidate:hover { border-color: var(--leaf); }
