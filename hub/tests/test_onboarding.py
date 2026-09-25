@@ -171,6 +171,45 @@ class RoomTests(unittest.TestCase):
             )
 
 
+class FreshnessTests(unittest.TestCase):
+    """Being heard and having measurements are different questions."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        self.ingestion = AdvertisementIngestionService(self.store)
+
+    def tearDown(self):
+        self.store.close()
+
+    def beacon(self):
+        from datetime import datetime, timezone
+
+        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
+
+        return Advertisement(
+            received_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            local_name="sensor-aabbccddeeff",
+            observed_identifier="aa:bb:cc:dd:ee:ff",
+            rssi=-40,
+            service_data=bytes([0x40, 0x00, 3]),
+            source_adapter="test",
+        )
+
+    def test_a_sensor_heard_now_is_not_stale_just_because_it_cannot_measure(self):
+        self.ingestion.ingest(self.beacon())
+        sensor = self.store.sensor("sensor-aabbccddeeff")
+        self.assertEqual(sensor["freshness"], "fresh")
+        self.assertEqual(sensor["measurements"], "none")
+
+    def test_the_two_faults_are_worded_differently(self):
+        script = (
+            Path(__file__).parents[1] / "src/open_plant_pulse_hub/static/app.js"
+        ).read_text()
+        self.assertIn('"Not reporting"', script)
+        self.assertIn('"No measurements"', script)
+        self.assertNotIn('return "Stale";', script)
+
+
 class HouseholdNetworkTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()

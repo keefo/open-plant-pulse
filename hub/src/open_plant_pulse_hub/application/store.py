@@ -1602,7 +1602,6 @@ class ReadingStore:
         )
         stale_after_seconds = active_interval_seconds * 2
         sensor["hub_reporting_interval_seconds"] = sensor["expected_interval_seconds"]
-        sensor["freshness"] = "fresh" if age_seconds <= stale_after_seconds else "stale"
         if sensor["device_config_revision"] == 0:
             sensor["device_config_status"] = "not_configured"
         elif sensor["device_config_applied_revision"] == sensor["device_config_revision"]:
@@ -1619,6 +1618,21 @@ class ReadingStore:
         sensor["seen_age_seconds"] = max(
             0, int((datetime.now(timezone.utc) - seen).total_seconds())
         )
+        # Freshness answers "is this sensor reporting?", which is about being
+        # heard. Judging it by the last measurement called a sensor with no probe
+        # stale while it was announcing itself every few seconds, which described
+        # the probe and blamed the radio. What the measurements are doing is a
+        # separate answer, because a silent sensor and a blind one need different
+        # things done about them.
+        sensor["freshness"] = (
+            "fresh" if sensor["seen_age_seconds"] <= stale_after_seconds else "stale"
+        )
+        if latest is None:
+            sensor["measurements"] = "none"
+        elif age_seconds <= stale_after_seconds:
+            sensor["measurements"] = "current"
+        else:
+            sensor["measurements"] = "stale"
         sensor["latest"] = latest
         sensor["reading_count"] = int(
             self._database.execute(

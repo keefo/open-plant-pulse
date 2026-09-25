@@ -118,7 +118,11 @@ function sensorState(sensor) {
   if (conductivityHigh != null && latest?.conductivity_us_cm > conductivityHigh) {
     alerts.push("conductivity high");
   }
-  if (sensor.freshness === "stale") return "Stale";
+  // Not hearing a sensor and hearing one that measures nothing are different
+  // faults with different fixes, so they must not share a word.
+  if (sensor.freshness === "stale") return "Not reporting";
+  if (sensor.measurements === "none") return "No measurements";
+  if (sensor.measurements === "stale") return "Measurements stale";
   return alerts.length ? alerts.join(", ") : "Healthy";
 }
 
