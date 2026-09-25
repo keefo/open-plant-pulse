@@ -7,12 +7,33 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
+#include "web_ui.h"
+#include "wifi_credentials_store.h"
 #include "sdkconfig.h"
 
 #define CONFIG_NAMESPACE "device_cfg"
 #define CONFIG_KEY "current"
 
 static const char *TAG = "device_config";
+
+/* Switching the console off has to reach the radio, not just the record. The
+ * sensor leaves the network, stops serving, and forgets the household password,
+ * because a console nobody asked for should not keep a secret it cannot use. */
+static void apply_console_setting(bool enabled)
+{
+    if (enabled) {
+        esp_err_t error = web_ui_resume();
+        if (error != ESP_OK) {
+            ESP_LOGW(TAG, "Could not start the console: %s", esp_err_to_name(error));
+        }
+        return;
+    }
+    web_ui_stop();
+    esp_err_t error = opp_wifi_credentials_store_clear();
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not forget the network: %s", esp_err_to_name(error));
+    }
+}
 static opp_device_config_t current_config = {
     .reporting_interval_seconds = CONFIG_OPP_SAMPLE_INTERVAL_MINUTES * 60U,
 };
@@ -106,7 +127,11 @@ esp_err_t opp_device_config_store_apply(const opp_device_config_t *config)
         nvs_close(handle);
     }
     if (error == ESP_OK) {
+        const bool console_changed = current_config.console_enabled != config->console_enabled;
         current_config = *config;
+        if (console_changed) {
+            apply_console_setting(config->console_enabled);
+        }
         ESP_LOGI(TAG,
                  "Applied device configuration revision %lu for '%s' in '%s'; interval=%lu s",
                  (unsigned long)config->revision, config->plant_name, config->room,

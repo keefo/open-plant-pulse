@@ -10,7 +10,7 @@ from open_plant_pulse_hub.application.store import ReadingStore
 LOGGER = logging.getLogger(__name__)
 DEVICE_CONFIG_CHARACTERISTIC_UUID = "7f510002-1b15-4c28-9a4a-8d0f4f505000"
 REPORT_ACK_CHARACTERISTIC_UUID = DEVICE_CONFIG_CHARACTERISTIC_UUID
-DEVICE_CONFIG_PROTOCOL_VERSION = 2
+DEVICE_CONFIG_PROTOCOL_VERSION = 6
 # Written to give a sensor up. The sensor forgets its configuration and network,
 # leaves the household network, stops serving its console, and drops the bond.
 DEVICE_RELEASE_PAYLOAD = bytes((5, 0x5A))
@@ -34,6 +34,9 @@ class DeviceConfiguration:
     reporting_interval_seconds: int
     plant_name: str
     room: str
+    # A setting, not a secret, so it travels with the configuration: the hub
+    # must be able to switch a console off without knowing a password.
+    console_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -82,7 +85,7 @@ def encode_device_configuration(config: DeviceConfiguration) -> bytes:
             bytes((DEVICE_CONFIG_PROTOCOL_VERSION,)),
             config.revision.to_bytes(4, "little"),
             config.reporting_interval_seconds.to_bytes(4, "little"),
-            bytes((len(plant_name), len(room))),
+            bytes((len(plant_name), len(room), 1 if config.console_enabled else 0)),
             plant_name,
             room,
         )
@@ -106,21 +109,25 @@ def split_station_status(payload: bytes) -> tuple[bytes, Optional[tuple[bool, st
 
 
 def decode_device_configuration(payload: bytes) -> DeviceConfiguration:
-    if not 11 <= len(payload) <= DEVICE_CONFIG_PAYLOAD_MAX_SIZE:
+    if not 12 <= len(payload) <= DEVICE_CONFIG_PAYLOAD_MAX_SIZE:
         raise ValueError("device configuration payload length is invalid")
     if payload[0] != DEVICE_CONFIG_PROTOCOL_VERSION:
         raise ValueError("device configuration protocol version is unsupported")
     plant_name_length, room_length = payload[9], payload[10]
+    console_enabled = payload[11]
+    if console_enabled > 1:
+        raise ValueError("console flag is invalid")
     if plant_name_length == 0 or plant_name_length > DEVICE_CONFIG_TEXT_MAX_BYTES:
         raise ValueError("plant_name length is invalid")
-    if room_length > DEVICE_CONFIG_TEXT_MAX_BYTES or len(payload) != 11 + plant_name_length + room_length:
+    if room_length > DEVICE_CONFIG_TEXT_MAX_BYTES or len(payload) != 12 + plant_name_length + room_length:
         raise ValueError("room length or payload length is invalid")
     try:
-        plant_name = payload[11 : 11 + plant_name_length].decode("utf-8")
-        room = payload[11 + plant_name_length :].decode("utf-8")
+        plant_name = payload[12 : 12 + plant_name_length].decode("utf-8")
+        room = payload[12 + plant_name_length :].decode("utf-8")
     except UnicodeDecodeError as error:
         raise ValueError("device configuration text must be UTF-8") from error
     config = DeviceConfiguration(
+        console_enabled=console_enabled == 1,
         revision=int.from_bytes(payload[1:5], "little"),
         reporting_interval_seconds=int.from_bytes(payload[5:9], "little"),
         plant_name=plant_name,

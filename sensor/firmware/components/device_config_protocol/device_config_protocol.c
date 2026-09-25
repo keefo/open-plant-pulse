@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#define FIXED_PAYLOAD_SIZE 11
+#define FIXED_PAYLOAD_SIZE 12
 
 static bool is_valid_utf8(const uint8_t *text, size_t length)
 {
@@ -90,6 +90,7 @@ size_t opp_device_config_encode(
     output[8] = (uint8_t)(config->reporting_interval_seconds >> 24U);
     output[9] = (uint8_t)plant_name_length;
     output[10] = (uint8_t)room_length;
+    output[11] = config->console_enabled ? 1U : 0U;
     memcpy(output + FIXED_PAYLOAD_SIZE, config->plant_name, plant_name_length);
     memcpy(output + FIXED_PAYLOAD_SIZE + plant_name_length, config->room, room_length);
     return FIXED_PAYLOAD_SIZE + plant_name_length + room_length;
@@ -114,6 +115,10 @@ bool opp_device_config_decode(const uint8_t *payload, size_t payload_size,
                               ((uint32_t)payload[8] << 24U);
     const size_t plant_name_length = payload[9];
     const size_t room_length = payload[10];
+    const uint8_t console_enabled = payload[11];
+    if (console_enabled > 1U) {
+        return false;
+    }
     if (revision == 0 || interval < OPP_DEVICE_CONFIG_MIN_INTERVAL_SECONDS ||
         interval > OPP_DEVICE_CONFIG_MAX_INTERVAL_SECONDS || plant_name_length == 0 ||
         plant_name_length > OPP_DEVICE_CONFIG_TEXT_MAX_BYTES ||
@@ -129,6 +134,7 @@ bool opp_device_config_decode(const uint8_t *payload, size_t payload_size,
     config->reporting_interval_seconds = interval;
     memcpy(config->plant_name, payload + FIXED_PAYLOAD_SIZE, plant_name_length);
     memcpy(config->room, payload + FIXED_PAYLOAD_SIZE + plant_name_length, room_length);
+    config->console_enabled = console_enabled == 1U;
     return true;
 }
 

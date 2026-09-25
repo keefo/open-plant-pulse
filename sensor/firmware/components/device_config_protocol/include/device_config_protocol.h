@@ -4,7 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define OPP_DEVICE_CONFIG_PROTOCOL_VERSION 2
+/* Version 6 adds the console flag. It travels with the configuration rather
+ * than in the credentials payload because it is a setting, not a secret: the
+ * hub must be able to switch a console off without knowing a password. */
+#define OPP_DEVICE_CONFIG_PROTOCOL_VERSION 6
 /* Written by the hub that owns this sensor to give it up. The sensor forgets
  * its configuration, its network and its bond, and returns to announcing itself
  * for adoption. Distinguished from the other payloads by its version byte, as
@@ -15,7 +18,7 @@
 
 bool opp_device_release_matches(const uint8_t *payload, size_t payload_size);
 #define OPP_DEVICE_CONFIG_TEXT_MAX_BYTES 80
-#define OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE 171
+#define OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE 172
 #define OPP_DEVICE_CONFIG_MIN_INTERVAL_SECONDS 1
 #define OPP_DEVICE_CONFIG_MAX_INTERVAL_SECONDS 86400
 
@@ -24,6 +27,7 @@ typedef struct {
     uint32_t reporting_interval_seconds;
     char plant_name[OPP_DEVICE_CONFIG_TEXT_MAX_BYTES + 1];
     char room[OPP_DEVICE_CONFIG_TEXT_MAX_BYTES + 1];
+    bool console_enabled;
 } opp_device_config_t;
 
 size_t opp_device_config_encode(

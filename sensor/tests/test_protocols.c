@@ -112,9 +112,10 @@ static void test_device_configuration(void)
         .reporting_interval_seconds = 60,
         .plant_name = "Kitchen basil",
         .room = "Kitchen",
+        .console_enabled = true,
     };
     const uint8_t expected[] = {
-        0x02, 0x2a, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00, 0x0d, 0x07,
+        0x06, 0x2a, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00, 0x0d, 0x07, 0x01,
         'K', 'i', 't', 'c', 'h', 'e', 'n', ' ', 'b', 'a', 's', 'i', 'l',
         'K', 'i', 't', 'c', 'h', 'e', 'n',
     };
@@ -125,6 +126,16 @@ static void test_device_configuration(void)
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
     assert(opp_device_config_decode(payload, sizeof(expected), &decoded));
     assert(opp_device_config_equal(&config, &decoded));
+
+    /* A console the hub switched off must survive the round trip as off. */
+    opp_device_config_t without_console = config;
+    without_console.console_enabled = false;
+    uint8_t off_payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE];
+    const size_t off_size = opp_device_config_encode(&without_console, off_payload);
+    assert(off_size == sizeof(expected));
+    assert(off_payload[11] == 0x00);
+    assert(opp_device_config_decode(off_payload, off_size, &decoded));
+    assert(!decoded.console_enabled);
 
     payload[0] = 1;
     assert(!opp_device_config_decode(payload, sizeof(expected), &decoded));

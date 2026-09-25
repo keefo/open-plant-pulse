@@ -18,3 +18,6 @@ const char *web_ui_station_address(void);
  * Releasing a sensor has to reach the radio, not just the records: a sensor
  * nobody owns must not still be answering on the household network. */
 void web_ui_stop(void);
+
+/* Bring the console back after web_ui_stop(), reusing what was already set up. */
+esp_err_t web_ui_resume(void);

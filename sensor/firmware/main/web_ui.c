@@ -735,6 +735,20 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
     }
 }
 
+static bool station_prepared;
+
+esp_err_t web_ui_resume(void)
+{
+    if (!station_prepared) {
+        /* Nothing was ever set up, which is the case on a boot that started
+         * with the console switched off. */
+        return web_ui_start();
+    }
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "Failed to restart Wi-Fi");
+    ESP_LOGI(TAG, "Rejoining the household network");
+    return ESP_OK;
+}
+
 void web_ui_stop(void)
 {
     if (reconnect_timer != NULL) {
@@ -877,6 +891,7 @@ esp_err_t web_ui_start(void)
         TAG, "Failed to start clock Wi-Fi timer");
 #endif
 
+    station_prepared = true;
     uint8_t mac[6];
     ESP_RETURN_ON_ERROR(esp_wifi_get_mac(WIFI_IF_STA, mac), TAG, "Failed to read Wi-Fi MAC");
     snprintf(station_mac, sizeof(station_mac), "%02x:%02x:%02x:%02x:%02x:%02x",

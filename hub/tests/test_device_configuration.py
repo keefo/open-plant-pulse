@@ -17,14 +17,20 @@ from open_plant_pulse_hub.ingestion.device_configuration import (
 
 class DeviceConfigurationCodecTests(unittest.TestCase):
     def test_round_trips_shared_binary_fixture(self) -> None:
-        config = DeviceConfiguration(42, 60, "Kitchen basil", "Kitchen")
+        # Version 6 adds the console flag to the fixed header, so the byte after
+        # the two text lengths is the switch and every offset moved by one.
+        config = DeviceConfiguration(42, 60, "Kitchen basil", "Kitchen", console_enabled=True)
         payload = encode_device_configuration(config)
 
         self.assertEqual(
             payload.hex(),
-            "022a0000003c0000000d074b69746368656e20626173696c4b69746368656e",
+            "062a0000003c0000000d07014b69746368656e20626173696c4b69746368656e",
         )
         self.assertEqual(decode_device_configuration(payload), config)
+
+        switched_off = DeviceConfiguration(42, 60, "Kitchen basil", "Kitchen")
+        self.assertEqual(encode_device_configuration(switched_off)[11], 0)
+        self.assertFalse(decode_device_configuration(encode_device_configuration(switched_off)).console_enabled)
 
         for interval_seconds in (1, 3, 5, 10, 30, 60):
             with self.subTest(interval_seconds=interval_seconds):

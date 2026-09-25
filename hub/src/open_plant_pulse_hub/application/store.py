@@ -610,7 +610,8 @@ class ReadingStore:
                 SET wifi_enabled = ?,
                     wifi_state = ?,
                     wifi_failure = NULL,
-                    wifi_address = NULL
+                    wifi_address = NULL,
+                    device_config_revision = device_config_revision + 1
                 WHERE sensor_id = ?
                 """,
                 (1 if enabled else 0, "pending" if enabled else "off", sensor_id),
@@ -873,7 +874,7 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT device_config_revision, expected_interval_seconds,
-                       display_name, COALESCE(room, '')
+                       display_name, COALESCE(room, ''), wifi_enabled
                 FROM sensors
                 WHERE sensor_id = ? AND enrollment_status = 'enrolled'
                   AND device_config_revision > device_config_applied_revision
@@ -884,6 +885,7 @@ class ReadingStore:
             return None
         return {
             "revision": int(row[0]),
+            "console_enabled": bool(row[4]),
             "reporting_interval_seconds": int(row[1]),
             "plant_name": row[2],
             "room": row[3],
