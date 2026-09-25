@@ -731,6 +731,12 @@ class InterfaceTests(unittest.TestCase):
     def test_the_rooms_tab_is_reachable_by_its_own_address(self):
         self.assertIn(b'"/settings/rooms"', self.get("/app.js"))
 
+    def test_the_console_switch_is_on_the_sensor_page_too(self):
+        page = self.get("/")
+        script = self.get("/app.js")
+        self.assertIn(b'id="detail-console-toggle"', page)
+        self.assertIn(b"detail-console-toggle", script)
+
     def test_the_room_is_picked_rather_than_typed(self):
         page = self.get("/")
         script = self.get("/onboarding.js")

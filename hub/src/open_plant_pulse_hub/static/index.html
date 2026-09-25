@@ -421,19 +421,15 @@
           <input id="sensor-reporting-interval" value="Not synced yet" readonly aria-readonly="true">
           <small>Read-only interval confirmed by the sensor after configuration is written and read back.</small>
         </label>
+        <label class="checkbox">
+          <input id="detail-console-toggle" type="checkbox">
+          Web console on this sensor
+          <small id="detail-console-state">Readings reach the hub over Bluetooth either way.</small>
+        </label>
         <p id="device-config-status" class="configuration-delivery" aria-live="polite"></p>
         <div class="settings-actions"><button type="submit">Save configuration</button></div>
         <output id="sensor-settings-message"></output>
       </form>
-      <div id="replacement-control" class="replacement-control">
-        <label>Replacement sensor<select id="replacement-sensor"></select></label>
-        <label class="checkbox"><input id="merge-history" type="checkbox"> Merge old history into replacement</label>
-        <button id="replace-sensor" type="button">Replace sensor</button>
-      </div>
-      <div class="destructive-actions">
-        <button id="archive-sensor" class="danger" type="button">Archive sensor</button>
-        <button id="delete-sensor" class="danger" type="button">Delete sensor and history</button>
-      </div>
     </section>
   </main>
   <script src="/onboarding.js"></script>

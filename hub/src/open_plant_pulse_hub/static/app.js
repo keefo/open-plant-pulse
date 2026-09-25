@@ -254,6 +254,17 @@ function renderSensorSettings() {
     );
     document.getElementById("sensor-settings-message").textContent = "";
   }
+  // The console switch belongs with the sensor's other settings as well as on
+  // the Settings list, because this is the page somebody is on when they want
+  // to reach the sensor's own diagnostics.
+  const consoleToggle = document.getElementById("detail-console-toggle");
+  const consoleState = document.getElementById("detail-console-state");
+  consoleToggle.checked = Boolean(selectedSensor.wifi_enabled);
+  consoleToggle.dataset.sensorId = selectedSensor.sensor_id;
+  consoleToggle.disabled = !householdNetwork || !householdNetwork.wifi_ssid;
+  consoleState.textContent = consoleToggle.disabled
+    ? "No household network saved yet. Add one in Settings to switch this on."
+    : describeWifi(selectedSensor);
   const sensorInterval = selectedSensor.sensor_reporting_interval_seconds;
   document.getElementById("sensor-reporting-interval").value = sensorInterval == null
     ? "Not synced yet"
@@ -266,13 +277,6 @@ function renderSensorSettings() {
   } else {
     delivery.textContent = "Waiting to send when the sensor next reports.";
   }
-
-  const replacement = document.getElementById("replacement-sensor");
-  replacement.replaceChildren(new Option("Choose an unclaimed sensor", ""));
-  for (const candidate of unclaimedSensors) {
-    replacement.add(new Option(candidate.sensor_id, candidate.sensor_id));
-  }
-  document.getElementById("replacement-control").hidden = replacement.options.length === 1;
 }
 
 function renderRawReports(items) {
@@ -1191,58 +1195,6 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
     ? "Sensor configuration is already applied."
     : "Configuration saved. It will be sent when the sensor next reports.";
 });
-document.getElementById("replace-sensor").addEventListener("click", async () => {
-  if (!selectedSensorId) return;
-  const replacementSensorId = document.getElementById("replacement-sensor").value;
-  if (!replacementSensorId) return;
-  const response = await fetch(`/api/sensors/${encodeURIComponent(selectedSensorId)}/replace`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      replacement_sensor_id: replacementSensorId,
-      merge_history: document.getElementById("merge-history").checked
-    })
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    document.getElementById("sensor-settings-message").textContent = payload.error || "Could not replace sensor";
-    return;
-  }
-  renderedSettingsKey = null;
-  await selectSensor(payload.sensor_id);
-});
-document.getElementById("archive-sensor").addEventListener("click", async () => {
-  if (!selectedSensorId || !selectedSensor) return;
-  const displayName = selectedSensor.display_name || selectedSensor.sensor_id;
-  if (!window.confirm(`Archive ${displayName}? Its history will be retained.`)) return;
-  const response = await fetch(`/api/sensors/${encodeURIComponent(selectedSensorId)}/archive`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ archived: true })
-  });
-  if (!response.ok) {
-    const payload = await response.json();
-    document.getElementById("sensor-settings-message").textContent = payload.error || "Could not archive sensor";
-    return;
-  }
-  history.pushState({}, "", "/");
-  renderedSettingsKey = null;
-  await refresh();
-});
-document.getElementById("delete-sensor").addEventListener("click", async () => {
-  if (!selectedSensorId || !selectedSensor) return;
-  const displayName = selectedSensor.display_name || selectedSensor.sensor_id;
-  if (!window.confirm(`Delete ${displayName} and all of its stored history?`)) return;
-  const response = await fetch(`/api/sensors/${encodeURIComponent(selectedSensorId)}`, { method: "DELETE" });
-  if (!response.ok) {
-    const payload = await response.json();
-    document.getElementById("sensor-settings-message").textContent = payload.error || "Could not delete sensor";
-    return;
-  }
-  history.pushState({}, "", "/");
-  renderedSettingsKey = null;
-  await refresh();
-});
 document.getElementById("settings-link").addEventListener("click", (event) => {
   event.preventDefault();
   navigate("/settings");
@@ -1263,6 +1215,10 @@ document.getElementById("room-list").addEventListener("click", (event) => {
   if (remove) deleteRoom(Number(remove.dataset.roomId));
 });
 document.getElementById("onboarding-room").addEventListener("change", renderRoomChoices);
+document.getElementById("detail-console-toggle").addEventListener("change", (event) => {
+  renderedSettingsKey = null;
+  setSensorConsole(event.target.dataset.sensorId, event.target.checked);
+});
 document.querySelectorAll(".settings-tab").forEach((tab) => {
   tab.addEventListener("click", (event) => {
     event.preventDefault();

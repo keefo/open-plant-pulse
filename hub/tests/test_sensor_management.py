@@ -251,7 +251,13 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn(b"Relative humidity", detail_page)
         self.assertIn(b"Raw sensor reports", detail_page)
         self.assertIn(b"Latest 50 \xc2\xb7 newest first", detail_page)
-        self.assertIn(b"Delete sensor and history", detail_page)
+        # Replace, archive and delete were removed from this page: three
+        # destructive-looking controls with no guidance on which to use, and
+        # releasing a sensor now covers what people actually do. The store still
+        # supports them, so bringing any back is a UI decision.
+        self.assertNotIn(b"Delete sensor and history", detail_page)
+        self.assertNotIn(b"Archive sensor", detail_page)
+        self.assertNotIn(b"Replacement sensor", detail_page)
         with self.assertRaises(HTTPError) as raised:
             self.request("/manage")
         self.assertEqual(raised.exception.code, 404)
