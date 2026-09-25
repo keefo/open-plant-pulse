@@ -592,6 +592,14 @@ async function refreshStatus() {
       : 'Disconnected';
     document.getElementById('device-address').textContent = status.ip || 'No address yet';
     document.getElementById('device-mac').textContent = status.mac || 'MAC unavailable';
+    // Present only while this sensor belongs to nobody. The firmware stops
+    // sending it once a hub is bonded, so the card goes with it.
+    const pairingCard = document.getElementById('pairing-card');
+    const pairingCode = typeof status.pairing_code === 'string' ? status.pairing_code : '';
+    pairingCard.hidden = pairingCode === '';
+    if (pairingCode !== '') {
+      document.getElementById('pairing-code').textContent = pairingCode;
+    }
     const usbPower = status.power_source === 'usb' || status.usb_connected === true;
     document.getElementById('power-source').textContent = usbPower ? 'USB' : 'Battery (inferred)';
     document.getElementById('power-detail').textContent = usbPower

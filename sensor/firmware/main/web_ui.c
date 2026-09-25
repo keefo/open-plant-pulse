@@ -10,6 +10,7 @@
 #include "cJSON.h"
 #include "clock_sync.h"
 #include "device_config_store.h"
+#include <inttypes.h>
 #include "device_identity.h"
 #include "driver/temperature_sensor.h"
 #include "driver/usb_serial_jtag.h"
@@ -340,6 +341,15 @@ static esp_err_t status_handler(httpd_req_t *request)
 
     opp_clock_status_t clock_status;
     opp_clock_get_status(&clock_status);
+    /* Shown only while no hub owns this sensor. The code proves physical
+     * possession, so it must not be readable once someone already has the
+     * device paired; while it is unclaimed, reaching this page already means
+     * being on the household network and the sensor being unowned. */
+    char pairing_code[8] = "";
+    if (!opp_device_identity_is_onboarded()) {
+        snprintf(pairing_code, sizeof(pairing_code), "%06" PRIu32,
+                 opp_device_identity_passkey());
+    }
     char date_time_utc[32] = "null";
     char last_sync_utc[32] = "null";
     char sample_time_utc[32] = "null";
@@ -439,7 +449,8 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
              "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
              "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s,"
-             "\"onboarding_state\":\"%s\",\"wifi_failure\":\"%s\","
+             "\"onboarding_state\":\"%s\",\"pairing_code\":\"%s\","
+             "\"wifi_failure\":\"%s\","
              "\"device_config_revision\":%lu,\"plant_name\":\"%s\",\"room\":\"%s\","
              "\"reporting_interval_seconds\":%lu,"
              "\"force_report_state\":\"%s\",\"force_report_error\":\"%s\","
@@ -461,6 +472,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              air_humidity, air_sample_age, sample_sequence, sample_monotonic,
              sample_unix_time, sample_time_utc,
              opp_device_identity_is_onboarded() ? "onboarded" : "onboarding",
+             pairing_code,
              station_failure,
              (unsigned long)device_config.revision,
              escaped_plant_name, escaped_room,

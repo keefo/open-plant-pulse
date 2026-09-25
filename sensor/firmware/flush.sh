@@ -92,6 +92,14 @@ cd "$project_dir"
 printf '\nFlashing %s\n' "$port"
 idf.py -p "$port" flash
 
+# A self-built sensor has no label, and cannot show its pairing code on its own
+# console before it is paired, because that console needs Wi-Fi that only arrives
+# over the paired link. The bench is the one place the code is reachable.
+printf '\nReading this sensor'"'"'s pairing code\n'
+if ! "$IDF_PYTHON_ENV_PATH/bin/python" "$firmware_dir/read-pairing-code.py" "$port"; then
+    printf 'Read it later with:\n  %s/read-pairing-code.py %s\n' "$firmware_dir" "$port" >&2
+fi
+
 if [ "$monitor" -eq 1 ]; then
     printf '\nOpening monitor on %s (exit with Ctrl-])\n' "$port"
     idf.py -p "$port" monitor
