@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 12
+DATABASE_SCHEMA_VERSION = 13
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -343,6 +343,19 @@ MIGRATIONS: Dict[int, str] = {
         UPDATE sensors
         SET room_id = (SELECT room_id FROM rooms WHERE rooms.name = TRIM(sensors.room))
         WHERE room IS NOT NULL AND TRIM(room) != '';
+    """,
+    13: """
+        /* Widening a CHECK means rebuilding the table, and sensors holds a
+           foreign key into rooms, which the single transaction this runner uses
+           cannot safely drop and recreate. Renaming the column and adding a
+           replacement keeps the constraint honest without touching the key.
+           The old column stays behind, unused, with its own default. */
+        ALTER TABLE rooms RENAME COLUMN aspect TO superseded_aspect;
+        ALTER TABLE rooms ADD COLUMN aspect TEXT NOT NULL DEFAULT 'unknown'
+            CHECK (aspect IN ('unknown', 'none', 'several',
+                              'north', 'north_east', 'east', 'south_east',
+                              'south', 'south_west', 'west', 'north_west'));
+        UPDATE rooms SET aspect = superseded_aspect;
     """,
 }
 

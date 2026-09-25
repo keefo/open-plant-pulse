@@ -28,7 +28,22 @@ ONBOARDING_STATES = ("onboarding", "onboarded")
 WIFI_STATES = ("off", "pending", "joined", "failed")
 # Every reason a sensor can give for failing to join, so the browser never has to
 # show "it did not work" without saying what went wrong.
-ROOM_ASPECTS = ("unknown", "north", "east", "south", "west")
+# Eight compass points, plus the two answers that are not a direction at all.
+# Aspect drives how much light a plant gets, and "north-east" and "north" are
+# not the same morning.
+ROOM_ASPECTS = (
+    "unknown",
+    "none",
+    "several",
+    "north",
+    "north_east",
+    "east",
+    "south_east",
+    "south",
+    "south_west",
+    "west",
+    "north_west",
+)
 ROOM_LIGHT_LEVELS = ("unknown", "low", "medium", "bright")
 ROOM_NOTES_MAX_BYTES = 500
 WIFI_FAILURES = (

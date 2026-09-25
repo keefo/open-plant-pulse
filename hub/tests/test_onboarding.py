@@ -101,6 +101,15 @@ class RoomTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.create_room("Study")
 
+    def test_every_compass_point_and_the_two_non_directions_are_offered(self):
+        for aspect in (
+            "north", "north_east", "east", "south_east",
+            "south", "south_west", "west", "north_west",
+            "several", "none", "unknown",
+        ):
+            room = self.store.create_room("Room " + aspect, aspect)
+            self.assertEqual(room["aspect"], aspect)
+
     def test_an_invalid_aspect_or_light_is_refused(self):
         with self.assertRaises(ValueError):
             self.store.create_room("Study", aspect="up")
@@ -609,6 +618,14 @@ class InterfaceTests(unittest.TestCase):
         page = self.get("/")
         self.assertNotIn(b"You will need its pairing code again", page)
         self.assertIn(b"refuses every other hub", page)
+
+    def test_the_aspect_choices_cover_the_compass(self):
+        page = self.get("/")
+        for value in (b'"north_east"', b'"south_west"', b'"several"', b'"none"'):
+            self.assertIn(value, page)
+        # Half the compass is not enough to judge how much light a plant gets.
+        self.assertIn(b"North-east", page)
+        self.assertIn(b"No windows", page)
 
     def test_the_rooms_tab_is_reachable_by_its_own_address(self):
         self.assertIn(b'"/settings/rooms"', self.get("/app.js"))

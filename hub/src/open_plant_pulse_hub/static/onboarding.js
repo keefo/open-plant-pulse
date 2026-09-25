@@ -23,10 +23,16 @@ function renderSettingsTab() {
 
 const ROOM_ASPECT_TEXT = {
   unknown: "aspect not recorded",
+  none: "no windows",
+  several: "windows on several sides",
   north: "faces north",
+  north_east: "faces north-east",
   east: "faces east",
+  south_east: "faces south-east",
   south: "faces south",
+  south_west: "faces south-west",
   west: "faces west",
+  north_west: "faces north-west",
 };
 const ROOM_LIGHT_TEXT = {
   unknown: "daylight not recorded",
