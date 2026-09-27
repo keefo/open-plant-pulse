@@ -643,3 +643,35 @@
 - The battery monitor on battery alone (discharging and time to empty), a
   charge through the IP2312, a completed charge pinning the level to 100 %,
   and the shunt and capacity values against the actual parts.
+
+## 2026-09-27
+
+### Contract v3 switch-over
+
+- Sensor and hub moved to contract v3 together, with no backward
+  compatibility. The hub database was backed up first
+  (`~/.open-plant-pulse/hub-backup-2026-09-27-schema16.sqlite3`), and the
+  16 to 17 migration was rehearsed on a copy of it: 3,905 readings and 7,945
+  advertisements kept, integrity and foreign keys clean, 0.05 s.
+- 0.16.0 went over the air from the v2 hub, since a v3 hub cannot reach a v2
+  sensor, then the hub restarted on v3 and migrated the live database.
+- **First v3 reports exposed two gaps.** Report 1 reached the hub as its
+  supplementary packet only: the hub held one packet per device while waiting
+  for its name, and the supplementary overwrote the main. A Bleak scan from
+  the Mac showed both packets arriving, which placed the fault in the hub. And
+  forced reports ended unacknowledged: the hub acknowledges once both packets
+  are stored, which lands after the sensor's three-second window.
+- Fixed by holding up to eight packets per unnamed device, and by accepting the
+  acknowledgement for 60 seconds after the window (0.16.1).
+- 0.16.1 was installed over the air through the v3 hub in 25 seconds, and the
+  hub saw the sensor return on the new version. Forced report 3 was
+  acknowledged six seconds after it started. Its reading has soil, air, pH
+  5.6, N/P/K 1/3/7, battery 91 % at 4.112 V, and the sensor's timestamp.
+  Report IDs continued across the update (1, 2, 3).
+
+### Not validated
+
+- Durable delivery (step 2); a report the hub misses is still lost.
+- Home Assistant decoding the battery objects from the supplementary packet.
+- The flash progress bar against a real USB flash.
+
