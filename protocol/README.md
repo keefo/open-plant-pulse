@@ -99,8 +99,22 @@ spends them the same way:
 - **Service-data header**: length `LL`, AD type `0x16` (service data, 16-bit
   UUID) and the BTHome UUID `0xFCD2`, little-endian `D2 FC`.
 - **Payload**: 31 − 3 − 4 = **24 bytes**. It starts with the device-info byte
-  `0x40` (BTHome v2, unencrypted, regular interval); each object is its one-byte
-  ID followed by its little-endian value, in ascending ID order.
+  `0x40`; each object is its one-byte ID followed by its little-endian value,
+  in ascending ID order.
+
+The device-info byte is a bit field defined by BTHome. `0x40` is `0100 0000`:
+
+| Bits | Field | Value in `0x40` | Meaning |
+| --- | --- | --- | --- |
+| 0 | Encryption | `0` | Not encrypted |
+| 1 | Reserved | `0` | |
+| 2 | Trigger-based device | `0` | Advertises at regular intervals, not only on events |
+| 3-4 | Reserved | `00` | |
+| 5-7 | BTHome version | `010` = 2 | BTHome v2 |
+
+Every packet 1, packet 2 and beacon begins with exactly `0x40`; any other value
+is malformed. An encrypted contract would set bit 0 (`0x41`) and change the
+rest of the payload, and needs a new contract.
 
 The local name `sensor-<DEVICE_ID>` is not in this budget: it travels in the
 scan response.
@@ -110,7 +124,7 @@ scan response.
 
 | Bytes | ID | Value | Meaning | Size |
 | --- | --- | --- | --- | --- |
-| `40` | | | Device info | 1 |
+| `40` | | `0100 0000` | Device info: BTHome v2, unencrypted, regular interval | 1 |
 | `02 2e09` | `0x02` | 0x092E = 2350 x 0.01 | Soil temperature **23.50 C** | 3 |
 | `2e 2c` | `0x2E` | 0x2C = 44 | Air humidity **44 %** | 2 |
 | `2f 64` | `0x2F` | 0x64 = 100 | Soil moisture **100 %** | 2 |
@@ -125,7 +139,7 @@ scan response.
 
 | Bytes | ID | Value | Meaning | Size |
 | --- | --- | --- | --- | --- |
-| `40` | | | Device info | 1 |
+| `40` | | `0100 0000` | Device info: BTHome v2, unencrypted, regular interval | 1 |
 | `01 60` | `0x01` | 0x60 = 96 | Battery **96 %** | 2 |
 | `0c 4010` | `0x0C` | 0x1040 = 4160 x 0.001 | Battery **4.160 V** | 3 |
 | `16 00` | `0x16` | 0 | Charging: **no** | 2 |
