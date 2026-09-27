@@ -715,6 +715,14 @@
   1.8 s (max 4.6 s), queue 0-5. The two not shown were stored complete by the
   drain. Production keeps 250 ms.
 
+- Drains that are due now wait until the report just heard is complete, so
+  the connection falls in the quiet part of the cycle instead of across a
+  fresh report (hub only). Over three minutes, 16.5 hours into the sensor's
+  uptime at a 5-second interval: 34 of 36 reports shown as latest, page updates
+  median 5.0 s apart, measurement to hub latest median 3.0 s (max 5.2 s),
+  queue 0-6. The uptime and report IDs (about 11,900 reports) agree: no
+  restarts, and the queue never filled.
+
 ### Not validated
 
 - A full queue on hardware, and a report surviving a power cut while queued.
