@@ -18,6 +18,19 @@ config OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS
     range 100 1000
     default 250
 
+config OPP_DEVELOPMENT_ADVERTISEMENT_INTERVAL_MS
+    int "Advertising interval while always awake, in milliseconds"
+    depends on !OPP_PRODUCTION_LIFECYCLE
+    range 20 1000
+    default 50
+    help
+        The always-awake firmware advertises this often. A scanner catches
+        only some advertisements, and each report alternates two packets, so
+        at 250 ms a Mac often missed a report's main packet before the next
+        report replaced it. At 50 ms each packet goes out about ten times a
+        second. The radio cost is small beside Wi-Fi; the production cycle
+        keeps OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS.
+
 config OPP_WEB_UI_ENABLED
     bool "Enable Wi-Fi web diagnostics"
     default y

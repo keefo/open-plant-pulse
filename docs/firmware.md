@@ -93,6 +93,7 @@ development values, not proof of a sensor's register map:
 | `OPP_SHT45_SCL_GPIO` | 5 | I2C clock pin shared by SHT45 and INA219 (XIAO D3) |
 | `OPP_SHT45_SAMPLE_INTERVAL_SECONDS` | 5 | Awake development sampling interval |
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
+| `OPP_DEVELOPMENT_ADVERTISEMENT_INTERVAL_MS` | 50 | Advertising interval while always awake; production keeps the 250 ms interval |
 | `OPP_REPORT_QUEUE_CAPACITY` | 32 | Reports kept until the hub acknowledges them |
 | `OPP_BATTERY_MONITOR_ENABLED` | enabled | Read pack voltage and current from the INA219 |
 | `OPP_INA219_ADDRESS` | 64 (`0x40`) | INA219 I2C address |

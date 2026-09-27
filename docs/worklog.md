@@ -697,6 +697,24 @@
   at 5 seconds a backlog grew by about three reports a minute; at a minute or
   more the queue stays empty.
 
+### Freshness at a 5-second interval (0.18.0-0.18.1)
+
+- One report per connection could not keep up with a report every 5 seconds,
+  and advertising the oldest report meant the hub page showed data minutes old.
+  The sensor now advertises its newest report, keeps to a fixed schedule with
+  advertising windows ending before a report is due, and the hub drains the
+  queue in pages over one connection on a gap or every 30 seconds; its latest
+  reading is the highest complete report ID.
+- Measured over 90 seconds at 250 ms advertising (0.18.0): exactly one report
+  every 5 s, queue 0-3, measurement to hub latest median 3.4 s; but 7 of 18
+  reports never showed as latest, because the Mac heard only 0-4 advertisements
+  of each packet. A Bleak scan showed the main and supplementary packets
+  received about equally often, so packet size was not the cause.
+- At 50 ms advertising in the always-awake firmware (0.18.1): 17 of 19 reports
+  shown, page updates median 5.0 s apart, measurement to hub latest median
+  1.8 s (max 4.6 s), queue 0-5. The two not shown were stored complete by the
+  drain. Production keeps 250 ms.
+
 ### Not validated
 
 - A full queue on hardware, and a report surviving a power cut while queued.

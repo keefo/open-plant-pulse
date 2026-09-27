@@ -150,7 +150,11 @@ static esp_err_t broadcast_report_for(const char *local_name, const opp_queued_r
         encoded->supplementary_size > 0 ? encoded->supplementary : NULL,
         encoded->supplementary_size,
         window_ms,
+#if CONFIG_OPP_PRODUCTION_LIFECYCLE
         CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+#else
+        CONFIG_OPP_DEVELOPMENT_ADVERTISEMENT_INTERVAL_MS);
+#endif
 }
 
 /* Keep a new report until the hub acknowledges it. Only a sensor that belongs to
