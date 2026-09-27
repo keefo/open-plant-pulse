@@ -723,8 +723,21 @@
   queue 0-6. The uptime and report IDs (about 11,900 reports) agree: no
   restarts, and the queue never filled.
 
+### Battery charging on the hub (0.19.0, schema 19)
+
+- The supplementary packet's battery group gained BTHome's charging object
+  `0x16`; the hub stores it (migration 19, rehearsed on a copy of the live
+  database: 18,299 readings, 14,393 supplements and 22,339 advertisements kept)
+  and draws a bolt over its battery glyph.
+- A switch-over hazard: queued reports of the previous format would be refused
+  by the new hub forever and block the sensor's queue. The queue now records its
+  packet format, and firmware with another format discards old ones at boot.
+- On the device, charging from the XIAO's USB: the hub's latest reading was
+  report 14510, 100 % at 4.208 V, charging true; queue empty afterwards.
+
 ### Not validated
 
+- The charging flag turning false on the hub when the charger is unplugged.
 - A full queue on hardware, and a report surviving a power cut while queued.
 - Home Assistant decoding the battery objects from the supplementary packet.
 - The flash progress bar against a real USB flash.
