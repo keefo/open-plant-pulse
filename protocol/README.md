@@ -79,6 +79,71 @@ The single byte `0x40`, with no objects. A sensor sends it when it has no
 report (for example, no sensor is available yet), so that it can still be found
 and adopted. A beacon is presence only: nothing is stored from it.
 
+### Byte budget and worked example
+
+A legacy BLE advertisement carries at most 31 bytes. Every contract-v3 packet
+spends them the same way:
+
+```text
+┌──────────────────────────── 31 bytes ────────────────────────────┐
+│ 02 01 06 │ LL 16 D2 FC │ BTHome payload: up to 24 bytes           │
+│  Flags   │ service-data│ 40, then objects                         │
+│  3 bytes │ header, 4 B │                                          │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+- **Flags** (length, type `0x01`, value `0x06`) make the sensor discoverable.
+- **Service-data header**: length `LL`, AD type `0x16` (service data, 16-bit
+  UUID) and the BTHome UUID `0xFCD2`, little-endian `D2 FC`.
+- **Payload**: 31 − 3 − 4 = **24 bytes**. It starts with the device-info byte
+  `0x40` (BTHome v2, unencrypted, regular interval); each object is its one-byte
+  ID followed by its little-endian value, in ascending ID order.
+
+The local name `sensor-<DEVICE_ID>` is not in this budget: it travels in the
+scan response.
+
+**Main packet**, fixture `main`, 24 of 24 bytes:
+`40 02 2e09 2e 2c 2f 64 3e d2040000 45 1001 50 0037b86a 56 2900`
+
+| Bytes | Object | Decoded | Size |
+| --- | --- | --- | --- |
+| `40` | Device info | | 1 |
+| `02 2e09` | Soil temperature | 0x092E = 2350 x 0.01 = 23.50 C | 3 |
+| `2e 2c` | Air relative humidity | 44 % | 2 |
+| `2f 64` | Soil moisture | 100 % | 2 |
+| `3e d2040000` | Report ID | 1234 | 5 |
+| `45 1001` | Air temperature | 0x0110 = 272 x 0.1 = 27.2 C | 3 |
+| `50 0037b86a` | Timestamp | 1790457600 = 2026-09-26T21:20:00Z | 5 |
+| `56 2900` | Conductivity | 41 uS/cm | 3 |
+
+**Supplementary packet**, fixture `supplementary`, 23 of 24 bytes:
+`40 01 60 0c 4010 16 00 3e d2040000 54 08 01 44 0100 0200 0700`
+
+| Bytes | Object | Decoded | Size |
+| --- | --- | --- | --- |
+| `40` | Device info | | 1 |
+| `01 60` | Battery | 96 % | 2 |
+| `0c 4010` | Battery voltage | 0x1040 = 4160 x 0.001 = 4.160 V | 3 |
+| `16 00` | Battery charging | not charging | 2 |
+| `3e d2040000` | Report ID | 1234, joining it to its main packet | 5 |
+| `54 08 01 44 0100 0200 0700` | Soil extras | layout 1; pH 68 x 0.1 = 6.8; N 1, P 2, K 7 mg/kg | 10 |
+
+**Room left** with every object present:
+
+| Packet | Used | Free |
+| --- | --- | --- |
+| Main | 24 | 0 |
+| Supplementary | 23 | 1 |
+| Supplementary, report ID only (`40 3e d3040000`) | 6 | 18 |
+| Beacon (`40`) | 1 | 23 |
+
+A new field must fit in the free bytes of the packet it belongs to, including
+its one-byte object ID, or replace something; a third packet would spread each
+report's airtime more thinly. The sensor advertises a report's two packets
+alternately, swapping every 500 ms, every 50 ms while always awake and every
+250 ms in the production cycle. The bulk drain does not use advertisements: its
+pages travel over a connection and may be up to 512 bytes.
+
 ### Identity, report IDs and deduplication
 
 The sensor advertises the complete local name `sensor-<DEVICE_ID>`, where
