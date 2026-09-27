@@ -12,7 +12,7 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION, MIGRATIONS
 from open_plant_pulse_hub.application.store import RECEIVE_DIAGNOSTIC_LIMIT
 from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
+from open_plant_pulse_hub.ingestion.ble import BleakSubscriber, _detection_callback
 from open_plant_pulse_hub.ingestion.bthome import BTHOME_SERVICE_UUID
 from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
 
@@ -659,6 +659,66 @@ class MigrationTests(unittest.TestCase):
                     "VALUES (?, NULL, '2026-09-26T21:21:00Z')",
                     (SENSOR_ID,),
                 )
+
+
+class DetectionCallbackTests(unittest.TestCase):
+    """Packets that arrive before the sensor's name must not be lost."""
+
+    MAIN = bytes.fromhex("40022e092e2c2f643ed2040000451001500037b86a562900")
+    SUPPLEMENTARY = bytes.fromhex("4001600c40103ed204000054080144010002000700")
+
+    def _callback(self):
+        queue = asyncio.Queue()
+        return queue, _detection_callback(queue, {}, {})
+
+    @staticmethod
+    def _data(service_data=None, local_name=None):
+        return SimpleNamespace(
+            service_data={} if service_data is None else {BTHOME_SERVICE_UUID: service_data},
+            local_name=local_name,
+            rssi=-40,
+        )
+
+    @staticmethod
+    def _drain(queue):
+        items = []
+        while not queue.empty():
+            items.append(queue.get_nowait())
+        return items
+
+    def test_both_packets_of_a_report_survive_waiting_for_the_name(self):
+        queue, detected = self._callback()
+        device = SimpleNamespace(address="ABCD")
+        detected(device, self._data(self.MAIN))
+        detected(device, self._data(self.SUPPLEMENTARY))
+        self.assertTrue(queue.empty())
+
+        detected(device, self._data(local_name="sensor-aabbccddeeff"))
+
+        items = self._drain(queue)
+        self.assertEqual([item.service_data for item in items], [self.MAIN, self.SUPPLEMENTARY])
+        self.assertTrue(all(item.local_name == "sensor-aabbccddeeff" for item in items))
+        self.assertTrue(all(item.connection_target is device for item in items))
+
+    def test_a_name_arriving_with_data_releases_what_was_held_first(self):
+        queue, detected = self._callback()
+        device = SimpleNamespace(address="ABCD")
+        detected(device, self._data(self.MAIN))
+        detected(device, self._data(self.SUPPLEMENTARY, local_name="sensor-aabbccddeeff"))
+        self.assertEqual(
+            [item.service_data for item in self._drain(queue)],
+            [self.MAIN, self.SUPPLEMENTARY],
+        )
+
+    def test_known_names_are_applied_without_waiting(self):
+        queue, detected = self._callback()
+        device = SimpleNamespace(address="ABCD")
+        detected(device, self._data(local_name="sensor-aabbccddeeff"))
+        detected(device, self._data(self.MAIN))
+        items = self._drain(queue)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].local_name, "sensor-aabbccddeeff")
+        self.assertIs(items[0].connection_target, device)
 
 
 class BleakSubscriberTests(unittest.TestCase):

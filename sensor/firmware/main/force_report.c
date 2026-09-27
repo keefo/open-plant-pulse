@@ -10,6 +10,28 @@ static portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 static opp_force_report_status_t report_status;
 static uint32_t next_request_id;
 
+/* How long after its advertising window a forced report can still be
+ * acknowledged. A contract-v3 report is two packets, and the hub acknowledges
+ * only once it has stored both, then needs a few seconds to connect and
+ * encrypt: that routinely lands after the three-second window. */
+#define ACK_GRACE_MS 60000
+
+static int64_t monotonic_ms(void);
+
+/* The token is offered while the report is on air and for the grace period
+ * after it. Caller holds status_lock. */
+static bool awaiting_ack(void)
+{
+    if (report_status.request_id == 0 || !report_status.report_id_valid) {
+        return false;
+    }
+    if (report_status.state == OPP_FORCE_REPORT_REPORTING) {
+        return true;
+    }
+    return report_status.state == OPP_FORCE_REPORT_UNACKNOWLEDGED &&
+           monotonic_ms() - report_status.report_completed_at_ms < ACK_GRACE_MS;
+}
+
 static int64_t monotonic_ms(void)
 {
     return esp_timer_get_time() / 1000;
@@ -123,8 +145,7 @@ bool opp_force_report_get_ack(opp_report_ack_t *ack)
     }
     bool available = false;
     portENTER_CRITICAL(&status_lock);
-    if (report_status.request_id != 0 && report_status.report_id_valid &&
-        report_status.state == OPP_FORCE_REPORT_REPORTING) {
+    if (awaiting_ack()) {
         ack->request_id = report_status.request_id;
         ack->report_id = report_status.report_id;
         available = true;
@@ -140,8 +161,7 @@ esp_err_t opp_force_report_acknowledge(const opp_report_ack_t *ack)
     }
     esp_err_t result = ESP_ERR_INVALID_STATE;
     portENTER_CRITICAL(&status_lock);
-    if (report_status.state == OPP_FORCE_REPORT_REPORTING &&
-        report_status.request_id == ack->request_id && report_status.report_id_valid &&
+    if (awaiting_ack() && report_status.request_id == ack->request_id &&
         report_status.report_id == ack->report_id) {
         report_status.state = OPP_FORCE_REPORT_ACKNOWLEDGED;
         report_status.acknowledged_at_ms = monotonic_ms();

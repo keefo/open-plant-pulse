@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from dataclasses import replace
 import math
 import time
 import logging
@@ -47,46 +49,46 @@ def advertisement_from_bleak(device: Any, data: Any) -> Advertisement | None:
     )
 
 
+# How many packets to hold for one device while its name is not yet known.
+# A contract-v3 report is two packets advertised in turn, so a single slot let
+# the second overwrite the first and lost the first report after every restart.
+PENDING_PER_DEVICE = 8
+
+
 def _detection_callback(
     queue: asyncio.Queue[Advertisement],
     local_names: dict[str, str],
-    pending: dict[str, Advertisement],
+    pending: dict[str, deque[Advertisement]],
 ) -> Callable[[Any, Any], None]:
     def detected(device: Any, data: Any) -> None:
         identifier = str(device.address)
         if data.local_name is not None:
             local_names[identifier] = data.local_name
+        local_name = local_names.get(identifier)
         advertisement = advertisement_from_bleak(device, data)
-        if advertisement is None:
-            advertisement = pending.pop(identifier, None)
-            if advertisement is None or data.local_name is None:
-                return
-            advertisement = Advertisement(
-                received_at=advertisement.received_at,
-                local_name=data.local_name,
-                observed_identifier=advertisement.observed_identifier,
-                rssi=advertisement.rssi,
-                service_data=advertisement.service_data,
-                source_adapter=advertisement.source_adapter,
-                connection_target=advertisement.connection_target,
+
+        # The name arrives in the scan response, often after the packet it
+        # belongs to. Hold packets until it is known, then release them all in
+        # the order they arrived, whichever callback brought the name.
+        ready: list[Advertisement] = []
+        if local_name is not None:
+            ready.extend(
+                replace(held, local_name=local_name) for held in pending.pop(identifier, ())
             )
-        elif advertisement.local_name is None:
-            local_name = local_names.get(identifier)
-            if local_name is None:
-                pending[identifier] = advertisement
-                return
-            advertisement = Advertisement(
-                received_at=advertisement.received_at,
-                local_name=local_name,
-                observed_identifier=advertisement.observed_identifier,
-                rssi=advertisement.rssi,
-                service_data=advertisement.service_data,
-                source_adapter=advertisement.source_adapter,
-            )
-        try:
-            queue.put_nowait(advertisement)
-        except asyncio.QueueFull:
-            LOGGER.warning("BLE ingestion queue full; advertisement dropped")
+        if advertisement is not None:
+            if advertisement.local_name is not None:
+                ready.append(advertisement)
+            elif local_name is not None:
+                ready.append(replace(advertisement, local_name=local_name))
+            else:
+                pending.setdefault(identifier, deque(maxlen=PENDING_PER_DEVICE)).append(
+                    advertisement
+                )
+        for item in ready:
+            try:
+                queue.put_nowait(item)
+            except asyncio.QueueFull:
+                LOGGER.warning("BLE ingestion queue full; advertisement dropped")
 
     return detected
 
@@ -145,7 +147,7 @@ class BleakSubscriber:
                 scanner_factory = self._scanner_factory or self._load_scanner_factory()
                 queue: asyncio.Queue[Advertisement] = asyncio.Queue(maxsize=256)
                 local_names: dict[str, str] = {}
-                pending: dict[str, Advertisement] = {}
+                pending: dict[str, deque[Advertisement]] = {}
                 detected = _detection_callback(queue, local_names, pending)
 
                 consumer = asyncio.create_task(self._consume(queue))

@@ -235,11 +235,15 @@ The characteristic value is a canonical nine-byte token:
 | 5 | 4 | Report ID of the forced report, unsigned little-endian |
 
 While a request awaits acknowledgment, firmware returns the token instead of
-device configuration when the characteristic is read. The hub verifies that its
+device configuration when the characteristic is read. It waits for the report's
+advertising window and 60 seconds after it: the hub acknowledges only once it
+has stored both packets of the report, and connecting and encrypting then
+routinely takes longer than the three-second window. The hub verifies that its
 report ID matches the report it stored with the button event, and writes the
 identical token back. Only that exact write marks the request acknowledged;
-subsequent reads return device configuration normally. A missing, mismatched or
-late acknowledgment is not reported as success. Repeated callbacks for one
+subsequent reads return device configuration normally. A missing or mismatched
+acknowledgment, or one after the 60-second grace period, is not reported as
+success. Repeated callbacks for one
 advertisement burst do not trigger repeated hub connections.
 
 This acknowledgment is limited to user-initiated reports in the always-awake
