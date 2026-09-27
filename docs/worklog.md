@@ -682,9 +682,24 @@
   connections pause advertising. At a 30-minute interval each report is
   repeated for the whole interval.
 
+### Durable delivery (0.17.0, schema 18)
+
+- Contract v3 step 2 landed: an owned sensor queues each report in NVS and
+  advertises the oldest until the hub's five-byte acknowledgement names it.
+  Every report now carries a supplementary packet so the hub knows when it is
+  complete; forced reports are ordinary reports. The migration to schema 18 was
+  rehearsed on a copy of the live database (4,024 readings, 118 supplements,
+  8,064 advertisements kept) and the live one backed up first
+  (`hub-backup-2026-09-27-schema17.sqlite3`).
+- On the device at the same 5-second interval that lost about half the reports
+  before: reports 164-171 all reached the hub, each acknowledged within
+  seconds, none missing. Throughput is one acknowledgement per 6-8 seconds, so
+  at 5 seconds a backlog grew by about three reports a minute; at a minute or
+  more the queue stays empty.
+
 ### Not validated
 
-- Durable delivery (step 2); a report the hub misses is still lost.
+- A full queue on hardware, and a report surviving a power cut while queued.
 - Home Assistant decoding the battery objects from the supplementary packet.
 - The flash progress bar against a real USB flash.
 
