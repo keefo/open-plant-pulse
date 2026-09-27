@@ -4,11 +4,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Report acknowledgement version 3: the hub has stored this report, complete.
- * See "Durable delivery and acknowledgement" in protocol/README.md. */
-#define OPP_REPORT_ACK_PROTOCOL_VERSION 3
-#define OPP_REPORT_ACK_PAYLOAD_SIZE 5
+/* The bulk drain's tokens on the device characteristic. See "Durable delivery
+ * and acknowledgement" in protocol/README.md. The queue page itself is built by
+ * the report queue, which holds the reports. */
+#define OPP_DRAIN_REQUEST 0x20U
+#define OPP_DRAIN_ACKNOWLEDGE 0x21U
+#define OPP_DRAIN_END 0x22U
+#define OPP_DRAIN_ACKNOWLEDGE_SIZE 5
 
-size_t opp_report_ack_encode(uint32_t report_id, uint8_t output[OPP_REPORT_ACK_PAYLOAD_SIZE]);
+bool opp_drain_is_request(const uint8_t *payload, size_t payload_size);
+bool opp_drain_is_end(const uint8_t *payload, size_t payload_size);
 
-bool opp_report_ack_decode(const uint8_t *payload, size_t payload_size, uint32_t *report_id);
+/* A cumulative acknowledgement: every queued report up to this ID is stored. */
+size_t opp_drain_acknowledge_encode(uint32_t report_id,
+                                    uint8_t output[OPP_DRAIN_ACKNOWLEDGE_SIZE]);
+bool opp_drain_acknowledge_decode(const uint8_t *payload, size_t payload_size,
+                                  uint32_t *report_id);

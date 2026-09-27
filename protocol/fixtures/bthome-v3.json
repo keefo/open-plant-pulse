@@ -70,8 +70,16 @@
       }
     }
   ],
-  "acknowledgement_v3": {
-    "report_id": 1234,
-    "token_hex": "03d2040000"
+  "bulk_drain": {
+    "drain_request_hex": "20",
+    "page_hex": "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900154001600c40103ed204000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
+    "page_reports": [
+      1234,
+      1235
+    ],
+    "empty_page_hex": "2000",
+    "cumulative_ack_report_id": 1235,
+    "cumulative_ack_hex": "21d3040000",
+    "end_hex": "22"
   }
 }

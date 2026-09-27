@@ -127,33 +127,56 @@ bool opp_delivery_push(const opp_queued_report_t *report)
     return pushed;
 }
 
-bool opp_delivery_head(opp_queued_report_t *report)
+bool opp_delivery_newest(opp_queued_report_t *report)
 {
     if (!opened) {
         return false;
     }
     xSemaphoreTake(lock, portMAX_DELAY);
-    const bool found = opp_report_queue_head(&queue, report);
+    const bool found = opp_report_queue_newest(&queue, report);
     xSemaphoreGive(lock);
     return found;
 }
 
-opp_report_ack_result_t opp_delivery_acknowledge(uint32_t report_id)
+size_t opp_delivery_page(uint8_t output[OPP_REPORT_QUEUE_PAGE_MAX_SIZE])
+{
+    if (!opened) {
+        output[0] = OPP_REPORT_QUEUE_PAGE_MARKER;
+        output[1] = 0;
+        return 2;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    const size_t size = opp_report_queue_page(&queue, output);
+    xSemaphoreGive(lock);
+    return size;
+}
+
+opp_report_ack_result_t opp_delivery_acknowledge_through(uint32_t report_id)
 {
     if (!opened) {
         return OPP_REPORT_ACK_REFUSED;
     }
     xSemaphoreTake(lock, portMAX_DELAY);
-    const opp_report_ack_result_t result = opp_report_queue_ack(&queue, report_id);
+    const opp_report_ack_result_t result = opp_report_queue_ack_through(&queue, report_id);
     const uint32_t depth = opp_report_queue_depth(&queue);
     xSemaphoreGive(lock);
     if (result == OPP_REPORT_ACK_REMOVED) {
-        ESP_LOGI(TAG, "Hub acknowledged report %lu; %lu still waiting",
+        ESP_LOGI(TAG, "Hub stored reports through %lu; %lu still waiting",
                  (unsigned long)report_id, (unsigned long)depth);
     } else if (result == OPP_REPORT_ACK_REFUSED) {
-        ESP_LOGW(TAG, "Refused acknowledgement for report %lu", (unsigned long)report_id);
+        ESP_LOGW(TAG, "Refused acknowledgement through report %lu", (unsigned long)report_id);
     }
     return result;
+}
+
+void opp_delivery_connection_ended(void)
+{
+    if (!opened) {
+        return;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    opp_report_queue_end_session(&queue);
+    xSemaphoreGive(lock);
 }
 
 uint32_t opp_delivery_depth(void)

@@ -199,28 +199,55 @@ write, or read-back failures remain visible as retrying and are attempted on a l
 report. The hub records the sensor's reporting interval only from that matching
 read-back; saving a new hub interval leaves the last confirmed sensor interval
 unchanged until synchronization succeeds. The hub does not connect when no
-configuration is pending and no report acknowledgement is due.
+configuration is pending and no drain is due.
 
 An enrolled sensor keeps each report in a flash queue until the hub acknowledges
-it, and advertises only its oldest unacknowledged report. The hub acknowledges a
-report by writing the five-byte report acknowledgement (version 3: `0x03`, then the
-report ID as unsigned 32-bit little-endian) to the same characteristic over the
-bonded link, without reading anything first; pending configuration, if any, follows
-in the same connection. The subscriber acknowledges:
+it, and advertises its newest queued report the moment it is made. The hub stores
+that report straight from the advertisement, which is what keeps the page fresh at
+the reporting interval. The queue itself is moved by a bulk drain (see
+[durable delivery](../protocol/README.md#durable-delivery-and-acknowledgement)):
+over one bonded connection on the same characteristic the hub writes the drain
+request `20`, reads queue pages (`20`, a count of up to eight, then each report's
+ID and its two advertised packets), stores every report through the same
+ingestion path, duplicate and conflict rules as advertised packets, writes the
+cumulative acknowledgement `21` plus the last stored report ID (unsigned 32-bit
+little-endian), and repeats until a page is empty, then writes the end token
+`22`. Drained packets appear in the raw report log with source adapter
+`bleak-drain`, the drain time as receipt time and the connection's identifier.
 
-- as soon as the packet that completes a report is stored, whichever of main and
-  supplementary arrives second, because the sensor sends nothing newer until then;
-- again when both packets of a report it already holds complete and identical have
-  been heard repeating since the last attempt, which means that acknowledgement was
-  lost. One repeated packet alone does not count: it cannot show that the other one
-  still matches.
+A drain pauses the sensor's advertising for a couple of seconds, so it is the
+background guarantee rather than the freshness path. On hearing a packet of a
+report that is not yet acknowledged, from a sensor it owns, the subscriber drains
+when:
 
-The same report is attempted at most every five seconds; a new report ID is
-attempted at once. A report with any conflict logged under its key is never
-acknowledged, and neither is a report from a sensor that is not enrolled, since
-only an owned sensor has the bond the characteristic requires. `acknowledged_at` on
-the reading records the latest successful acknowledgement. A forced report is an
-ordinary report.
+- it has not drained that sensor since the hub started;
+- a report ID between the last acknowledged report and this one is not held
+  complete, meaning a report was missed over the air; or
+- 30 seconds (`DRAIN_INTERVAL_SECONDS`) have passed since the sensor's last
+  successful drain.
+
+Drains of one sensor never overlap and start at most every two seconds
+(`DRAIN_SPACING_SECONDS`), whatever the outcome of the last. A failed drain
+(connection error, a refused page) is simply tried again by the next
+advertisement. One connection reads at most 16 pages (128 reports), and stops
+early if a page begins with a report it has already acknowledged. Pending
+configuration, a station status poll and a firmware update command share the drain
+connection and go before the drain request; a pending release still goes first,
+on its own connection.
+
+A page is decoded strictly: a wrong marker, more than eight reports, truncated or
+trailing bytes, a record whose ID is not the one inside its packets, packets that
+are not a valid main and supplementary pair, or reports out of order refuse the
+whole page, acknowledging nothing. A report in conflict, or one with any conflict
+logged under its key, is never acknowledged: the acknowledgement stops at the
+report before it and the drain ends, though the rest of that page is still
+stored. Only 30 seconds later is that sensor drained again, since retrying cannot
+change the outcome. `acknowledged_at` on each reading records the latest
+acknowledgement that covered it. A forced report is an ordinary report.
+
+A backfilled report can be stored after a newer one, so a sensor's latest reading
+is its highest complete report ID, not the row stored last; only readings without
+a report ID fall back to storage order.
 
 `bleak` presents platform-specific device identifiers: Linux commonly exposes a
 Bluetooth address while macOS exposes a CoreBluetooth UUID. Neither is guaranteed

@@ -11,7 +11,6 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable
 
 from open_plant_pulse_hub.application.ingestion import AdvertisementIngestionService
-from open_plant_pulse_hub.domain import SensorReading
 
 from .advertisement import Advertisement
 from .bthome import (
@@ -31,11 +30,15 @@ CONFIGURATION_RETRY_SECONDS = 30.0
 # How often to ask a sensor whether its console reached the network. Joining
 # takes a few seconds, so asking more often than this mostly asks too early.
 STATION_STATUS_POLL_SECONDS = 10.0
-# How soon one report may be acknowledged again. A sensor goes on advertising a
-# report until an acknowledgement reaches it, so each advertising window is a
-# chance to retry; this only stops a lost one turning into a connection per
-# packet.
-ACKNOWLEDGEMENT_RETRY_SECONDS = 5.0
+# How often an owned sensor with unacknowledged reports is drained when nothing
+# was missed. The newest report arrives over the air the moment it is made; a
+# drain only backfills and lets the sensor delete, and it pauses the sensor's
+# advertising for a couple of seconds, so draining after every report would
+# cost the page its freshness.
+DRAIN_INTERVAL_SECONDS = 30.0
+# The least time between two drains of one sensor, whatever triggers them, so
+# that a drain that keeps failing cannot become a connection per packet.
+DRAIN_SPACING_SECONDS = 2.0
 
 ScannerFactory = Callable[..., Any]
 
@@ -124,13 +127,14 @@ class BleakSubscriber:
         self._last_configuration_time: dict[str, float] = {}
         self._last_attempted_revision: dict[str, int] = {}
         self._last_status_time: dict[str, float] = {}
-        # Per sensor, the report last acknowledged and when. The sensor
-        # advertises only its oldest unacknowledged report, so one entry each
-        # is enough.
-        self._last_acknowledgement: dict[str, tuple[int, float]] = {}
-        # Per sensor, the report being repeated and which of its packets have
-        # been heard again, identical, since it was last acknowledged.
-        self._repeated_packets: dict[str, tuple[int, set[str]]] = {}
+        # Per sensor: when a drain last ended, whatever became of it; when one
+        # last emptied the queue or went as far as it could; which sensors'
+        # last drain stopped at a report it could not acknowledge; and which
+        # are being drained right now.
+        self._last_drain_attempt: dict[str, float] = {}
+        self._last_drain: dict[str, float] = {}
+        self._drain_stalled: set[str] = set()
+        self._draining: set[str] = set()
         self._last_attempted_update: dict[str, int] = {}
         self._last_update_time: dict[str, float] = {}
 
@@ -200,10 +204,11 @@ class BleakSubscriber:
                     ):
                         sensor_id = sensor_id_from_local_name(advertisement.local_name)
                         now = time.monotonic()
-                        acknowledged_report_id = self._report_to_acknowledge(
-                            sensor_id, advertisement.service_data, status, now
+                        target = (
+                            advertisement.observed_identifier
+                            if advertisement.connection_target is None
+                            else advertisement.connection_target
                         )
-                        acknowledgement_due = acknowledged_report_id is not None
                         # Rate limit by time, not by payload bytes. Payloads
                         # change from one report to the next, so comparing bytes
                         # let nearly every report trigger an attempt. An
@@ -218,12 +223,7 @@ class BleakSubscriber:
                             self._configuration_synchronizer, "has_release_pending", None
                         )
                         if pending_release is not None and pending_release(sensor_id):
-                            await self._configuration_synchronizer.release(
-                                sensor_id,
-                                advertisement.observed_identifier
-                                if advertisement.connection_target is None
-                                else advertisement.connection_target,
-                            )
+                            await self._configuration_synchronizer.release(sensor_id, target)
                             continue
                         # A revision this hub has not tried yet goes out on the
                         # very next advertisement, however recently something
@@ -269,100 +269,125 @@ class BleakSubscriber:
                         needs_status = getattr(
                             self._configuration_synchronizer, "needs_station_status", None
                         )
-                        status_due = (
-                            not configuration_due
-                            and not acknowledgement_due
-                            and not update_due
-                            and needs_status is not None
+                        status_wanted = (
+                            needs_status is not None
                             and needs_status(sensor_id)
                             and now - self._last_status_time.get(sensor_id, -math.inf)
                             >= STATION_STATUS_POLL_SECONDS
                         )
-                        if status_due:
-                            self._last_status_time[sensor_id] = now
-                            await self._configuration_synchronizer.refresh_station(
-                                sensor_id,
-                                advertisement.observed_identifier
-                                if advertisement.connection_target is None
-                                else advertisement.connection_target,
-                            )
-                            continue
-                        if update_due and not configuration_due and not acknowledgement_due:
-                            self._last_attempted_update[sensor_id] = update_id
-                            self._last_update_time[sensor_id] = now
-                            await self._configuration_synchronizer.send_firmware_update(
-                                sensor_id,
-                                advertisement.observed_identifier
-                                if advertisement.connection_target is None
-                                else advertisement.connection_target,
-                            )
-                            continue
-                        if acknowledgement_due or configuration_due:
-                            if acknowledgement_due:
-                                self._last_acknowledgement[sensor_id] = (
-                                    acknowledged_report_id,
-                                    now,
-                                )
-                                self._repeated_packets.pop(sensor_id, None)
+                        if self._drain_is_due(sensor_id, advertisement.service_data, now):
+                            # Whatever else is due rides on the same connection,
+                            # before the drain, so a sensor with a backlog is
+                            # never too busy to be configured or updated.
                             if configuration_due:
                                 self._last_attempted_revision[sensor_id] = revision
                                 self._last_configuration_time[sensor_id] = now
-                            await self._configuration_synchronizer.synchronize(
-                                sensor_id, advertisement.observed_identifier
-                                if advertisement.connection_target is None
-                                else advertisement.connection_target,
-                                acknowledged_report_id,
+                            if update_due:
+                                self._last_attempted_update[sensor_id] = update_id
+                                self._last_update_time[sensor_id] = now
+                            if status_wanted:
+                                self._last_status_time[sensor_id] = now
+                            await self._drain(
+                                sensor_id,
+                                advertisement.observed_identifier,
+                                target,
+                                configure=configuration_due,
+                                station_status=status_wanted,
+                                firmware_update=update_due,
                             )
+                            continue
+                        status_due = status_wanted and not configuration_due and not update_due
+                        if status_due:
+                            self._last_status_time[sensor_id] = now
+                            await self._configuration_synchronizer.refresh_station(
+                                sensor_id, target
+                            )
+                            continue
+                        if update_due and not configuration_due:
+                            self._last_attempted_update[sensor_id] = update_id
+                            self._last_update_time[sensor_id] = now
+                            await self._configuration_synchronizer.send_firmware_update(
+                                sensor_id, target
+                            )
+                            continue
+                        if configuration_due:
+                            self._last_attempted_revision[sensor_id] = revision
+                            self._last_configuration_time[sensor_id] = now
+                            await self._configuration_synchronizer.synchronize(sensor_id, target)
             except Exception:
                 LOGGER.exception("failed to persist BTHome advertisement")
             finally:
                 queue.task_done()
 
-    def _report_to_acknowledge(
-        self, sensor_id: str, service_data: bytes, status: str, now: float
-    ) -> int | None:
-        """Return the report ID to acknowledge on hearing this packet, if any.
+    def _drain_is_due(self, sensor_id: str, service_data: bytes, now: float) -> bool:
+        """Return whether hearing this packet should drain the sensor's queue.
 
-        A report is acknowledged as soon as the packet completing it is stored,
-        because the sensor advertises nothing newer until then. It is
-        acknowledged again only once both of its packets have been heard again,
-        identical, which means the acknowledgement was lost; one packet alone
-        cannot say that the other still matches. Either way the same report is
-        not tried more often than every few seconds.
+        Only a packet of a report not yet acknowledged, from a sensor this hub
+        owns, can start one. The sensor advertises its newest report as soon as
+        it is made, and that is how the page stays fresh; a drain is the
+        guarantee behind it. So one runs when the reports heard since the last
+        acknowledgement have a gap, which means one was missed over the air,
+        when the sensor has not been drained for a while, and on the first
+        report heard after the hub starts. Never two at once, and never more
+        often than every couple of seconds.
         """
-        if is_beacon(service_data):
-            return None
+        synchronizer = self._configuration_synchronizer
+        if getattr(synchronizer, "drain", None) is None or is_beacon(service_data):
+            return False
         try:
-            packet = decode_service_data(service_data, sensor_id)
+            report_id = decode_service_data(service_data, sensor_id).report_id
         except ValueError:
-            return None
-        report_id = packet.report_id
-        if report_id is None:
-            return None
-        if status == "duplicate":
-            heard = self._repeated_packets.get(sensor_id)
-            if heard is None or heard[0] != report_id:
-                heard = (report_id, set())
-                self._repeated_packets[sensor_id] = heard
-            heard[1].add("main" if isinstance(packet, SensorReading) else "supplementary")
-            if heard[1] != {"main", "supplementary"}:
-                return None
-        elif status != "accepted":
-            # A conflict means the sensor holds something other than what is
-            # stored under this ID; whatever was heard repeating proves nothing.
-            self._repeated_packets.pop(sensor_id, None)
-            return None
-        last = self._last_acknowledgement.get(sensor_id)
-        if (
-            last is not None
-            and last[0] == report_id
-            and now - last[1] < ACKNOWLEDGEMENT_RETRY_SECONDS
-        ):
-            return None
-        acknowledgeable = getattr(self._ingestion, "report_is_acknowledgeable", None)
-        if acknowledgeable is None or not acknowledgeable(sensor_id, report_id):
-            return None
-        return report_id
+            return False
+        if report_id is None or sensor_id in self._draining:
+            return False
+        if now - self._last_drain_attempt.get(sensor_id, -math.inf) < DRAIN_SPACING_SECONDS:
+            return False
+        if not synchronizer.owns(sensor_id):
+            return False
+        acknowledged, missing = synchronizer.report_delivery(sensor_id, report_id)
+        if acknowledged:
+            return False
+        last_drain = self._last_drain.get(sensor_id)
+        if last_drain is None or now - last_drain >= DRAIN_INTERVAL_SECONDS:
+            return True
+        # A report the last drain could not acknowledge holds everything after
+        # it on the sensor, so the gap it leaves is not one a drain can close.
+        return missing and sensor_id not in self._drain_stalled
+
+    async def _drain(
+        self,
+        sensor_id: str,
+        observed_identifier: str,
+        target: Any,
+        *,
+        configure: bool,
+        station_status: bool,
+        firmware_update: bool,
+    ) -> None:
+        self._draining.add(sensor_id)
+        try:
+            result = await self._configuration_synchronizer.drain(
+                sensor_id,
+                observed_identifier,
+                target,
+                self._ingestion.ingest,
+                configure=configure,
+                station_status=station_status,
+                firmware_update=firmware_update,
+            )
+        finally:
+            self._draining.discard(sensor_id)
+            self._last_drain_attempt[sensor_id] = time.monotonic()
+        # A failed drain, or one that stopped at its page limit, is retried on
+        # the next advertisement after the spacing. One that emptied the queue
+        # waits for a gap or the interval, and so does one that stopped at a
+        # report it could not acknowledge, which no retry would change.
+        if result.outcome in ("drained", "stopped"):
+            self._last_drain[sensor_id] = self._last_drain_attempt[sensor_id]
+            if result.outcome == "stopped":
+                self._drain_stalled.add(sensor_id)
+            else:
+                self._drain_stalled.discard(sensor_id)
 
     async def _sleep_until_stopped(self, delay: float) -> None:
         elapsed = 0.0

@@ -146,36 +146,82 @@ one-way delivery, in which a report the hub missed was lost.
 
 **Sensor.** Once the sensor belongs to a hub, each new report is written to a
 queue in flash before it is first advertised, and stays there until
-acknowledged. The sensor advertises only the oldest unacknowledged report, both
-packets alternately, in every advertising window, and the repetition is the
-retry: there are no separate timers. A deep-sleeping sensor retries at each
+acknowledged. The sensor advertises its newest report, both packets
+alternately, from the moment it is made, so the hub sees fresh data within a
+second or two whatever is still queued behind it; older ones reach the hub by
+the drain below. Reports are made on a fixed schedule: an advertising window is
+cut short rather than delay a report that is due. A deep-sleeping sensor retries at each
 wake. When the queue is full, the sensor makes no new reports and says so on its
 console, rather than overwriting an unacknowledged one. An unclaimed sensor has
 no hub that could acknowledge anything, so it does not queue: it advertises its
 latest report without keeping it. A release by the hub clears the queue.
 
-**Hub.** The hub acknowledges a report once both of its packets are stored. It
-also acknowledges again when a sensor keeps advertising a report it already
-holds complete and identical, because that means an earlier acknowledgement was
-lost. A report in conflict is never acknowledged.
+**Freshness.** The hub stores the newest report straight from its
+advertisement, as with any packet, and shows the highest complete report ID as
+the latest, so a report backfilled later never displaces a newer one.
 
-**Acknowledgement version 3** is a five-byte token written to the existing
-read/write characteristic `7f510002-1b15-4c28-9a4a-8d0f4f505000` over the
-bonded, encrypted link:
+**Hub: bulk drain.** The drain makes delivery complete and lets the sensor free
+its queue. It is not the freshness path: a connection pauses the sensor's
+advertising for a moment, so the hub does not drain after every report. On
+hearing a report not yet acknowledged from a sensor it owns, the hub drains
+when the report IDs it holds since the last acknowledgement have a gap
+(something was missed over the air), when about 30 seconds have passed since
+its last drain of that sensor, or on the first such report after the hub
+starts. Over one connection it drains the whole queue in pages, oldest first, on the
+existing read/write characteristic `7f510002-1b15-4c28-9a4a-8d0f4f505000`
+(bonded, encrypted):
+
+1. Write the drain request `20`. From then on, until the end token or the
+   disconnect, a read of the characteristic returns a queue page instead of
+   the device configuration.
+2. Read a page. Each page holds up to eight of the oldest queued reports, each
+   exactly the two packets the sensor advertises for it.
+3. Store every report on the page, through the same duplicate and conflict
+   rules as advertised packets.
+4. Write the cumulative acknowledgement for the last report stored. The sensor
+   removes every queued report up to and including it.
+5. Repeat from 2 until a page is empty, then write the end token `22`.
+
+One connection moves any backlog, so draining outpaces reporting whenever the
+hub is up: at a report every five seconds, a drain every 30 seconds finds about
+six, two pages.
+The hub does its configuration and status work on the same connection, before
+the drain request or after the end token.
+
+**Queue page** (read, at most 512 bytes):
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Protocol version, `3` |
+| 0 | 1 | `0x20` |
+| 1 | 1 | Report count, `0` to `8` |
+| 2 | ... | That many records, oldest first |
+
+Each record is the report ID (4 bytes, unsigned little-endian), the main
+packet's length (1 byte) and bytes, then the supplementary packet's length (1
+byte) and bytes: the service data exactly as advertised, after the UUID. A page
+is fixed until the queue changes, so the reads that assemble a long value see
+the same bytes.
+
+**Cumulative acknowledgement** (write, five bytes):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | `0x21` |
 | 1 | 4 | Report ID, unsigned little-endian |
 
-A token naming the oldest queued report removes it. A token naming a report no
-longer queued (an older one, acknowledged before) is accepted and changes
-nothing, so a repeated acknowledgement is harmless. Any other token is refused
-and removes nothing. Removing the report is durable before the next one is
-advertised.
+It removes every queued report with an ID up to and including this one. It is
+refused, removing nothing, when the ID is `0` or beyond the last report the
+sensor has put on a page during this connection: the hub can acknowledge only
+what it has read. Naming a report already removed is accepted and changes
+nothing. Removal is durable before the sensor answers. A report in conflict is
+never acknowledged, so the hub acknowledges only up to the report before it.
+
+**End of drain** (write, one byte): `22`. Reads return the device configuration
+again; disconnecting has the same effect.
 
 A report forced from the sensor's console is an ordinary report: it joins the
-queue, and the console shows it acknowledged when this token names it.
+queue, and the console shows it acknowledged when a cumulative acknowledgement
+covers it.
 
 ## Change policy
 

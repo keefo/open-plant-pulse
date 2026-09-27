@@ -41,7 +41,7 @@ void opp_force_report_started(uint32_t request_id, uint32_t report_id);
 void opp_force_report_failed(uint32_t request_id, opp_force_report_failure_t failure);
 void opp_force_report_finished(uint32_t request_id, esp_err_t broadcast_result, bool queued);
 void opp_force_report_get_status(opp_force_report_status_t *status);
-/* The hub acknowledged this report; if it is the forced one, it is done. */
-void opp_force_report_delivered(uint32_t report_id);
+/* The hub stored every report up to this one; the forced one may be among them. */
+void opp_force_report_delivered_through(uint32_t report_id);
 const char *opp_force_report_state_name(opp_force_report_state_t state);
 const char *opp_force_report_failure_name(opp_force_report_failure_t failure);

@@ -399,34 +399,48 @@ static void test_bthome_v3_rules(void)
     assert(payload[1] == 0x02 && payload[2] == 0xf8 && payload[3] == 0xfd);
 }
 
-static void test_report_acknowledgement(void)
+
+
+
+
+
+
+
+static void test_drain_tokens(void)
 {
-    /* protocol/fixtures/bthome-v3.json "acknowledgement_v3". */
-    const uint8_t expected[] = {0x03, 0xd2, 0x04, 0x00, 0x00};
-    uint8_t payload[OPP_REPORT_ACK_PAYLOAD_SIZE];
+    /* protocol/fixtures/bthome-v3.json "bulk_drain". */
+    const uint8_t expected[] = {0x21, 0xd3, 0x04, 0x00, 0x00};
+    uint8_t payload[OPP_DRAIN_ACKNOWLEDGE_SIZE];
     uint32_t report_id;
 
-    assert(opp_report_ack_encode(1234, payload) == sizeof(expected));
+    assert(opp_drain_acknowledge_encode(1235, payload) == sizeof(expected));
     assert(memcmp(payload, expected, sizeof(expected)) == 0);
-    assert(opp_report_ack_decode(payload, sizeof(payload), &report_id));
-    assert(report_id == 1234);
+    assert(opp_drain_acknowledge_decode(payload, sizeof(payload), &report_id));
+    assert(report_id == 1235);
 
-    /* The forced-report tokens of versions 1 and 2 are gone, as is ID 0. */
-    const uint8_t version_two[] = {0x02, 0x04, 0x03, 0x02, 0x01, 0xd2, 0x04, 0x00, 0x00};
-    assert(!opp_report_ack_decode(version_two, sizeof(version_two), &report_id));
-    const uint8_t zero[] = {0x03, 0x00, 0x00, 0x00, 0x00};
-    assert(!opp_report_ack_decode(zero, sizeof(zero), &report_id));
-    assert(opp_report_ack_encode(0, payload) == 0);
+    const uint8_t request[] = {0x20};
+    const uint8_t end[] = {0x22};
+    assert(opp_drain_is_request(request, 1) && !opp_drain_is_end(request, 1));
+    assert(opp_drain_is_end(end, 1) && !opp_drain_is_request(end, 1));
+    assert(!opp_drain_is_request(payload, sizeof(payload)));
+
+    /* The single-report token of step 2 is gone, as is ID 0. */
+    const uint8_t single[] = {0x03, 0xd3, 0x04, 0x00, 0x00};
+    assert(!opp_drain_acknowledge_decode(single, sizeof(single), &report_id));
+    const uint8_t zero[] = {0x21, 0x00, 0x00, 0x00, 0x00};
+    assert(!opp_drain_acknowledge_decode(zero, sizeof(zero), &report_id));
+    assert(opp_drain_acknowledge_encode(0, payload) == 0);
 }
 
-/* An in-memory stand-in for flash, with a switch to make writes fail. */
+/* An in-memory stand-in for flash, with switches to make writes fail. */
 typedef struct {
     bool have_counters;
     uint32_t head;
     uint32_t tail;
-    opp_queued_report_t slots[4];
+    opp_queued_report_t slots[16];
     bool fail_writes;
     bool fail_counter_writes;
+    unsigned counter_writes;
 } memory_store_t;
 
 static bool memory_load_counters(void *context, uint32_t *head, uint32_t *tail)
@@ -446,6 +460,7 @@ static bool memory_save_counters(void *context, uint32_t head, uint32_t tail)
     store->head = head;
     store->tail = tail;
     store->have_counters = true;
+    store->counter_writes++;
     return true;
 }
 
@@ -477,62 +492,134 @@ static opp_report_queue_storage_t memory_storage(memory_store_t *store)
     };
 }
 
-static opp_queued_report_t queued(uint32_t report_id)
+static opp_queued_report_t queued_hex(uint32_t report_id, const char *main_hex,
+                                      const char *supplementary_hex)
 {
-    opp_queued_report_t entry = {.report_id = report_id, .main_size = 1, .supplementary_size = 1};
-    entry.main[0] = (uint8_t)report_id;
+    opp_queued_report_t entry = {.report_id = report_id};
+    entry.main_size = (uint8_t)from_hex(main_hex, entry.main);
+    entry.supplementary_size = (uint8_t)from_hex(supplementary_hex, entry.supplementary);
     return entry;
 }
 
 static bool push(opp_report_queue_t *queue, uint32_t report_id)
 {
-    const opp_queued_report_t entry = queued(report_id);
+    const opp_queued_report_t entry = queued_hex(report_id, "40", "40");
     return opp_report_queue_push(queue, &entry);
 }
 
-static void test_report_queue(void)
+static uint32_t head_id(opp_report_queue_t *queue)
+{
+    opp_queued_report_t head;
+    return opp_report_queue_head(queue, &head) ? head.report_id : 0;
+}
+
+static void test_report_queue_page_fixture(void)
 {
     memory_store_t store = {0};
     const opp_report_queue_storage_t storage = memory_storage(&store);
     opp_report_queue_t queue;
-    opp_queued_report_t head;
+    uint8_t page[OPP_REPORT_QUEUE_PAGE_MAX_SIZE];
+    uint8_t expected[128];
+    assert(OPP_REPORT_QUEUE_PAGE_MAX_SIZE <= 512);
+
+    assert(opp_report_queue_open(&queue, &storage, 16));
+    const size_t empty_size = from_hex("2000", expected);
+    assert(opp_report_queue_page(&queue, page) == empty_size);
+    assert(memcmp(page, expected, empty_size) == 0);
+
+    const opp_queued_report_t first = queued_hex(
+        1234, "40022e092e2c2f643ed2040000451001500037b86a562900",
+        "4001600c40103ed204000054080144010002000700");
+    const opp_queued_report_t second = queued_hex(1235, "402e2c3ed3040000451001",
+                                                  "403ed3040000");
+    assert(opp_report_queue_push(&queue, &first));
+    assert(opp_report_queue_push(&queue, &second));
+    const size_t size = from_hex(
+        "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900154001600c40103ed2"
+        "04000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
+        expected);
+    assert(opp_report_queue_page(&queue, page) == size);
+    assert(memcmp(page, expected, size) == 0);
+}
+
+static void test_report_queue_drain(void)
+{
+    memory_store_t store = {0};
+    const opp_report_queue_storage_t storage = memory_storage(&store);
+    opp_report_queue_t queue;
+    uint8_t page[OPP_REPORT_QUEUE_PAGE_MAX_SIZE];
+
+    assert(opp_report_queue_open(&queue, &storage, 16));
+    for (uint32_t id = 101; id <= 112; ++id) {
+        assert(push(&queue, id));
+    }
+
+    /* Nothing has been served, so nothing can be acknowledged. */
+    assert(opp_report_queue_ack_through(&queue, 101) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_depth(&queue) == 12);
+
+    /* A page holds the oldest eight. */
+    assert(opp_report_queue_page(&queue, page) > 2);
+    assert(page[0] == 0x20 && page[1] == 8);
+    /* Beyond what was served: refused, and nothing goes. */
+    assert(opp_report_queue_ack_through(&queue, 109) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_depth(&queue) == 12);
+    /* Up to the page's last report: all eight go, with one saved change. */
+    const unsigned writes = store.counter_writes;
+    assert(opp_report_queue_ack_through(&queue, 108) == OPP_REPORT_ACK_REMOVED);
+    assert(store.counter_writes == writes + 1);
+    assert(opp_report_queue_depth(&queue) == 4 && head_id(&queue) == 109);
+    /* A repeat is harmless. */
+    assert(opp_report_queue_ack_through(&queue, 108) == OPP_REPORT_ACK_ALREADY);
+
+    /* The next page is the remaining four; part of it can be acknowledged. */
+    assert(opp_report_queue_page(&queue, page) > 2 && page[1] == 4);
+    assert(opp_report_queue_ack_through(&queue, 110) == OPP_REPORT_ACK_REMOVED);
+    assert(head_id(&queue) == 111);
+
+    /* A report added after the page was read is not covered by it. */
+    assert(push(&queue, 113));
+    assert(opp_report_queue_ack_through(&queue, 113) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_ack_through(&queue, 112) == OPP_REPORT_ACK_REMOVED);
+    assert(opp_report_queue_depth(&queue) == 1 && head_id(&queue) == 113);
+
+    /* A new connection starts with nothing served. */
+    opp_report_queue_end_session(&queue);
+    assert(opp_report_queue_ack_through(&queue, 113) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_page(&queue, page) > 2 && page[1] == 1);
+    assert(opp_report_queue_ack_through(&queue, 113) == OPP_REPORT_ACK_REMOVED);
+    assert(opp_report_queue_depth(&queue) == 0);
+    assert(opp_report_queue_page(&queue, page) == 2 && page[1] == 0);
+    assert(opp_report_queue_ack_through(&queue, 113) == OPP_REPORT_ACK_ALREADY);
+    assert(opp_report_queue_ack_through(&queue, 0) == OPP_REPORT_ACK_REFUSED);
+}
+
+static void test_report_queue_capacity_and_restart(void)
+{
+    memory_store_t store = {0};
+    const opp_report_queue_storage_t storage = memory_storage(&store);
+    opp_report_queue_t queue;
+    uint8_t page[OPP_REPORT_QUEUE_PAGE_MAX_SIZE];
 
     assert(opp_report_queue_open(&queue, &storage, 4));
-    assert(opp_report_queue_depth(&queue) == 0);
-    assert(!opp_report_queue_head(&queue, &head));
-    /* Nothing queued: any acknowledgement names something delivered before. */
-    assert(opp_report_queue_ack(&queue, 7) == OPP_REPORT_ACK_ALREADY);
-
     for (uint32_t id = 10; id < 14; ++id) {
         assert(push(&queue, id));
     }
     /* Full: refused, never overwritten. */
-    assert(opp_report_queue_full(&queue));
-    assert(!push(&queue, 14));
-    assert(opp_report_queue_head(&queue, &head) && head.report_id == 10);
+    assert(opp_report_queue_full(&queue) && !push(&queue, 14));
 
-    /* Only the oldest can be removed. */
-    assert(opp_report_queue_ack(&queue, 12) == OPP_REPORT_ACK_REFUSED);
-    assert(opp_report_queue_ack(&queue, 99) == OPP_REPORT_ACK_REFUSED);
-    assert(opp_report_queue_ack(&queue, 10) == OPP_REPORT_ACK_REMOVED);
-    assert(opp_report_queue_head(&queue, &head) && head.report_id == 11);
-    /* A repeated acknowledgement is harmless. */
-    assert(opp_report_queue_ack(&queue, 10) == OPP_REPORT_ACK_ALREADY);
-    assert(opp_report_queue_depth(&queue) == 3);
-
-    /* The ring reuses the freed slot. */
-    assert(push(&queue, 14));
-    assert(opp_report_queue_full(&queue));
+    opp_report_queue_page(&queue, page);
+    assert(opp_report_queue_ack_through(&queue, 11) == OPP_REPORT_ACK_REMOVED);
+    /* The ring reuses the freed slots. */
+    assert(push(&queue, 14) && push(&queue, 15) && opp_report_queue_full(&queue));
 
     /* A restart continues exactly where the stored counters say. */
     opp_report_queue_t reopened;
     assert(opp_report_queue_open(&reopened, &storage, 4));
-    assert(opp_report_queue_depth(&reopened) == 4);
-    for (uint32_t id = 11; id <= 14; ++id) {
-        assert(opp_report_queue_head(&reopened, &head) && head.report_id == id);
-        assert(head.main[0] == (uint8_t)id);
-        assert(opp_report_queue_ack(&reopened, id) == OPP_REPORT_ACK_REMOVED);
-    }
+    assert(opp_report_queue_depth(&reopened) == 4 && head_id(&reopened) == 12);
+    opp_report_queue_page(&reopened, page);
+    assert(page[1] == 4);
+    assert(opp_report_queue_ack_through(&reopened, 15) == OPP_REPORT_ACK_REMOVED);
     assert(opp_report_queue_depth(&reopened) == 0);
 }
 
@@ -541,6 +628,7 @@ static void test_report_queue_failures(void)
     memory_store_t store = {0};
     const opp_report_queue_storage_t storage = memory_storage(&store);
     opp_report_queue_t queue;
+    uint8_t page[OPP_REPORT_QUEUE_PAGE_MAX_SIZE];
     assert(opp_report_queue_open(&queue, &storage, 4));
     assert(push(&queue, 1));
 
@@ -554,10 +642,11 @@ static void test_report_queue_failures(void)
     assert(opp_report_queue_depth(&reopened) == 1);
 
     /* An acknowledgement that cannot be saved removes nothing. */
-    assert(opp_report_queue_ack(&queue, 1) == OPP_REPORT_ACK_REFUSED);
+    opp_report_queue_page(&queue, page);
+    assert(opp_report_queue_ack_through(&queue, 1) == OPP_REPORT_ACK_REFUSED);
     assert(opp_report_queue_depth(&queue) == 1);
     store.fail_counter_writes = false;
-    assert(opp_report_queue_ack(&queue, 1) == OPP_REPORT_ACK_REMOVED);
+    assert(opp_report_queue_ack_through(&queue, 1) == OPP_REPORT_ACK_REMOVED);
 
     /* Inconsistent stored counters start an empty queue rather than a wild one. */
     store.head = 9;
@@ -867,8 +956,10 @@ int main(void)
     test_bthome_v3_rules();
     test_bthome_identity();
     test_device_configuration();
-    test_report_acknowledgement();
-    test_report_queue();
+    test_drain_tokens();
+    test_report_queue_page_fixture();
+    test_report_queue_drain();
+    test_report_queue_capacity_and_restart();
     test_report_queue_failures();
     test_sht45_response();
     test_sht45_humidity_clamping();

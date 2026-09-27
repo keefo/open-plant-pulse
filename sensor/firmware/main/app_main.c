@@ -51,6 +51,8 @@ static const char *TAG = "plant_pulse";
  * Outside that window a battery sensor goes back to its reporting interval,
  * because being reachable costs the same whether or not anyone is listening. */
 #define RESPONSIVE_WINDOW_MS 120000
+/* Below this a window is not worth starting the Bluetooth stack for. */
+#define MINIMUM_WINDOW_MS 300
 #define DEVELOPMENT_BROADCAST_TASK_STACK_SIZE 4096
 #define DEVELOPMENT_BROADCAST_TASK_PRIORITY 4
 
@@ -138,7 +140,8 @@ static bool encode_report(opp_bthome_report_t *report, opp_queued_report_t *enco
     return encoded->main_size > 0 && encoded->supplementary_size > 0;
 }
 
-static esp_err_t broadcast_report(const char *local_name, const opp_queued_report_t *encoded)
+static esp_err_t broadcast_report_for(const char *local_name, const opp_queued_report_t *encoded,
+                                      uint32_t window_ms)
 {
     return opp_bthome_broadcast(
         local_name,
@@ -146,7 +149,7 @@ static esp_err_t broadcast_report(const char *local_name, const opp_queued_repor
         encoded->main_size,
         encoded->supplementary_size > 0 ? encoded->supplementary : NULL,
         encoded->supplementary_size,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
+        window_ms,
         CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
 }
 
@@ -299,12 +302,13 @@ static void run_production_cycle(void)
      * an earlier one: each wake is the retry. */
     if (opp_device_identity_is_onboarded()) {
         queue_report(&encoded);
-        opp_delivery_head(&encoded);
+        opp_delivery_newest(&encoded);
     }
 
     ESP_LOGI(TAG, "Advertising %s report %lu for %d ms", local_name,
              (unsigned long)encoded.report_id, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
-    esp_err_t error = broadcast_report(local_name, &encoded);
+    esp_err_t error = broadcast_report_for(local_name, &encoded,
+                                         CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "BTHome advertising cycle failed: %s", esp_err_to_name(error));
     } else {
@@ -346,7 +350,19 @@ static bool should_stay_reachable(void)
     return (esp_timer_get_time() / 1000) - last < RESPONSIVE_WINDOW_MS;
 }
 
-static void advertise_onboarding_beacon(const char *local_name);
+static void advertise_onboarding_beacon(const char *local_name, uint32_t window_ms);
+static TickType_t report_interval_ticks(void);
+
+/* A report's own window ends half a second before the next one is due. */
+static uint32_t report_window_ms(void)
+{
+    const uint32_t interval_ms = (uint32_t)report_interval_ticks() * portTICK_PERIOD_MS;
+    const uint32_t limit_ms = interval_ms > 2 * MINIMUM_WINDOW_MS ? interval_ms - 500U
+                                                                  : MINIMUM_WINDOW_MS;
+    return limit_ms < CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS
+               ? limit_ms
+               : CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS;
+}
 
 /* Keep the door open between reports without inventing a measurement.
  *
@@ -355,17 +371,17 @@ static void advertise_onboarding_beacon(const char *local_name);
  * the hub already acknowledged would only make it connect to acknowledge it
  * again. An unclaimed sensor repeats its latest report, whose report ID tells
  * the hub it is nothing new. */
-static void advertise_reachable_window(const char *local_name)
+static void advertise_reachable_window(const char *local_name, uint32_t window_ms)
 {
     opp_queued_report_t report;
     const bool have_report = opp_device_identity_is_onboarded()
-                                 ? opp_delivery_head(&report)
+                                 ? opp_delivery_newest(&report)
                                  : (report = last_unqueued, report.main_size > 0);
     if (!have_report) {
-        advertise_onboarding_beacon(local_name);
+        advertise_onboarding_beacon(local_name, window_ms);
         return;
     }
-    esp_err_t error = broadcast_report(local_name, &report);
+    esp_err_t error = broadcast_report_for(local_name, &report, window_ms);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Reachability window failed: %s", esp_err_to_name(error));
     }
@@ -373,7 +389,7 @@ static void advertise_reachable_window(const char *local_name)
 
 /* Identity only: the hub learns the sensor exists and can adopt it, and learns
  * nothing about a plant, because there is nothing to tell. */
-static void advertise_onboarding_beacon(const char *local_name)
+static void advertise_onboarding_beacon(const char *local_name, uint32_t window_ms)
 {
     opp_queued_report_t beacon = {0};
     beacon.main_size = (uint8_t)opp_bthome_encode_beacon(beacon.main);
@@ -381,7 +397,7 @@ static void advertise_onboarding_beacon(const char *local_name)
         ESP_LOGE(TAG, "Could not encode the onboarding beacon");
         return;
     }
-    esp_err_t error = broadcast_report(local_name, &beacon);
+    esp_err_t error = broadcast_report_for(local_name, &beacon, window_ms);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Onboarding beacon failed: %s", esp_err_to_name(error));
     }
@@ -405,7 +421,7 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
          * the probe is absent or broken, and lets the hub say so. It is also
          * what makes an unowned sensor findable in the first place. */
         ESP_LOGW(TAG, "No SHT45 or soil sample; sending a beacon with no measurement");
-        advertise_onboarding_beacon(local_name);
+        advertise_onboarding_beacon(local_name, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
         if (forced) {
             opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_NO_SAMPLE);
         }
@@ -436,7 +452,7 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
             if (forced) {
                 opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_QUEUE_FULL);
             }
-            advertise_reachable_window(local_name);
+            advertise_reachable_window(local_name, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
             return;
         }
     } else {
@@ -454,9 +470,9 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
     /* An owned sensor puts its oldest unacknowledged report on air, which is
      * this one unless earlier ones still wait. */
     if (queued) {
-        opp_delivery_head(&encoded);
+        opp_delivery_newest(&encoded);
     }
-    esp_err_t error = broadcast_report(local_name, &encoded);
+    esp_err_t error = broadcast_report_for(local_name, &encoded, report_window_ms());
     if (forced) {
         opp_force_report_finished(force_request_id, error, queued);
     }
@@ -498,7 +514,7 @@ static void development_broadcast_task(void *context)
      * anything, so a reboot made it disappear from its hub for up to half an
      * hour, and there was nothing for a reachability window to repeat. Being
      * heard from is the first thing anyone wants after power-on. */
-    advertise_onboarding_beacon(local_name);
+    advertise_onboarding_beacon(local_name, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
     /* Being heard is what this sensor is for, so an image that has got this far
      * works. A newly installed one is kept from here on; one that crashed before
      * reaching this line is replaced by its predecessor at the next reset. */
@@ -508,7 +524,11 @@ static void development_broadcast_task(void *context)
      * read afresh on every pass. Fixing a deadline once per report meant an
      * interval the hub changed from 30 minutes to 5 seconds waited out the
      * rest of the 30 minutes before it took effect. */
-    TickType_t last_report = xTaskGetTickCount();
+    /* Reports keep to the schedule the hub set: report n is due at the start
+     * plus n intervals, so one that runs late does not push every later one
+     * back. The interval is read afresh on every pass, so a change from the
+     * hub applies at once rather than after the old interval ran out. */
+    TickType_t next_report = xTaskGetTickCount() + report_interval_ticks();
     while (true) {
         uint32_t force_request_id;
         if (opp_force_report_wait(0, &force_request_id)) {
@@ -516,29 +536,48 @@ static void development_broadcast_task(void *context)
             broadcast_development_report(local_name, force_request_id);
             continue;
         }
-        const TickType_t now = xTaskGetTickCount();
-        const int32_t ticks_remaining =
-            (int32_t)(last_report + report_interval_ticks() - now);
+        const TickType_t interval = report_interval_ticks();
+        TickType_t now = xTaskGetTickCount();
+        if ((int32_t)(next_report - now) > (int32_t)interval) {
+            /* The interval was shortened: count it from now. */
+            next_report = now + interval;
+        }
+        int32_t ticks_remaining = (int32_t)(next_report - now);
         if (ticks_remaining <= 0) {
             broadcast_development_report(local_name, 0);
-            last_report = now;
+            next_report += interval;
+            now = xTaskGetTickCount();
+            if ((int32_t)(now - next_report) >= 0) {
+                /* More than an interval behind (a long connection, say):
+                 * start afresh rather than burst to catch up. */
+                next_report = now + interval;
+            }
             continue;
         }
         TickType_t wait_ticks = (TickType_t)ticks_remaining;
-        bool reachability_tick = false;
+        uint32_t window_ms = 0;
         if (should_stay_reachable()) {
-            const TickType_t reachable_ticks = pdMS_TO_TICKS(REACHABLE_INTERVAL_MS);
-            if (reachable_ticks < wait_ticks) {
-                wait_ticks = reachable_ticks;
-                reachability_tick = true;
+            /* A window ends before the next report is due rather than
+             * delay it: the hub page is meant to move at the interval. */
+            const uint32_t until_due_ms = (uint32_t)ticks_remaining * portTICK_PERIOD_MS;
+            window_ms = until_due_ms < CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS
+                            ? until_due_ms
+                            : CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS;
+            if (window_ms >= MINIMUM_WINDOW_MS) {
+                const TickType_t reachable_ticks = pdMS_TO_TICKS(REACHABLE_INTERVAL_MS);
+                if (reachable_ticks < wait_ticks) {
+                    wait_ticks = reachable_ticks;
+                }
+            } else {
+                window_ms = 0;
             }
         }
         if (opp_force_report_wait(wait_ticks, &force_request_id)) {
             broadcast_development_report(local_name, force_request_id);
-        } else if (reachability_tick) {
-            advertise_reachable_window(local_name);
+        } else if (window_ms > 0) {
+            advertise_reachable_window(local_name, window_ms);
         }
-        /* Otherwise the deadline has passed; the next pass reports. */
+        /* Otherwise the report is due; the next pass makes it. */
     }
 }
 #endif

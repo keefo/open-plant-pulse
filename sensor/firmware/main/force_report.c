@@ -119,11 +119,11 @@ void opp_force_report_get_status(opp_force_report_status_t *status)
     portEXIT_CRITICAL(&status_lock);
 }
 
-void opp_force_report_delivered(uint32_t report_id)
+void opp_force_report_delivered_through(uint32_t report_id)
 {
     portENTER_CRITICAL(&status_lock);
     if (report_status.state == OPP_FORCE_REPORT_REPORTING && report_status.report_id_valid &&
-        report_status.report_id == report_id) {
+        report_status.report_id <= report_id) {
         report_status.state = OPP_FORCE_REPORT_ACKNOWLEDGED;
         report_status.acknowledged_at_ms = monotonic_ms();
     }

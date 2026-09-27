@@ -463,34 +463,34 @@ between the two every 500 ms within one advertising window, since legacy
 advertising accepts new data while it runs. With no SHT45 or soil sample the
 sensor sends a beacon, the single byte `0x40`.
 
-### Durable delivery
+### Durable delivery and freshness
 
-From firmware 0.17.0 a sensor that belongs to a hub keeps every report until
-the hub acknowledges it (see
-[durable delivery](../protocol/README.md#durable-delivery-and-acknowledgement)).
-A new report is written to a queue in NVS (namespace `rqueue`: a `counters` blob
-holding the head and tail, and one blob per slot) before it is first
-advertised. The sensor advertises only the oldest unacknowledged report, in
-every window, scheduled or reachability, and that repetition is the retry. The
-hub writes the five-byte acknowledgement once it has stored both packets; the
-sensor saves the new head before the next window, so the next report goes on air
-within seconds. With the queue empty it sends beacons rather than repeat an
-acknowledged report, which would only make the hub connect to acknowledge it
-again.
+A sensor that belongs to a hub keeps every report until the hub has stored it
+(see [durable delivery](../protocol/README.md#durable-delivery-and-acknowledgement)),
+and shows the hub its newest data within a second or two. Firmware 0.18.0:
 
-`OPP_REPORT_QUEUE_CAPACITY` (default 32, at most 64) bounds the queue, about 16
-hours at a 30-minute interval. A full queue makes no new reports and says so on
-the console's Hub section ("Waiting for hub") and in `/status`
-(`report_queue_depth`, `report_queue_capacity`); it never overwrites one. A
-sensor no hub owns does not queue, and a release by the hub clears the queue.
-Throughput is one report per acknowledgement, a few seconds each, so a
-reporting interval of seconds can outpace it; a minute or more cannot.
+- **Schedule.** Report n is due at the start plus n intervals, as set by the
+  hub; the interval is re-read on every pass. An advertising window never runs
+  past a due report: reachability windows end at the next deadline, and a
+  report's own window ends half a second before the next one. More than an
+  interval behind (a long hub connection) restarts the schedule rather than
+  bursting to catch up.
+- **Queue.** Each report is written to a queue in NVS (namespace `rqueue`: a
+  `counters` blob with head and tail, one blob per slot) before it is first
+  advertised. `OPP_REPORT_QUEUE_CAPACITY` (default 32) bounds it; a full queue
+  makes no new reports and never overwrites one. A sensor no hub owns does not
+  queue, and a release by the hub clears it.
+- **Freshness.** The sensor advertises its newest report, so what the hub
+  receives over the air is current whatever is still queued. With the queue
+  empty it sends beacons.
+- **Bulk drain.** The hub drains the queue over one connection in pages of up
+  to eight reports, acknowledging each page cumulatively; only reports already
+  put on a page during that connection can be acknowledged, and removal is saved
+  before the sensor answers. Reads return pages from the drain request to the
+  end token or the disconnect.
 
-Report IDs are reserved in blocks of 100 in NVS (namespace `report`, key
-`limit`) and kept in retained memory across deep sleep, so flash is written
-about once per hundred reports. After a reset the rest of the block is
-skipped; the IDs have gaps but never repeat. Erasing NVS restarts them, and the
-sensor must then be removed from the hub and adopted again.
+The console's Hub section shows "Waiting for hub" and `/status` reports
+`report_queue_depth` and `report_queue_capacity`.
 
 ### Development reachability
 

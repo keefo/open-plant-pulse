@@ -466,10 +466,10 @@ class ReachabilityTests(unittest.TestCase):
         # Re-sending the same report ID is what stops a sensor that is reachable
         # every few seconds from filling the database with rows saying nothing.
         # An unclaimed sensor repeats its latest report; an owned one repeats
-        # the head of its delivery queue until the hub acknowledges it.
+        # the newest report in its delivery queue until the hub drains it.
         self.assertIn("advertise_reachable_window", self.source)
         self.assertIn("last_unqueued", self.source)
-        self.assertIn("opp_delivery_head", self.source)
+        self.assertIn("opp_delivery_newest", self.source)
 
 
 class ReleaseProtocolTests(unittest.TestCase):

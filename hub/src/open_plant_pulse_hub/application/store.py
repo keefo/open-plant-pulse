@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 from statistics import median
 from threading import Condition
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
@@ -365,21 +365,63 @@ class ReadingStore:
             ).fetchone()
         return row is not None
 
-    def mark_report_acknowledged(self, sensor_id: str, report_id: int) -> None:
-        """Record that the sensor was told this report is stored.
+    def mark_reports_acknowledged(self, sensor_id: str, report_ids: Iterable[int]) -> None:
+        """Record that a cumulative acknowledgement told the sensor these are stored.
 
-        Kept as the latest acknowledgement: a sensor that is acknowledged again
-        missed the earlier one, so the latest is the one it acted on.
+        Kept as the latest acknowledgement: a report acknowledged again was
+        still queued, so the latest is the one the sensor acted on.
         """
         acknowledged_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with self._condition, self._database:
-            self._database.execute(
+            self._database.executemany(
                 """
                 UPDATE sensor_readings SET acknowledged_at = ?
                 WHERE sensor_id = ? AND report_id = ?
                 """,
-                (acknowledged_at, sensor_id, report_id),
+                [(acknowledged_at, sensor_id, report_id) for report_id in report_ids],
             )
+
+    def report_delivery(self, sensor_id: str, report_id: int) -> Tuple[bool, bool]:
+        """Return whether this report is acknowledged, and whether an earlier one
+        is missing.
+
+        Missing means a report ID between the last acknowledged report and this
+        one that the hub does not hold complete: something the sensor still has
+        queued was not heard over the air. With nothing acknowledged yet there is
+        no starting point, so nothing counts as missing.
+        """
+        with self._condition:
+            acknowledged = self._database.execute(
+                """
+                SELECT 1 FROM sensor_readings
+                WHERE sensor_id = ? AND report_id = ? AND acknowledged_at IS NOT NULL
+                """,
+                (sensor_id, report_id),
+            ).fetchone()
+            if acknowledged is not None:
+                return True, False
+            last = self._database.execute(
+                """
+                SELECT MAX(report_id) FROM sensor_readings
+                WHERE sensor_id = ? AND acknowledged_at IS NOT NULL AND report_id < ?
+                """,
+                (sensor_id, report_id),
+            ).fetchone()[0]
+            if last is None:
+                return False, False
+            held = self._database.execute(
+                """
+                SELECT COUNT(*)
+                FROM sensor_readings
+                JOIN report_supplements
+                  ON report_supplements.sensor_id = sensor_readings.sensor_id
+                 AND report_supplements.report_id = sensor_readings.report_id
+                WHERE sensor_readings.sensor_id = ?
+                  AND sensor_readings.report_id > ? AND sensor_readings.report_id < ?
+                """,
+                (sensor_id, last, report_id),
+            ).fetchone()[0]
+        return False, held < report_id - last - 1
 
     def record_beacon(
         self,
@@ -1487,6 +1529,10 @@ class ReadingStore:
         with a report every few seconds the page flashed between the two.
         Readings from before contract v3 have no report ID, and readings
         stored directly with add() never had packets; both are complete.
+
+        Newest means the highest report ID, not the row stored last: a drain
+        backfills reports older than the one already heard over the air.
+        Only rows without a report ID fall back to the order they were stored.
         """
         with self._condition:
             row = self._database.execute(
@@ -1499,7 +1545,7 @@ class ReadingStore:
                       WHERE supplement.sensor_id = reading.sensor_id
                         AND supplement.report_id = reading.report_id
                   ))
-                ORDER BY reading_id DESC
+                ORDER BY report_id IS NULL, report_id DESC, reading_id DESC
                 LIMIT 1
                 """,
                 (sensor_id, sensor_id),

@@ -1,22 +1,34 @@
 #include "report_ack_protocol.h"
 
-size_t opp_report_ack_encode(uint32_t report_id, uint8_t output[OPP_REPORT_ACK_PAYLOAD_SIZE])
+bool opp_drain_is_request(const uint8_t *payload, size_t payload_size)
+{
+    return payload != NULL && payload_size == 1 && payload[0] == OPP_DRAIN_REQUEST;
+}
+
+bool opp_drain_is_end(const uint8_t *payload, size_t payload_size)
+{
+    return payload != NULL && payload_size == 1 && payload[0] == OPP_DRAIN_END;
+}
+
+size_t opp_drain_acknowledge_encode(uint32_t report_id,
+                                    uint8_t output[OPP_DRAIN_ACKNOWLEDGE_SIZE])
 {
     if (output == NULL || report_id == 0) {
         return 0;
     }
-    output[0] = OPP_REPORT_ACK_PROTOCOL_VERSION;
+    output[0] = OPP_DRAIN_ACKNOWLEDGE;
     output[1] = (uint8_t)report_id;
     output[2] = (uint8_t)(report_id >> 8U);
     output[3] = (uint8_t)(report_id >> 16U);
     output[4] = (uint8_t)(report_id >> 24U);
-    return OPP_REPORT_ACK_PAYLOAD_SIZE;
+    return OPP_DRAIN_ACKNOWLEDGE_SIZE;
 }
 
-bool opp_report_ack_decode(const uint8_t *payload, size_t payload_size, uint32_t *report_id)
+bool opp_drain_acknowledge_decode(const uint8_t *payload, size_t payload_size,
+                                  uint32_t *report_id)
 {
-    if (payload == NULL || report_id == NULL || payload_size != OPP_REPORT_ACK_PAYLOAD_SIZE ||
-        payload[0] != OPP_REPORT_ACK_PROTOCOL_VERSION) {
+    if (payload == NULL || report_id == NULL || payload_size != OPP_DRAIN_ACKNOWLEDGE_SIZE ||
+        payload[0] != OPP_DRAIN_ACKNOWLEDGE) {
         return false;
     }
     const uint32_t value = (uint32_t)payload[1] | ((uint32_t)payload[2] << 8U) |

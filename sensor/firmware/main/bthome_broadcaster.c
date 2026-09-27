@@ -61,6 +61,9 @@ static uint16_t connection_handle = BLE_HS_CONN_HANDLE_NONE;
 /* The bond cannot be dropped while it is carrying the write that asked for it,
  * so the request is noted and honoured once the link is closed. */
 static bool release_requested;
+/* Set by the hub's drain request: reads return queue pages instead of the
+ * configuration until the end token or the link closes. */
+static bool drain_mode;
 static int64_t last_connection_ms;
 
 /* Marker, joined flag, four address bytes, and three version bytes. The hub
@@ -119,6 +122,16 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
     (void)attr_handle;
     (void)argument;
     if (context->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        if (drain_mode) {
+            /* Built afresh for each read; a long value is assembled from
+             * several reads, and the page is the same bytes until the queue
+             * changes, which only an acknowledgement does. */
+            static uint8_t page[OPP_REPORT_QUEUE_PAGE_MAX_SIZE];
+            const size_t page_size = opp_delivery_page(page);
+            return os_mbuf_append(context->om, page, page_size) == 0
+                       ? 0
+                       : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
         opp_device_config_t config;
         uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE + OPP_FIRMWARE_STATUS_SIZE +
                         OPP_STATION_STATUS_SIZE];
@@ -171,15 +184,23 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
                        ? 0
                        : BLE_ATT_ERR_UNLIKELY;
         }
-        uint32_t acknowledged_report;
-        if (opp_report_ack_decode(payload, payload_size, &acknowledged_report)) {
-            /* Only the hub that owns this sensor gets here, over an encrypted
-             * link. Removing the report is saved before this returns, so the
-             * next window already advertises the one after it. */
-            if (opp_delivery_acknowledge(acknowledged_report) == OPP_REPORT_ACK_REFUSED) {
+        /* The bulk drain. Only the hub that owns this sensor gets here, over
+         * an encrypted link. */
+        if (opp_drain_is_request(payload, payload_size)) {
+            drain_mode = true;
+            return 0;
+        }
+        if (opp_drain_is_end(payload, payload_size)) {
+            drain_mode = false;
+            return 0;
+        }
+        uint32_t stored_through;
+        if (opp_drain_acknowledge_decode(payload, payload_size, &stored_through)) {
+            /* Removal is saved before this answers. */
+            if (opp_delivery_acknowledge_through(stored_through) == OPP_REPORT_ACK_REFUSED) {
                 return BLE_ATT_ERR_UNLIKELY;
             }
-            opp_force_report_delivered(acknowledged_report);
+            opp_force_report_delivered_through(stored_through);
             return 0;
         }
         opp_device_config_t config;
@@ -271,6 +292,8 @@ static int gap_event(struct ble_gap_event *event, void *context)
         }
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         connection_handle = BLE_HS_CONN_HANDLE_NONE;
+        drain_mode = false;
+        opp_delivery_connection_ended();
         if (release_requested) {
             release_requested = false;
             ble_store_clear();

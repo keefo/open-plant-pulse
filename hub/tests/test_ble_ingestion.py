@@ -12,10 +12,16 @@ from unittest.mock import patch
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION, MIGRATIONS
 from open_plant_pulse_hub.application.store import RECEIVE_DIAGNOSTIC_LIMIT
+from open_plant_pulse_hub.domain import SensorReading
 from open_plant_pulse_hub.ingestion import ble
 from open_plant_pulse_hub.ingestion.advertisement import Advertisement
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber, _detection_callback
 from open_plant_pulse_hub.ingestion.bthome import BTHOME_SERVICE_UUID
+from open_plant_pulse_hub.ingestion.device_configuration import (
+    DRAIN_SOURCE_ADAPTER,
+    DeviceConfigurationSynchronizer,
+    DrainResult,
+)
 from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
 
 FIXTURE_PATH = (
@@ -28,6 +34,14 @@ MAIN_1235 = "402e2c3ed3040000451001"
 SUPPLEMENTARY_1235 = "4001600c40103ed304000054080144010002000700"
 MAIN_1236 = "402e2c3ed4040000451001"
 SUPPLEMENTARY_1236 = "403ed4040000"
+
+
+def main_hex(report_id, humidity=0x2C):
+    return f"402e{humidity:02x}3e{report_id.to_bytes(4, 'little').hex()}451001"
+
+
+def supplementary_hex(report_id):
+    return f"403e{report_id.to_bytes(4, 'little').hex()}"
 
 
 def advertisement(service_data_hex, received_at="2026-09-26T21:20:05Z", **overrides):
@@ -198,6 +212,67 @@ class ReportJoinTests(unittest.TestCase):
             self.assertEqual(latest["reading"]["soil_ph"], 6.8)
         self.ingestion.ingest(advertisement(SUPPLEMENTARY_1236, received_at="2026-09-26T21:20:11Z"))
         self.assertEqual(self.store.latest(SENSOR_ID)["reading"]["report_id"], 1236)
+
+    def test_latest_is_the_newest_report_not_the_last_stored(self) -> None:
+        # The newest report arrives over the air; a drain then backfills the
+        # two the air missed, which are stored after it.
+        for service_data_hex in (main_hex(50), supplementary_hex(50)):
+            self.ingestion.ingest(advertisement(service_data_hex))
+        for report_id in (48, 49):
+            for service_data_hex in (main_hex(report_id, 0x30), supplementary_hex(report_id)):
+                self.assertEqual(
+                    self.ingestion.ingest(
+                        advertisement(
+                            service_data_hex,
+                            "2026-09-26T21:20:09Z",
+                            source_adapter=DRAIN_SOURCE_ADAPTER,
+                            rssi=None,
+                        )
+                    ),
+                    "accepted",
+                )
+        for latest in (self.store.latest(SENSOR_ID), self.store.latest()):
+            self.assertEqual(latest["reading"]["report_id"], 50)
+            self.assertEqual(latest["reading"]["air_humidity_percent"], 44.0)
+        self.assertEqual(
+            [item["reading"]["report_id"] for item in self.store.history(SENSOR_ID)],
+            [50, 48, 49],
+        )
+
+    def test_a_reading_without_a_report_id_does_not_outrank_a_report(self) -> None:
+        self.ingestion.ingest(advertisement(MAIN_1235))
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235))
+        self.store.add(
+            SensorReading(
+                sensor_id=SENSOR_ID,
+                report_id=None,
+                observed_at="2026-09-26T21:21:00Z",
+                soil_temperature_c=20.0,
+                moisture_percent=40.0,
+                conductivity_us_cm=900,
+            )
+        )
+        self.assertEqual(self.store.latest(SENSOR_ID)["reading"]["report_id"], 1235)
+
+    def test_says_whether_a_report_is_acknowledged_and_whether_one_before_it_is_missing(
+        self,
+    ) -> None:
+        for report_id in (10, 11, 12, 14):
+            for service_data_hex in (main_hex(report_id), supplementary_hex(report_id)):
+                self.ingestion.ingest(advertisement(service_data_hex))
+        # Nothing acknowledged yet: there is nowhere to count a gap from.
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 14), (False, False))
+        self.store.mark_reports_acknowledged(SENSOR_ID, [10, 11])
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 11), (True, False))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 12), (False, False))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 13), (False, False))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 14), (False, True))
+        # Half a report is not held: its supplement may be the one missed.
+        self.ingestion.ingest(advertisement(main_hex(13)))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 14), (False, True))
+        self.ingestion.ingest(advertisement(supplementary_hex(13)))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 14), (False, False))
+        self.assertEqual(self.store.report_delivery(SENSOR_ID, 16), (False, True))
         # A report may carry no battery or soil extras; complete is complete.
         self.assertIsNone(self.store.latest(SENSOR_ID)["reading"]["battery_percent"])
 
@@ -786,7 +861,7 @@ class MigrationTests(unittest.TestCase):
                 )
                 self.assertEqual(ingestion.ingest(advertisement(MAIN_1236)), "accepted")
                 self.assertTrue(ingestion.report_is_acknowledgeable(SENSOR_ID, 1236))
-                store.mark_report_acknowledged(SENSOR_ID, 1236)
+                store.mark_reports_acknowledged(SENSOR_ID, [1236])
             finally:
                 store.close()
 
@@ -957,127 +1032,297 @@ class BleakSubscriberTests(unittest.TestCase):
             store.close()
 
 
-class ReportAcknowledgementSubscriberTests(unittest.IsolatedAsyncioTestCase):
-    """When the subscriber tells a sensor that a report is stored."""
+class FakeQueueSensor:
+    """A sensor's side of the characteristic: its queue, drain mode and config.
+
+    Pages hold up to eight of the oldest queued reports; a cumulative
+    acknowledgement beyond what has been paged, or of zero, is refused.
+    """
+
+    def __init__(self, reports=()):
+        self.queue = list(reports)
+        self.connections = 0
+        self.writes = []
+        self.draining = False
+        self.last_paged = 0
+        self.configuration = b""
+        self.ignore_acknowledgements = False
+
+    def add(self, report_id, humidity=0x2C):
+        self.queue.append(
+            (report_id, bytes.fromhex(main_hex(report_id, humidity)),
+             bytes.fromhex(supplementary_hex(report_id)))
+        )
+
+    def page(self):
+        records = self.queue[:8]
+        if records:
+            self.last_paged = max(self.last_paged, records[-1][0])
+        return bytes((0x20, len(records))) + b"".join(
+            report_id.to_bytes(4, "little")
+            + bytes((len(main),)) + main
+            + bytes((len(supplementary),)) + supplementary
+            for report_id, main, supplementary in records
+        )
+
+    def factory(self, fail=False):
+        sensor = self
+
+        class Client:
+            def __init__(self, target, timeout=None):
+                self.target = target
+
+            async def __aenter__(self):
+                if fail:
+                    raise RuntimeError("connection failed")
+                sensor.connections += 1
+                return self
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                sensor.draining = False
+                return False
+
+            async def write_gatt_char(self, uuid, payload, response):
+                payload = bytes(payload)
+                sensor.writes.append(payload)
+                if payload == b"\x20":
+                    sensor.draining = True
+                elif payload == b"\x22":
+                    sensor.draining = False
+                elif payload[0] == 0x21 and len(payload) == 5:
+                    report_id = int.from_bytes(payload[1:], "little")
+                    if report_id == 0 or report_id > sensor.last_paged:
+                        raise RuntimeError("acknowledgement refused")
+                    if not sensor.ignore_acknowledgements:
+                        sensor.queue = [r for r in sensor.queue if r[0] > report_id]
+                else:
+                    sensor.configuration = payload
+
+            async def read_gatt_char(self, uuid):
+                return sensor.page() if sensor.draining else sensor.configuration
+
+        return Client
+
+
+class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
+    """When the subscriber drains a sensor's queue."""
 
     def setUp(self) -> None:
         self.store = ReadingStore()
         self.events = []
         self.clock = [100.0]
-        events = self.events
-
-        class RecordingIngestion(AdvertisementIngestionService):
-            def ingest(self, advertisement):
-                status = super().ingest(advertisement)
-                events.append(status)
-                return status
+        self.outcomes = []
+        events, outcomes, store = self.events, self.outcomes, self.store
 
         class FakeSynchronizer:
-            async def synchronize(self, sensor_id, target, acknowledge_report_id=None):
-                events.append((sensor_id, target, acknowledge_report_id))
-                return "acknowledged"
+            def owns(self, sensor_id):
+                return DeviceConfigurationSynchronizer(store).owns(sensor_id)
+
+            def report_delivery(self, sensor_id, report_id):
+                return store.report_delivery(sensor_id, report_id)
+
+            def pending_revision(self, sensor_id):
+                desired = store.pending_device_configuration(sensor_id)
+                return None if desired is None else desired["revision"]
+
+            def has_release_pending(self, sensor_id):
+                return store.release_is_pending(sensor_id)
+
+            async def release(self, sensor_id, target):
+                events.append(("release", sensor_id))
+                store.mark_released(sensor_id)
+                return "released"
+
+            async def synchronize(self, sensor_id, target):
+                events.append(("synchronize", sensor_id))
+                return "applied"
+
+            async def drain(self, sensor_id, observed_identifier, target, ingest, **work):
+                events.append(("drain", sensor_id, observed_identifier, target, work))
+                return DrainResult(outcomes.pop(0) if outcomes else "drained")
 
         self.subscriber = BleakSubscriber(
-            RecordingIngestion(self.store), configuration_synchronizer=FakeSynchronizer()
+            AdvertisementIngestionService(self.store),
+            configuration_synchronizer=FakeSynchronizer(),
         )
 
     def tearDown(self) -> None:
         self.store.close()
 
     def enrol(self) -> None:
-        # Found by its beacon, then adopted.
+        # Found by its beacon, then adopted, and its configuration delivered.
         AdvertisementIngestionService(self.store).ingest(advertisement("40"))
         self.store.manage_sensor(SENSOR_ID, "Fern", "Office", "monstera", None, None, 60)
+        revision = self.store.pending_device_configuration(SENSOR_ID)["revision"]
+        self.store.mark_device_configuration_applied(SENSOR_ID, revision, 60)
 
     async def hear(self, *service_data_hexes) -> None:
-        queue = asyncio.Queue()
-        for service_data_hex in service_data_hexes:
-            await queue.put(
-                advertisement(
-                    service_data_hex,
-                    observed_identifier="platform-identifier",
-                    source_adapter="bleak",
-                    connection_target="connection-target",
-                )
-            )
-        # The subscriber's clock only, so that time moves when the test says.
-        clock = SimpleNamespace(monotonic=lambda: self.clock[0])
-        with patch.object(ble, "time", clock):
-            consumer = asyncio.create_task(self.subscriber._consume(queue))
-            try:
-                await asyncio.wait_for(queue.join(), timeout=1.0)
-            finally:
-                consumer.cancel()
-                await asyncio.gather(consumer, return_exceptions=True)
+        await hear(self.subscriber, self.clock, service_data_hexes)
 
-    def acknowledgements(self):
-        return [event for event in self.events if isinstance(event, tuple)]
+    def drains(self):
+        return [event for event in self.events if event[0] == "drain"]
 
-    async def test_acknowledges_as_soon_as_the_second_packet_is_stored(self) -> None:
+    async def test_the_first_report_after_start_is_drained_at_once(self) -> None:
         self.enrol()
-        await self.hear(SUPPLEMENTARY_1235, MAIN_1235)
+        await self.hear(main_hex(10))
+        self.assertEqual(
+            self.drains(),
+            [("drain", SENSOR_ID, "platform-identifier", "connection-target",
+              {"configure": False, "station_status": False, "firmware_update": False})],
+        )
+
+    async def test_a_fresh_report_with_nothing_missed_waits_for_the_interval(self) -> None:
+        self.enrol()
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.store.mark_reports_acknowledged(SENSOR_ID, [10])
+        for report_id in (11, 12, 13):
+            self.clock[0] += 5.0
+            await self.hear(main_hex(report_id), supplementary_hex(report_id))
+        self.assertEqual(len(self.drains()), 1)
+        self.clock[0] = 100.0 + ble.DRAIN_INTERVAL_SECONDS
+        await self.hear(main_hex(14))
+        self.assertEqual(len(self.drains()), 2)
+
+    async def test_a_report_missed_over_the_air_is_drained_at_once(self) -> None:
+        self.enrol()
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.store.mark_reports_acknowledged(SENSOR_ID, [10])
+        self.clock[0] += 5.0
+        await self.hear(main_hex(11), supplementary_hex(11))
+        self.assertEqual(len(self.drains()), 1)
+        # Report 12 was never heard.
+        self.clock[0] += 10.0
+        await self.hear(main_hex(13))
+        self.assertEqual(len(self.drains()), 2)
+
+    async def test_drains_are_spaced_even_when_they_fail(self) -> None:
+        self.enrol()
+        self.outcomes.extend(["failed", "failed"])
+        await self.hear(main_hex(10))
+        self.clock[0] += ble.DRAIN_SPACING_SECONDS - 0.5
+        await self.hear(supplementary_hex(10), main_hex(10))
+        self.assertEqual(len(self.drains()), 1)
+        self.clock[0] += 0.5
+        await self.hear(supplementary_hex(10))
+        self.assertEqual(len(self.drains()), 2)
+
+    async def test_a_drain_is_never_started_twice_for_one_sensor(self) -> None:
+        self.enrol()
+        self.subscriber._draining.add(SENSOR_ID)
+        await self.hear(main_hex(10))
+        self.assertEqual(self.drains(), [])
+
+    async def test_a_drain_stopped_by_a_conflict_waits_for_the_interval(self) -> None:
+        self.enrol()
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.store.mark_reports_acknowledged(SENSOR_ID, [10])
+        self.outcomes.append("stopped")
+        self.clock[0] += 5.0
+        await self.hear(main_hex(13))
+        self.assertEqual(len(self.drains()), 2)
+        # The gap is still there, but no drain could close it.
+        self.clock[0] += 5.0
+        await self.hear(main_hex(14))
+        self.assertEqual(len(self.drains()), 2)
+        self.clock[0] += ble.DRAIN_INTERVAL_SECONDS
+        await self.hear(main_hex(15))
+        self.assertEqual(len(self.drains()), 3)
+
+    async def test_beacons_and_acknowledged_reports_never_drain(self) -> None:
+        self.enrol()
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.store.mark_reports_acknowledged(SENSOR_ID, [10])
+        self.clock[0] += ble.DRAIN_INTERVAL_SECONDS
+        await self.hear("40", main_hex(10), supplementary_hex(10))
+        self.assertEqual(len(self.drains()), 1)
+
+    async def test_an_unclaimed_sensor_is_never_drained(self) -> None:
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.clock[0] += ble.DRAIN_INTERVAL_SECONDS
+        await self.hear(main_hex(11), supplementary_hex(11))
+        self.assertEqual(self.drains(), [])
+
+    async def test_configuration_rides_on_the_drain_connection(self) -> None:
+        self.enrol()
+        self.store.manage_sensor(SENSOR_ID, "Fern", "Study", "monstera", None, None, 60)
+        await self.hear(main_hex(10))
         self.assertEqual(
             self.events,
-            ["accepted", "accepted", (SENSOR_ID, "connection-target", 1235)],
+            [("drain", SENSOR_ID, "platform-identifier", "connection-target",
+              {"configure": True, "station_status": False, "firmware_update": False})],
         )
 
-    async def test_repeats_right_after_an_acknowledgement_do_not_connect_again(self) -> None:
+    async def test_a_pending_release_goes_before_any_drain(self) -> None:
         self.enrol()
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235, MAIN_1235, SUPPLEMENTARY_1235)
-        self.assertEqual(self.acknowledgements(), [(SENSOR_ID, "connection-target", 1235)])
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                "UPDATE sensors SET release_pending = 1 WHERE sensor_id = ?", (SENSOR_ID,)
+            )
+        await self.hear(main_hex(10))
+        self.assertEqual(self.events, [("release", SENSOR_ID)])
 
-    async def test_acknowledges_again_when_both_packets_keep_repeating(self) -> None:
-        # Still advertising a report the hub holds complete and identical means
-        # the acknowledgement never reached the sensor.
-        self.enrol()
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
-        self.clock[0] += 6.0
-        await self.hear(MAIN_1235)
-        self.assertEqual(len(self.acknowledgements()), 1)
-        await self.hear(SUPPLEMENTARY_1235)
-        self.assertEqual(
-            self.acknowledgements(), [(SENSOR_ID, "connection-target", 1235)] * 2
+
+async def hear(subscriber, clock_value, service_data_hexes) -> None:
+    queue = asyncio.Queue()
+    for service_data_hex in service_data_hexes:
+        await queue.put(
+            advertisement(
+                service_data_hex,
+                observed_identifier="platform-identifier",
+                source_adapter="bleak",
+                connection_target="connection-target",
+            )
         )
+    # The subscriber's clock only, so that time moves when the test says.
+    clock = SimpleNamespace(monotonic=lambda: clock_value[0])
+    with patch.object(ble, "time", clock):
+        consumer = asyncio.create_task(subscriber._consume(queue))
+        try:
+            await asyncio.wait_for(queue.join(), timeout=5.0)
+        finally:
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
 
-    async def test_a_lost_acknowledgement_is_retried_no_more_than_every_few_seconds(
+
+class DrainEndToEndTests(unittest.IsolatedAsyncioTestCase):
+    """The subscriber, the real synchronizer and a sensor with a backlog."""
+
+    async def test_the_newest_report_stays_latest_while_older_ones_are_backfilled(
         self,
     ) -> None:
-        self.enrol()
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
-        # Both packets repeat within the retry interval, many times over.
-        self.clock[0] += 1.0
-        await self.hear(*[MAIN_1235, SUPPLEMENTARY_1235] * 5)
-        self.assertEqual(len(self.acknowledgements()), 1)
-        # Past it, the next time both have been heard again.
-        self.clock[0] += 5.0
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
-        self.assertEqual(len(self.acknowledgements()), 2)
+        store = ReadingStore()
+        try:
+            AdvertisementIngestionService(store).ingest(advertisement("40"))
+            store.manage_sensor(SENSOR_ID, "Fern", "Office", "monstera", None, None, 60)
+            sensor = FakeQueueSensor()
+            for report_id in (48, 49):
+                sensor.add(report_id, humidity=0x30)
+            sensor.add(50)
+            subscriber = BleakSubscriber(
+                AdvertisementIngestionService(store),
+                configuration_synchronizer=DeviceConfigurationSynchronizer(
+                    store, client_factory=sensor.factory()
+                ),
+            )
+            # Only report 50 is heard over the air, and hearing it drains.
+            await hear(subscriber, [100.0], (main_hex(50), supplementary_hex(50)))
 
-    async def test_the_next_report_is_acknowledged_at_once(self) -> None:
-        # The retry interval is per report. The sensor moves on to its next
-        # report the moment an acknowledgement lands, and waiting would stall it.
-        self.enrol()
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235, MAIN_1236, SUPPLEMENTARY_1236)
-        self.assertEqual(
-            [event[2] for event in self.acknowledgements()], [1235, 1236]
-        )
-
-    async def test_a_report_in_conflict_is_never_acknowledged(self) -> None:
-        self.enrol()
-        await self.hear(MAIN_1235)
-        # The sensor holds a different main packet under the same ID; its
-        # supplementary packet matching proves nothing about the rest.
-        self.clock[0] += 10.0
-        await self.hear("402e2d3ed3040000451001", SUPPLEMENTARY_1235)
-        self.clock[0] += 10.0
-        await self.hear(*["402e2d3ed3040000451001", SUPPLEMENTARY_1235] * 3)
-        self.assertEqual(self.acknowledgements(), [])
-
-    async def test_an_unclaimed_sensor_is_never_acknowledged(self) -> None:
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
-        self.clock[0] += 10.0
-        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
-        self.assertEqual(self.acknowledgements(), [])
+            self.assertEqual(sensor.connections, 1)
+            self.assertEqual(sensor.queue, [])
+            # Configuration first, on the same link, then the drain.
+            self.assertEqual(sensor.writes[0][0], 6)
+            self.assertEqual(
+                [payload.hex() for payload in sensor.writes[1:]],
+                ["20", "2132000000", "22"],
+            )
+            self.assertEqual(store.latest(SENSOR_ID)["reading"]["report_id"], 50)
+            self.assertEqual(
+                sorted(item["reading"]["report_id"] for item in store.history(SENSOR_ID)),
+                [48, 49, 50],
+            )
+            self.assertEqual(store.report_delivery(SENSOR_ID, 50), (True, False))
+        finally:
+            store.close()
 
 
 if __name__ == "__main__":

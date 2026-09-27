@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 import socket
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 from open_plant_pulse_hub.application.store import ReadingStore
+from open_plant_pulse_hub.domain import SensorReading
+
+from .advertisement import Advertisement
+from .bthome import decode_service_data
 
 
 LOGGER = logging.getLogger(__name__)
 DEVICE_CONFIG_CHARACTERISTIC_UUID = "7f510002-1b15-4c28-9a4a-8d0f4f505000"
-REPORT_ACK_CHARACTERISTIC_UUID = DEVICE_CONFIG_CHARACTERISTIC_UUID
 DEVICE_CONFIG_PROTOCOL_VERSION = 6
 # Written to give a sensor up. The sensor forgets its configuration and network,
 # leaves the household network, stops serving its console, and drops the bond.
@@ -57,11 +62,25 @@ DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 DEVICE_CONFIG_PAYLOAD_MAX_SIZE = 171
 MIN_REPORTING_INTERVAL_SECONDS = 1
 MAX_REPORTING_INTERVAL_SECONDS = 86400
-# The report acknowledgement token: version, then the report ID of a report the
-# hub has stored in full. The sensor drops that report from its queue.
-REPORT_ACK_PROTOCOL_VERSION = 3
-REPORT_ACK_PAYLOAD_SIZE = 5
+# Bulk drain. The drain request turns reads of the characteristic into queue
+# pages until the end token or the disconnect; a page holds up to eight of the
+# oldest queued reports, and the cumulative acknowledgement removes every queued
+# report up to and including the one it names.
+DRAIN_REQUEST = bytes((0x20,))
+QUEUE_PAGE_MARKER = 0x20
+QUEUE_PAGE_MAX_REPORTS = 8
+QUEUE_PAGE_MAX_SIZE = 512
+CUMULATIVE_ACK_MARKER = 0x21
+DRAIN_END = bytes((0x22,))
+# How many pages one connection reads before it stops and leaves the rest for
+# the next. A sensor adding reports as fast as they are read would otherwise
+# hold the link for ever.
+DRAIN_MAX_PAGES = 16
+# How drained packets are marked in the raw report log, so they can be told
+# from the same packets heard over the air.
+DRAIN_SOURCE_ADAPTER = "bleak-drain"
 ClientFactory = Callable[..., Any]
+Ingest = Callable[[Advertisement], str]
 
 
 @dataclass(frozen=True)
@@ -75,11 +94,85 @@ class DeviceConfiguration:
     console_enabled: bool = False
 
 
-def encode_report_acknowledgement(report_id: int) -> bytes:
-    """Say that the report with this ID is stored and may be dropped."""
+@dataclass(frozen=True)
+class QueuedReport:
+    """One report from a queue page: exactly the two packets it is advertised as."""
+
+    report_id: int
+    main: bytes
+    supplementary: bytes
+
+
+@dataclass(frozen=True)
+class DrainResult:
+    """What one drain did.
+
+    The outcome is drained when an empty page was reached, more when the page
+    limit stopped it first, stopped when a report could not be acknowledged,
+    and failed when the link or a page failed.
+    """
+
+    outcome: str
+    stored_packets: int = 0
+    pages: int = 0
+    acknowledged_report_id: Optional[int] = None
+
+
+def encode_cumulative_acknowledgement(report_id: int) -> bytes:
+    """Say that every queued report up to and including this one is stored."""
     if not 1 <= report_id <= 0xFFFFFFFF:
         raise ValueError("report ID must be between 1 and 4294967295")
-    return bytes((REPORT_ACK_PROTOCOL_VERSION,)) + report_id.to_bytes(4, "little")
+    return bytes((CUMULATIVE_ACK_MARKER,)) + report_id.to_bytes(4, "little")
+
+
+def decode_queue_page(payload: bytes, sensor_id: str) -> List[QueuedReport]:
+    """Decode a queue page, refusing all of it if any part is wrong.
+
+    Each record must be a main packet and a supplementary packet that decode
+    under the contract and carry the record's report ID, and the reports must be
+    in ascending order, since the cumulative acknowledgement relies on it. A page
+    that is anything else says the sensor and the hub disagree about the
+    contract, and nothing on it is safe to acknowledge.
+    """
+    if len(payload) < 2 or len(payload) > QUEUE_PAGE_MAX_SIZE:
+        raise ValueError("queue page length is invalid")
+    if payload[0] != QUEUE_PAGE_MARKER:
+        raise ValueError("queue page marker is wrong")
+    count = payload[1]
+    if count > QUEUE_PAGE_MAX_REPORTS:
+        raise ValueError("queue page holds more than eight reports")
+    reports: List[QueuedReport] = []
+    offset = 2
+    for _ in range(count):
+        if offset + 5 > len(payload):
+            raise ValueError("queue page record is truncated")
+        report_id = int.from_bytes(payload[offset : offset + 4], "little")
+        offset += 4
+        packets = []
+        for _kind in ("main", "supplementary"):
+            if offset >= len(payload):
+                raise ValueError("queue page record is truncated")
+            length = payload[offset]
+            offset += 1
+            if length == 0 or offset + length > len(payload):
+                raise ValueError("queue page record is truncated")
+            packets.append(payload[offset : offset + length])
+            offset += length
+        main, supplementary = packets
+        decoded_main = decode_service_data(main, sensor_id)
+        decoded_supplementary = decode_service_data(supplementary, sensor_id)
+        if not isinstance(decoded_main, SensorReading) or isinstance(
+            decoded_supplementary, SensorReading
+        ):
+            raise ValueError("queue page record is not a main and a supplementary packet")
+        if decoded_main.report_id != report_id or decoded_supplementary.report_id != report_id:
+            raise ValueError("queue page record report ID does not match its packets")
+        if reports and report_id <= reports[-1].report_id:
+            raise ValueError("queue page reports are not in ascending order")
+        reports.append(QueuedReport(report_id, main, supplementary))
+    if offset != len(payload):
+        raise ValueError("queue page has bytes after its last record")
+    return reports
 
 
 def encode_device_configuration(config: DeviceConfiguration) -> bytes:
@@ -288,34 +381,37 @@ class DeviceConfigurationSynchronizer:
         try:
             factory = self._client_factory or self._load_client_factory()
             async with factory(observed_identifier) as client:
-                payload = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
-            _, station = split_station_status(payload)
-            if station is None:
-                return "unknown"
-            joined, address, version = station
-            # Progress first, then the version: a sensor that has come back
-            # running the target image has succeeded, whatever it last said it
-            # was doing, and recording the version is what establishes that.
-            self._record_reported_progress(sensor_id, payload)
-            self._store.record_station_report(sensor_id, version)
-            # A sensor answering while an update is still "in progress" is a
-            # sensor that has come back without it: either it is about to, or
-            # the new image never started and this one is the old one.
-            self._store.expire_stalled_firmware_update(sensor_id)
-            sensor = self._store.sensor(sensor_id)
-            if sensor and sensor["wifi_enabled"]:
-                self._store.record_sensor_wifi_result(
-                    sensor_id,
-                    "joined" if joined else "pending",
-                    None,
-                    address or None,
-                )
-            return "joined" if joined else "pending"
+                return await self._read_station(client, sensor_id)
         except Exception as error:  # noqa: BLE001 - the sensor may simply be away
             LOGGER.warning(
                 "could not read %s network state: %s", sensor_id, str(error)[:240]
             )
             return "failed"
+
+    async def _read_station(self, client: Any, sensor_id: str) -> str:
+        payload = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
+        _, station = split_station_status(payload)
+        if station is None:
+            return "unknown"
+        joined, address, version = station
+        # Progress first, then the version: a sensor that has come back
+        # running the target image has succeeded, whatever it last said it
+        # was doing, and recording the version is what establishes that.
+        self._record_reported_progress(sensor_id, payload)
+        self._store.record_station_report(sensor_id, version)
+        # A sensor answering while an update is still "in progress" is a
+        # sensor that has come back without it: either it is about to, or
+        # the new image never started and this one is the old one.
+        self._store.expire_stalled_firmware_update(sensor_id)
+        sensor = self._store.sensor(sensor_id)
+        if sensor and sensor["wifi_enabled"]:
+            self._store.record_sensor_wifi_result(
+                sensor_id,
+                "joined" if joined else "pending",
+                None,
+                address or None,
+            )
+        return "joined" if joined else "pending"
 
     def pending_firmware_update_id(self, sensor_id: str) -> Optional[int]:
         """Which update is waiting to be commanded, if any."""
@@ -329,9 +425,25 @@ class DeviceConfigurationSynchronizer:
         household network is told nothing, because it could not fetch anything:
         that is a precondition, not a failure to discover halfway through.
         """
+        command = self._firmware_update_command(sensor_id)
+        if command is None or isinstance(command, str):
+            return command or "not-needed"
+        try:
+            factory = self._client_factory or self._load_client_factory()
+            async with factory(observed_identifier, timeout=self._timeout) as client:
+                return await self._command_firmware_update(client, sensor_id, *command)
+        except Exception as error:  # noqa: BLE001 - the sensor may simply be away
+            self._firmware_update_failed(sensor_id, error)
+            return "failed"
+
+    def _firmware_update_command(
+        self, sensor_id: str
+    ) -> Optional[str | tuple[dict[str, Any], bytes, str]]:
+        """The pending update and its payload, "failed" if it cannot be sent, or
+        None when nothing is pending."""
         pending = self._store.pending_firmware_update(sensor_id)
         if pending is None:
-            return "not-needed"
+            return None
         sensor = self._store.sensor(sensor_id)
         sensor_address = (sensor or {}).get("wifi_address")
         if not sensor_address:
@@ -354,27 +466,27 @@ class DeviceConfigurationSynchronizer:
                 digest=pending["digest"],
             )
         )
-        try:
-            factory = self._client_factory or self._load_client_factory()
-            async with factory(observed_identifier, timeout=self._timeout) as client:
-                await client.write_gatt_char(
-                    DEVICE_CONFIG_CHARACTERISTIC_UUID, payload, response=True
-                )
-                report = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
-            self._record_reported_progress(sensor_id, report, fallback="commanded")
-            LOGGER.info(
-                "commanded %s to install %s from %s:%s",
-                sensor_id,
-                pending["version"],
-                hub_address,
-                self._firmware_port,
-            )
-            return "commanded"
-        except Exception as error:  # noqa: BLE001 - the sensor may simply be away
-            message = str(error)[:240] or error.__class__.__name__
-            self._store.record_firmware_update_state(sensor_id, "failed", 0, message)
-            LOGGER.warning("could not command %s to update: %s", sensor_id, message)
-            return "failed"
+        return pending, payload, hub_address
+
+    async def _command_firmware_update(
+        self, client: Any, sensor_id: str, pending: dict[str, Any], payload: bytes, hub_address: str
+    ) -> str:
+        await client.write_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID, payload, response=True)
+        report = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
+        self._record_reported_progress(sensor_id, report, fallback="commanded")
+        LOGGER.info(
+            "commanded %s to install %s from %s:%s",
+            sensor_id,
+            pending["version"],
+            hub_address,
+            self._firmware_port,
+        )
+        return "commanded"
+
+    def _firmware_update_failed(self, sensor_id: str, error: Exception) -> None:
+        message = str(error)[:240] or error.__class__.__name__
+        self._store.record_firmware_update_state(sensor_id, "failed", 0, message)
+        LOGGER.warning("could not command %s to update: %s", sensor_id, message)
 
     def _record_reported_progress(
         self, sensor_id: str, report: bytes, fallback: Optional[str] = None
@@ -431,77 +543,234 @@ class DeviceConfigurationSynchronizer:
             LOGGER.warning("could not reach %s to release it: %s", sensor_id, str(error)[:240])
             return "unreachable"
 
-    async def synchronize(
-        self,
-        sensor_id: str,
-        observed_identifier: str,
-        acknowledge_report_id: int | None = None,
-    ) -> str:
-        """Deliver pending configuration and acknowledge a report, over one link.
-
-        Both need the same connection, so a report completing while a change is
-        waiting costs one connection rather than two.
-        """
+    async def synchronize(self, sensor_id: str, observed_identifier: str) -> str:
+        """Deliver pending configuration and read it back."""
         desired = self._store.pending_device_configuration(sensor_id)
-        if desired is None and acknowledge_report_id is None:
+        if desired is None:
             return "not-needed"
-        config = DeviceConfiguration(**desired) if desired is not None else None
-        payload = encode_device_configuration(config) if config is not None else None
+        config = DeviceConfiguration(**desired)
         try:
             factory = self._client_factory or self._load_client_factory()
             async with factory(observed_identifier, timeout=self._timeout) as client:
-                if acknowledge_report_id is not None:
-                    # The acknowledgement goes first: the sensor advertises
-                    # nothing newer until its oldest report is acknowledged.
+                await self._apply_configuration(client, sensor_id, config)
+            return "applied"
+        except Exception as error:  # noqa: BLE001 - transport failures are persisted and retried
+            self._configuration_failed(sensor_id, config, error)
+            return "failed"
+
+    async def _apply_configuration(
+        self, client: Any, sensor_id: str, config: DeviceConfiguration
+    ) -> None:
+        payload = encode_device_configuration(config)
+        await client.write_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID, payload, response=True)
+        acknowledgement = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
+        acknowledgement, station = split_station_status(acknowledgement)
+        if acknowledgement != payload:
+            raise ValueError("sensor configuration acknowledgement did not match")
+        acknowledged = decode_device_configuration(acknowledgement)
+        self._store.mark_device_configuration_applied(
+            sensor_id,
+            acknowledged.revision,
+            acknowledged.reporting_interval_seconds,
+        )
+        if station is not None:
+            # The sensor is the only one who knows whether it reached the
+            # network, so a console switched on stops saying it is waiting the
+            # moment the sensor answers. A console that is switched off is not
+            # waiting for anything, so not being joined is simply off rather
+            # than pending.
+            joined, address, version = station
+            self._store.record_station_report(sensor_id, version)
+            if not config.console_enabled:
+                state, address = "off", None
+            else:
+                state = "joined" if joined else "pending"
+            self._store.record_sensor_wifi_result(sensor_id, state, None, address or None)
+
+    def _configuration_failed(
+        self, sensor_id: str, config: DeviceConfiguration, error: Exception
+    ) -> None:
+        message = str(error)[:240] or error.__class__.__name__
+        self._store.mark_device_configuration_error(sensor_id, config.revision, message)
+        LOGGER.warning("could not synchronize %s over BLE: %s", sensor_id, message)
+
+    def owns(self, sensor_id: str) -> bool:
+        """Is this a sensor the hub may connect to for its reports?
+
+        The same rule configuration delivery follows: only an enrolled sensor
+        has the bond the characteristic requires.
+        """
+        sensor = self._store.sensor(sensor_id)
+        return sensor is not None and sensor["enrollment_status"] == "enrolled"
+
+    def report_delivery(self, sensor_id: str, report_id: int) -> tuple[bool, bool]:
+        """Whether this report is acknowledged, and whether one before it is missing."""
+        return self._store.report_delivery(sensor_id, report_id)
+
+    async def drain(
+        self,
+        sensor_id: str,
+        observed_identifier: str,
+        connection_target: Any,
+        ingest: Ingest,
+        *,
+        configure: bool = False,
+        station_status: bool = False,
+        firmware_update: bool = False,
+    ) -> DrainResult:
+        """Move the sensor's whole queue to the hub over one connection.
+
+        Configuration, status and update work that is due goes first on the same
+        link, so a sensor with a backlog is never too busy to be configured.
+        Each goes on failing and succeeding exactly as it does alone, and none
+        of them failing stops the drain.
+        """
+        desired = self._store.pending_device_configuration(sensor_id) if configure else None
+        config = DeviceConfiguration(**desired) if desired is not None else None
+        command = self._firmware_update_command(sensor_id) if firmware_update else None
+        if isinstance(command, str):
+            command = None
+        # Each step records its own outcome once it has been tried on the link;
+        # only the ones the link never reached are failed by losing it.
+        untried = {"configuration", "firmware_update"}
+        try:
+            factory = self._client_factory or self._load_client_factory()
+            async with factory(connection_target, timeout=self._timeout) as client:
+                if config is not None:
+                    untried.discard("configuration")
+                    try:
+                        await self._apply_configuration(client, sensor_id, config)
+                    except Exception as error:  # noqa: BLE001 - kept pending and retried
+                        self._configuration_failed(sensor_id, config, error)
+                    else:
+                        # The read-back already carried the station status.
+                        station_status = False
+                if station_status:
+                    try:
+                        await self._read_station(client, sensor_id)
+                    except Exception as error:  # noqa: BLE001 - asked again later
+                        LOGGER.warning(
+                            "could not read %s network state: %s", sensor_id, str(error)[:240]
+                        )
+                if command is not None:
+                    untried.discard("firmware_update")
+                    try:
+                        await self._command_firmware_update(client, sensor_id, *command)
+                    except Exception as error:  # noqa: BLE001 - recorded, retried later
+                        self._firmware_update_failed(sensor_id, error)
+                return await self._drain_queue(client, sensor_id, observed_identifier, ingest)
+        except Exception as error:  # noqa: BLE001 - the next advertisement tries again
+            if config is not None and "configuration" in untried:
+                self._configuration_failed(sensor_id, config, error)
+            if command is not None and "firmware_update" in untried:
+                self._firmware_update_failed(sensor_id, error)
+            LOGGER.warning(
+                "could not drain %s over BLE: %s",
+                sensor_id,
+                str(error)[:240] or error.__class__.__name__,
+            )
+            return DrainResult("failed")
+
+    async def _drain_queue(
+        self, client: Any, sensor_id: str, observed_identifier: str, ingest: Ingest
+    ) -> DrainResult:
+        stored_packets = pages = 0
+        acknowledged: Optional[int] = None
+        outcome = "more"
+        await client.write_gatt_char(
+            DEVICE_CONFIG_CHARACTERISTIC_UUID, DRAIN_REQUEST, response=True
+        )
+        try:
+            while pages < DRAIN_MAX_PAGES:
+                payload = bytes(await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID))
+                received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                pages += 1
+                try:
+                    reports = decode_queue_page(payload, sensor_id)
+                except ValueError as error:
+                    LOGGER.warning(
+                        "refused a queue page from %s: %s (%s)", sensor_id, error, payload.hex()
+                    )
+                    outcome = "failed"
+                    break
+                if not reports:
+                    outcome = "drained"
+                    break
+                if acknowledged is not None and reports[0].report_id <= acknowledged:
+                    # The sensor has not removed what it was told to. Reading
+                    # the same page again would only loop.
+                    LOGGER.warning(
+                        "queue page from %s repeats report %d, already acknowledged",
+                        sensor_id,
+                        reports[0].report_id,
+                    )
+                    outcome = "failed"
+                    break
+                page_acknowledged: list[int] = []
+                blocked = False
+                for report in reports:
+                    statuses = [
+                        await asyncio.to_thread(
+                            ingest,
+                            Advertisement(
+                                received_at=received_at,
+                                local_name=sensor_id,
+                                observed_identifier=observed_identifier,
+                                rssi=None,
+                                service_data=packet,
+                                source_adapter=DRAIN_SOURCE_ADAPTER,
+                            ),
+                        )
+                        for packet in (report.main, report.supplementary)
+                    ]
+                    stored_packets += statuses.count("accepted")
+                    # Everything on the page is stored, but only an unbroken
+                    # run of good reports is acknowledged: a report in
+                    # conflict stays on the sensor, and so does everything
+                    # after it, because the acknowledgement is cumulative.
+                    if blocked:
+                        continue
+                    if all(
+                        status in ("accepted", "duplicate") for status in statuses
+                    ) and self._store.report_is_acknowledgeable(sensor_id, report.report_id):
+                        page_acknowledged.append(report.report_id)
+                    else:
+                        LOGGER.warning(
+                            "report %d from %s cannot be acknowledged: %s",
+                            report.report_id,
+                            sensor_id,
+                            "/".join(statuses),
+                        )
+                        blocked = True
+                if page_acknowledged:
                     await client.write_gatt_char(
-                        REPORT_ACK_CHARACTERISTIC_UUID,
-                        encode_report_acknowledgement(acknowledge_report_id),
+                        DEVICE_CONFIG_CHARACTERISTIC_UUID,
+                        encode_cumulative_acknowledgement(page_acknowledged[-1]),
                         response=True,
                     )
-                    self._store.mark_report_acknowledged(sensor_id, acknowledge_report_id)
-                    LOGGER.info(
-                        "acknowledged report %d from %s", acknowledge_report_id, sensor_id
-                    )
-                if config is not None and payload is not None:
-                    await client.write_gatt_char(
-                        DEVICE_CONFIG_CHARACTERISTIC_UUID, payload, response=True
-                    )
-                    acknowledgement = bytes(
-                        await client.read_gatt_char(DEVICE_CONFIG_CHARACTERISTIC_UUID)
-                    )
-                    acknowledgement, station = split_station_status(acknowledgement)
-                    if acknowledgement != payload:
-                        raise ValueError("sensor configuration acknowledgement did not match")
-                    acknowledged = decode_device_configuration(acknowledgement)
-                    self._store.mark_device_configuration_applied(
-                        sensor_id,
-                        acknowledged.revision,
-                        acknowledged.reporting_interval_seconds,
-                    )
-                    if station is not None:
-                        # The sensor is the only one who knows whether it reached
-                        # the network, so a console switched on stops saying it is
-                        # waiting the moment the sensor answers. A console that is
-                        # switched off is not waiting for anything, so not being
-                        # joined is simply off rather than pending.
-                        joined, address, version = station
-                        self._store.record_station_report(sensor_id, version)
-                        if not config.console_enabled:
-                            state, address = "off", None
-                        else:
-                            state = "joined" if joined else "pending"
-                        self._store.record_sensor_wifi_result(
-                            sensor_id, state, None, address or None
-                        )
-            if config is not None and acknowledge_report_id is not None:
-                return "applied-and-acknowledged"
-            return "applied" if config is not None else "acknowledged"
-        except Exception as error:  # noqa: BLE001 - transport failures are persisted and retried
-            message = str(error)[:240] or error.__class__.__name__
-            if config is not None:
-                self._store.mark_device_configuration_error(sensor_id, config.revision, message)
-            LOGGER.warning("could not synchronize %s over BLE: %s", sensor_id, message)
-            return "failed"
+                    self._store.mark_reports_acknowledged(sensor_id, page_acknowledged)
+                    acknowledged = page_acknowledged[-1]
+                if blocked:
+                    outcome = "stopped"
+                    break
+        finally:
+            # Reads return the configuration again after this; a link that has
+            # already dropped has ended drain mode by itself.
+            try:
+                await client.write_gatt_char(
+                    DEVICE_CONFIG_CHARACTERISTIC_UUID, DRAIN_END, response=True
+                )
+            except Exception as error:  # noqa: BLE001 - the disconnect ends it too
+                LOGGER.debug("could not end the drain of %s: %s", sensor_id, error)
+        LOGGER.info(
+            "drained %s: %s, %d new packets over %d pages, acknowledged up to %s",
+            sensor_id,
+            outcome,
+            stored_packets,
+            pages,
+            acknowledged,
+        )
+        return DrainResult(outcome, stored_packets, pages, acknowledged)
 
     @staticmethod
     def _load_client_factory() -> ClientFactory:

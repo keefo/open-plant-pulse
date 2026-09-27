@@ -190,7 +190,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(payload[0], 7)
         self.assertNotEqual(payload[0], configuration[0])
         self.assertNotEqual(payload[0], 5)  # release
-        self.assertNotEqual(payload[0], 3)  # report acknowledgement
+        self.assertNotIn(payload[0], (0x20, 0x21, 0x22))  # bulk drain
 
     def test_refuses_a_command_a_sensor_could_not_act_on(self) -> None:
         for description, overrides in (
