@@ -38,8 +38,8 @@ static uint8_t whole_percent(uint32_t value, uint32_t per_percent)
     return (uint8_t)((value + per_percent / 2U) / per_percent);
 }
 
-size_t opp_bthome_encode_main(const opp_bthome_report_t *report,
-                              uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE])
+size_t opp_bthome_encode_packet1(const opp_bthome_report_t *report,
+                                 uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE])
 {
     if (report == NULL || output == NULL || report->report_id == 0 ||
         (!report->soil_available && !report->air_available) ||
@@ -75,8 +75,8 @@ size_t opp_bthome_encode_main(const opp_bthome_report_t *report,
     return offset;
 }
 
-size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
-                                       uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE])
+size_t opp_bthome_encode_packet2(const opp_bthome_report_t *report,
+                                 uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE])
 {
     if (report == NULL || output == NULL || report->report_id == 0 ||
         (report->battery_available && report->battery_percent > 100U) ||

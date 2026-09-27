@@ -66,7 +66,7 @@ python3 -m pip install -e './hub[dev]'
 ## Current status
 
 The development hub receives contract-v3 BTHome advertisements through Bleak, joins
-each report's main and supplementary packets into one reading keyed by report ID,
+each report's packet 1 and packet 2 into one reading keyed by report ID,
 drains each enrolled sensor's delivery queue over one connection (bulk drain with
 cumulative acknowledgement) so the sensor can drop what the hub has stored,
 persists unique readings and bounded receive

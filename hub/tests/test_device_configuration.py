@@ -20,7 +20,7 @@ from open_plant_pulse_hub.ingestion.device_configuration import (
     encode_device_configuration,
 )
 
-from test_ble_ingestion import FakeQueueSensor, main_hex, supplementary_hex
+from test_ble_ingestion import FakeQueueSensor, packet1_hex, packet2_hex
 
 FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3.json"
 
@@ -65,11 +65,11 @@ class DeviceConfigurationCodecTests(unittest.TestCase):
 
 
 
-def record(report_id, main, supplementary):
+def record(report_id, packet1, packet2):
     return (
         report_id.to_bytes(4, "little")
-        + bytes((len(main),)) + main
-        + bytes((len(supplementary),)) + supplementary
+        + bytes((len(packet1),)) + packet1
+        + bytes((len(packet2),)) + packet2
     )
 
 
@@ -89,11 +89,11 @@ class BulkDrainCodecTests(unittest.TestCase):
         self.assertEqual(
             reports,
             [
-                QueuedReport(1234, packets["main"], packets["supplementary"]),
+                QueuedReport(1234, packets["packet1"], packets["packet2"]),
                 QueuedReport(
                     1235,
-                    packets["main_air_only_no_timestamp"],
-                    packets["supplementary_report_id_only"],
+                    packets["packet1_air_only_no_timestamp"],
+                    packets["packet2_report_id_only"],
                 ),
             ],
         )
@@ -122,11 +122,11 @@ class BulkDrainCodecTests(unittest.TestCase):
 
     def test_refuses_a_malformed_page_whole(self) -> None:
         page = bytes.fromhex(self.fixture["page_hex"])
-        main_7, supplementary_7 = bytes.fromhex(main_hex(7)), bytes.fromhex(supplementary_hex(7))
-        main_8, supplementary_8 = bytes.fromhex(main_hex(8)), bytes.fromhex(supplementary_hex(8))
+        packet1_7, packet2_7 = bytes.fromhex(packet1_hex(7)), bytes.fromhex(packet2_hex(7))
+        packet1_8, packet2_8 = bytes.fromhex(packet1_hex(8)), bytes.fromhex(packet2_hex(8))
         nine = b"".join(
-            record(report_id, bytes.fromhex(main_hex(report_id)),
-                   bytes.fromhex(supplementary_hex(report_id)))
+            record(report_id, bytes.fromhex(packet1_hex(report_id)),
+                   bytes.fromhex(packet2_hex(report_id)))
             for report_id in range(1, 10)
         )
         for description, payload in (
@@ -140,17 +140,17 @@ class BulkDrainCodecTests(unittest.TestCase):
             ("truncated", page[:-1]),
             ("bytes after the last record", page + b"\x00"),
             ("count too low for the records", bytes((0x20, 1)) + page[2:]),
-            ("empty packet", bytes((0x20, 1)) + record(7, b"", supplementary_7)),
-            ("record ID not the packets'", bytes((0x20, 1)) + record(8, main_7, supplementary_7)),
-            ("packets of two reports", bytes((0x20, 1)) + record(7, main_7, supplementary_8)),
-            ("two main packets", bytes((0x20, 1)) + record(7, main_7, main_7)),
-            ("two supplementary packets",
-             bytes((0x20, 1)) + record(7, supplementary_7, supplementary_7)),
-            ("swapped packets", bytes((0x20, 1)) + record(7, supplementary_7, main_7)),
-            ("a beacon", bytes((0x20, 1)) + record(7, main_7, b"\x40")),
-            ("undecodable packet", bytes((0x20, 1)) + record(7, main_7, b"\x41\x3e\x07")),
-            ("out of order", bytes((0x20, 2)) + record(8, main_8, supplementary_8)
-             + record(7, main_7, supplementary_7)),
+            ("empty packet", bytes((0x20, 1)) + record(7, b"", packet2_7)),
+            ("record ID not the packets'", bytes((0x20, 1)) + record(8, packet1_7, packet2_7)),
+            ("packets of two reports", bytes((0x20, 1)) + record(7, packet1_7, packet2_8)),
+            ("two packet 1s", bytes((0x20, 1)) + record(7, packet1_7, packet1_7)),
+            ("two packet 2s",
+             bytes((0x20, 1)) + record(7, packet2_7, packet2_7)),
+            ("swapped packets", bytes((0x20, 1)) + record(7, packet2_7, packet1_7)),
+            ("a beacon", bytes((0x20, 1)) + record(7, packet1_7, b"\x40")),
+            ("undecodable packet", bytes((0x20, 1)) + record(7, packet1_7, b"\x41\x3e\x07")),
+            ("out of order", bytes((0x20, 2)) + record(8, packet1_8, packet2_8)
+             + record(7, packet1_7, packet2_7)),
             ("too long", bytes((0x20, 0)) + b"\x00" * 511),
         ):
             with self.subTest(description):
@@ -372,19 +372,19 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
                 "FROM advertisements WHERE source_adapter = ? GROUP BY packet_kind",
                 DRAIN_SOURCE_ADAPTER,
             ),
-            [("main", "accepted", "platform-identifier", None, 20),
-             ("supplementary", "accepted", "platform-identifier", None, 20)],
+            [("packet1", "accepted", "platform-identifier", None, 20),
+             ("packet2", "accepted", "platform-identifier", None, 20)],
         )
         newest = self.store.raw_sensor_reports(self.sensor_id, 1)[0]
         self.assertEqual(
             (newest["report_id"], newest["packet_kind"], newest["source_adapter"]),
-            (120, "supplementary", DRAIN_SOURCE_ADAPTER),
+            (120, "packet2", DRAIN_SOURCE_ADAPTER),
         )
 
     async def test_reports_already_heard_over_the_air_are_acknowledged_too(self) -> None:
         for report_id in (1, 2, 3):
             self.sensor.add(report_id)
-        for service_data_hex in (main_hex(2), supplementary_hex(2), main_hex(3)):
+        for service_data_hex in (packet1_hex(2), packet2_hex(2), packet1_hex(3)):
             self.hear(service_data_hex)
 
         result = await self.drain()
@@ -400,9 +400,9 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
             for packet in json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["packets"]
         }
         self.sensor.queue = [
-            (1234, packets["main"], packets["supplementary"]),
-            (1235, packets["main_air_only_no_timestamp"], packets["supplementary_report_id_only"]),
-            (1236, bytes.fromhex(main_hex(1236)), packets["supplementary_charging"]),
+            (1234, packets["packet1"], packets["packet2"]),
+            (1235, packets["packet1_air_only_no_timestamp"], packets["packet2_report_id_only"]),
+            (1236, bytes.fromhex(packet1_hex(1236)), packets["packet2_charging"]),
         ]
 
         result = await self.drain()
@@ -424,7 +424,7 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             self.rows(
-                "SELECT report_id, battery_charging FROM report_supplements "
+                "SELECT report_id, battery_charging FROM report_packet2 "
                 "WHERE sensor_id = ? ORDER BY report_id",
                 self.sensor_id,
             ),
@@ -438,7 +438,7 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_conflict_stops_the_acknowledgement_before_it(self) -> None:
         # Report 104 is stored with different content from what the sensor holds.
-        self.hear(main_hex(104, humidity=0x2D))
+        self.hear(packet1_hex(104, humidity=0x2D))
         for report_id in range(101, 111):
             self.sensor.add(report_id)
 
@@ -456,7 +456,7 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored, [104, 101, 102, 103, 105, 106, 107, 108])
 
     async def test_a_conflict_first_on_the_page_acknowledges_nothing(self) -> None:
-        self.hear(main_hex(101, humidity=0x2D))
+        self.hear(packet1_hex(101, humidity=0x2D))
         for report_id in (101, 102):
             self.sensor.add(report_id)
         result = await self.drain()
@@ -468,7 +468,7 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_page_with_a_mismatching_record_is_refused(self) -> None:
         self.sensor.add(7)
         self.sensor.queue.append(
-            (9, bytes.fromhex(main_hex(8)), bytes.fromhex(supplementary_hex(8)))
+            (9, bytes.fromhex(packet1_hex(8)), bytes.fromhex(packet2_hex(8)))
         )
 
         result = await self.drain()

@@ -70,7 +70,7 @@ class SensorManagementTests(unittest.TestCase):
         self.assertEqual([item["report_id"] for item in reports], [42, 43, 43, 42, 42, 42])
         self.assertEqual(
             [item["packet_kind"] for item in reports],
-            ["main", "supplementary", "main", "main", "supplementary", "main"],
+            ["packet1", "packet2", "packet1", "packet1", "packet2", "packet1"],
         )
         self.assertEqual(
             [item["decode_status"] for item in reports],
@@ -361,7 +361,7 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn('window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));', app)
         self.assertIn("trackRawReportsDisclosure();", app)
 
-    def test_latest_reading_carries_the_joined_supplement(self) -> None:
+    def test_latest_reading_carries_the_joined_packet2(self) -> None:
         query = urlencode({"sensor_id": "sensor-001122334455"})
         with self.request("/api/readings/latest?" + query) as response:
             reading = json.load(response)["reading"]

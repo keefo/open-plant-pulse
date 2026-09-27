@@ -348,7 +348,7 @@ known Modbus request CRC, valid and corrupted responses, signed/scaled values,
 the NPK-type probe's request and reply exactly as printed in its manual (CRCs
 included), out-of-range probe values, both register-reading functions
 (`0x03`/`0x04`),
-the contract-v3 main, supplementary and beacon packets byte for byte against
+the contract-v3 packet 1, packet 2 and beacon byte for byte against
 `protocol/fixtures/bthome-v3.json`, partial source omission, rounding and range
 limits, the acknowledgement token, the delivery queue's order, capacity,
 acknowledgement rules and restart behaviour against an in-memory store, and
@@ -387,7 +387,7 @@ length or CRC, or with moisture, temperature or conductivity outside the probe's
 measuring range, are rejected.
 
 All seven values reach the hub: moisture, soil temperature and conductivity in
-the contract-v3 main packet, and pH and N/P/K in the supplementary packet (see
+contract-v3 packet 1, and pH and N/P/K in packet 2 (see
 [BTHome reports](#bthome-reports)). A failed read logs the raw reply bytes,
 which distinguish a swapped A/B pair, a wrong baud rate and a wrong address.
 
@@ -457,10 +457,10 @@ Overview shows them in a Battery section.
 Firmware sends [contract v3](../protocol/README.md#bthome-contract-version-3).
 Each report takes the next report ID, gathers the latest SHT45 sample, soil
 sample (with pH and N/P/K), battery level and voltage, and the acquisition time
-when the clock is trusted, and becomes two packets: a main packet with the core
-measurements (24 bytes at most) and a supplementary one with battery level,
-voltage and charging state, pH and N/P/K, sent even when it carries only the
-report ID. Charging is current into the pack above the battery monitor's idle
+when the clock is trusted, and becomes two packets, both always sent: packet 1
+with the core measurements (24 bytes at most) and packet 2 with battery level,
+voltage and charging state, pH and N/P/K, or only the report ID when there are
+none. Charging is current into the pack above the battery monitor's idle
 threshold (15 mA). The broadcaster swaps
 between the two every 500 ms within one advertising window, since legacy
 advertising accepts new data while it runs. With no SHT45 or soil sample the

@@ -44,7 +44,7 @@ class DrainageObservation:
 class CareEventDetector:
     def __init__(self) -> None:
         self._previous: Dict[str, SensorReading] = {}
-        # The reading before the previous one, which a supplement arriving late
+        # The reading before the previous one, which a packet 2 arriving late
         # for the previous one is compared with.
         self._before_previous: Dict[str, SensorReading] = {}
         self._last_event_at: Dict[Tuple[str, str], datetime] = {}
@@ -148,9 +148,9 @@ class CareEventDetector:
         return events
 
     def amend(self, reading: SensorReading, detected_at: datetime) -> List[CareEvent]:
-        """Take in a reading whose supplement arrived after it was detected on.
+        """Take in a reading whose packet 2 arrived after it was detected on.
 
-        Nutrients travel in the supplement, so a fertilizing rise can only be
+        Nutrients travel in packet 2, so a fertilizing rise can only be
         judged once it has arrived. Only the latest reading is amended; an older
         one no longer describes the plant.
         """

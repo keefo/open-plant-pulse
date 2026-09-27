@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 19
+DATABASE_SCHEMA_VERSION = 20
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -573,6 +573,129 @@ MIGRATIONS: Dict[int, str] = {
             CHECK (battery_charging IS NULL OR battery_charging IN (0, 1));
         ALTER TABLE sensor_readings ADD COLUMN battery_charging INTEGER
             CHECK (battery_charging IS NULL OR battery_charging IN (0, 1));
+    """,
+    20: """
+        /* The two packets of a report are now called packet 1 and packet 2,
+           in the database as everywhere else. Nothing else changes.
+
+           The packet kind is named in a CHECK on advertisements, which cannot
+           be altered in place, so advertisements is rebuilt the way migration
+           17 rebuilt it: sensor_readings holds a foreign key into it and
+           foreign keys stay enforced inside this transaction, so the readings
+           table is rebuilt beside it, pointing at the new advertisements, and
+           the old tables are dropped child first. Every row keeps its ID. */
+        CREATE TABLE advertisements_v20 (
+            advertisement_id INTEGER PRIMARY KEY,
+            sensor_id TEXT REFERENCES sensors(sensor_id),
+            report_id INTEGER
+                CHECK (report_id IS NULL OR report_id BETWEEN 1 AND 4294967295),
+            packet_kind TEXT
+                CHECK (packet_kind IS NULL OR
+                       packet_kind IN ('packet1', 'packet2', 'beacon')),
+            /* The 8-bit packet ID of contract v2, kept so nothing already
+               recorded is lost. Nothing reads it. */
+            legacy_packet_id INTEGER,
+            received_at TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            source_adapter TEXT NOT NULL,
+            observed_identifier TEXT NOT NULL,
+            rssi INTEGER,
+            contract_version INTEGER,
+            payload_sha256 TEXT NOT NULL,
+            decode_status TEXT NOT NULL
+                CHECK (decode_status IN ('accepted', 'duplicate', 'conflict', 'rejected')),
+            decode_error TEXT,
+            service_data BLOB
+        );
+        INSERT INTO advertisements_v20 (
+            advertisement_id, sensor_id, report_id, packet_kind, legacy_packet_id,
+            received_at, transport, source_adapter, observed_identifier, rssi,
+            contract_version, payload_sha256, decode_status, decode_error,
+            service_data
+        )
+        SELECT advertisement_id, sensor_id, report_id,
+               CASE packet_kind
+                   WHEN 'main' THEN 'packet1'
+                   WHEN 'supplementary' THEN 'packet2'
+                   ELSE packet_kind
+               END,
+               legacy_packet_id, received_at, transport, source_adapter,
+               observed_identifier, rssi, contract_version, payload_sha256,
+               decode_status, decode_error, service_data
+        FROM advertisements;
+
+        CREATE TABLE sensor_readings_v20 (
+            reading_id INTEGER PRIMARY KEY,
+            /* The packet 1 the reading came from. */
+            advertisement_id INTEGER UNIQUE
+                REFERENCES advertisements_v20(advertisement_id) ON DELETE RESTRICT,
+            sensor_id TEXT NOT NULL REFERENCES sensors(sensor_id),
+            /* Null for readings stored before contract v3. */
+            report_id INTEGER
+                CHECK (report_id IS NULL OR report_id BETWEEN 1 AND 4294967295),
+            /* The 8-bit packet ID or sample number earlier readings carried,
+               kept so nothing already recorded is lost. Nothing reads it. */
+            legacy_packet_id INTEGER,
+            /* Null when the sensor did not know the time. received_at is never
+               copied in its place. */
+            observed_at TEXT,
+            received_at TEXT NOT NULL,
+            soil_temperature_c REAL,
+            moisture_percent REAL,
+            conductivity_us_cm INTEGER,
+            air_temperature_c REAL,
+            air_humidity_percent REAL,
+            soil_ph REAL,
+            nitrogen_mg_kg INTEGER,
+            phosphorus_mg_kg INTEGER,
+            potassium_mg_kg INTEGER,
+            battery_percent INTEGER
+                CHECK (battery_percent IS NULL OR battery_percent BETWEEN 0 AND 100),
+            battery_voltage_v REAL,
+            soil_source_status TEXT NOT NULL DEFAULT 'available'
+                CHECK (soil_source_status IN ('available', 'unavailable')),
+            air_source_status TEXT NOT NULL DEFAULT 'available'
+                CHECK (air_source_status IN ('available', 'unavailable')),
+            contract_version INTEGER NOT NULL DEFAULT 0,
+            /* When the hub last told the sensor this report is stored. */
+            acknowledged_at TEXT,
+            battery_charging INTEGER
+                CHECK (battery_charging IS NULL OR battery_charging IN (0, 1))
+        );
+        INSERT INTO sensor_readings_v20 (
+            reading_id, advertisement_id, sensor_id, report_id, legacy_packet_id,
+            observed_at, received_at, soil_temperature_c, moisture_percent,
+            conductivity_us_cm, air_temperature_c, air_humidity_percent, soil_ph,
+            nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg, battery_percent,
+            battery_voltage_v, soil_source_status, air_source_status,
+            contract_version, acknowledged_at, battery_charging
+        )
+        SELECT reading_id, advertisement_id, sensor_id, report_id, legacy_packet_id,
+               observed_at, received_at, soil_temperature_c, moisture_percent,
+               conductivity_us_cm, air_temperature_c, air_humidity_percent, soil_ph,
+               nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg, battery_percent,
+               battery_voltage_v, soil_source_status, air_source_status,
+               contract_version, acknowledged_at, battery_charging
+        FROM sensor_readings;
+
+        DROP TABLE sensor_readings;
+        DROP TABLE advertisements;
+        ALTER TABLE advertisements_v20 RENAME TO advertisements;
+        ALTER TABLE sensor_readings_v20 RENAME TO sensor_readings;
+        CREATE INDEX advertisements_by_sensor_time
+        ON advertisements(sensor_id, advertisement_id DESC);
+        CREATE INDEX advertisements_by_status_time
+        ON advertisements(decode_status, advertisement_id DESC);
+        CREATE INDEX advertisements_conflicts_by_report
+        ON advertisements(sensor_id, report_id) WHERE decode_status = 'conflict';
+        CREATE INDEX sensor_readings_by_sensor_time
+        ON sensor_readings(sensor_id, observed_at DESC);
+        CREATE UNIQUE INDEX sensor_readings_by_report
+        ON sensor_readings(sensor_id, report_id) WHERE report_id IS NOT NULL;
+
+        /* Nothing references the packet-2 table and it has no CHECK naming a
+           packet, so a rename carries every row and its primary key along. */
+        ALTER TABLE report_supplements RENAME TO report_packet2;
     """,
 }
 

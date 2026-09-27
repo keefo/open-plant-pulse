@@ -326,30 +326,30 @@ static void assert_encodes(size_t (*encode)(const opp_bthome_report_t *, uint8_t
 static void test_bthome_v3_fixture(void)
 {
     opp_bthome_report_t report = fixture_report();
-    assert_encodes(opp_bthome_encode_main, &report,
+    assert_encodes(opp_bthome_encode_packet1, &report,
                    "40022e092e2c2f643ed2040000451001500037b86a562900");
-    assert_encodes(opp_bthome_encode_supplementary, &report,
+    assert_encodes(opp_bthome_encode_packet2, &report,
                    "4001600c401016003ed204000054080144010002000700");
 
     report.report_id = 1235;
     report.battery_available = false;
     report.soil_extras_available = false;
-    assert_encodes(opp_bthome_encode_supplementary, &report, "403ed3040000");
+    assert_encodes(opp_bthome_encode_packet2, &report, "403ed3040000");
 
-    /* Charging, with no soil extras: fixture "supplementary_charging". */
+    /* Charging, with no soil extras: fixture "packet2_charging". */
     report = fixture_report();
     report.report_id = 1236;
     report.battery_percent = 91;
     report.battery_millivolts = 4116;
     report.battery_charging = true;
     report.soil_extras_available = false;
-    assert_encodes(opp_bthome_encode_supplementary, &report, "40015b0c141016013ed4040000");
+    assert_encodes(opp_bthome_encode_packet2, &report, "40015b0c141016013ed4040000");
 
     report = fixture_report();
     report.report_id = 1235;
     report.timestamp_valid = false;
     report.soil_available = false;
-    assert_encodes(opp_bthome_encode_main, &report, "402e2c3ed3040000451001");
+    assert_encodes(opp_bthome_encode_packet1, &report, "402e2c3ed3040000451001");
 
     uint8_t payload[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
     assert(opp_bthome_encode_beacon(payload) == 1 && payload[0] == 0x40);
@@ -361,50 +361,50 @@ static void test_bthome_v3_rules(void)
     opp_bthome_report_t report = fixture_report();
 
     /* The largest packets still fit a legacy advertisement. */
-    assert(opp_bthome_encode_main(&report, payload) == OPP_BTHOME_SERVICE_DATA_MAX_SIZE);
-    assert(opp_bthome_encode_supplementary(&report, payload) == 23);
+    assert(opp_bthome_encode_packet1(&report, payload) == OPP_BTHOME_SERVICE_DATA_MAX_SIZE);
+    assert(opp_bthome_encode_packet2(&report, payload) == 23);
 
     /* Percentages round to the nearest whole point. */
     report = fixture_report();
     report.air_humidity_hundredths_percent = 4449;
     report.soil_moisture_tenths_percent = 325;
-    assert(opp_bthome_encode_main(&report, payload) > 0);
+    assert(opp_bthome_encode_packet1(&report, payload) > 0);
     assert(payload[4] == 0x2E && payload[5] == 44 && payload[6] == 0x2F && payload[7] == 33);
 
     /* Report ID 0 is never valid. */
     report = fixture_report();
     report.report_id = 0;
-    assert(opp_bthome_encode_main(&report, payload) == 0);
-    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+    assert(opp_bthome_encode_packet1(&report, payload) == 0);
+    assert(opp_bthome_encode_packet2(&report, payload) == 0);
 
-    /* No soil and no air: no main packet, only a beacon. */
+    /* No soil and no air: no packet 1, only a beacon. */
     report = fixture_report();
     report.soil_available = false;
     report.air_available = false;
-    assert(opp_bthome_encode_main(&report, payload) == 0);
+    assert(opp_bthome_encode_packet1(&report, payload) == 0);
 
-    /* Nothing else to carry: the supplementary packet still goes, with the
+    /* Nothing else to carry: the packet 2 still goes, with the
      * report ID alone, so the hub can tell the report is complete. */
     report = fixture_report();
     report.battery_available = false;
     report.soil_extras_available = false;
-    assert(opp_bthome_encode_supplementary(&report, payload) == 6);
+    assert(opp_bthome_encode_packet2(&report, payload) == 6);
 
     /* Out-of-range values are refused rather than sent. */
     report = fixture_report();
     report.soil_moisture_tenths_percent = 1001;
-    assert(opp_bthome_encode_main(&report, payload) == 0);
+    assert(opp_bthome_encode_packet1(&report, payload) == 0);
     report = fixture_report();
     report.ph_tenths = 141;
-    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+    assert(opp_bthome_encode_packet2(&report, payload) == 0);
     report = fixture_report();
     report.battery_percent = 101;
-    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+    assert(opp_bthome_encode_packet2(&report, payload) == 0);
 
     /* A negative soil temperature is two's complement in hundredths. */
     report = fixture_report();
     report.soil_temperature_tenths_celsius = -52;
-    assert(opp_bthome_encode_main(&report, payload) > 0);
+    assert(opp_bthome_encode_packet1(&report, payload) > 0);
     assert(payload[1] == 0x02 && payload[2] == 0xf8 && payload[3] == 0xfd);
 }
 
@@ -501,12 +501,12 @@ static opp_report_queue_storage_t memory_storage(memory_store_t *store)
     };
 }
 
-static opp_queued_report_t queued_hex(uint32_t report_id, const char *main_hex,
-                                      const char *supplementary_hex)
+static opp_queued_report_t queued_hex(uint32_t report_id, const char *packet1_hex,
+                                      const char *packet2_hex)
 {
     opp_queued_report_t entry = {.report_id = report_id};
-    entry.main_size = (uint8_t)from_hex(main_hex, entry.main);
-    entry.supplementary_size = (uint8_t)from_hex(supplementary_hex, entry.supplementary);
+    entry.packet1_size = (uint8_t)from_hex(packet1_hex, entry.packet1);
+    entry.packet2_size = (uint8_t)from_hex(packet2_hex, entry.packet2);
     return entry;
 }
 

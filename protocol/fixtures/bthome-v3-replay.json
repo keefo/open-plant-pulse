@@ -4,7 +4,7 @@
   "service_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb",
   "events": [
     {
-      "id": "sensor-a-main",
+      "id": "sensor-a-packet1",
       "received_at": "2026-09-13T12:00:00Z",
       "local_name": "sensor-aabbccddeeff",
       "observed_identifier": "replay-a",
@@ -12,7 +12,7 @@
       "service_data_hex": "40022e092e362f203e2a00000045f200504090a66a56d204",
       "expected_status": "accepted",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "sensor_id": "sensor-aabbccddeeff",
         "report_id": 42,
         "observed_at": "2026-09-13T12:00:00Z",
@@ -26,7 +26,7 @@
       }
     },
     {
-      "id": "sensor-a-supplementary",
+      "id": "sensor-a-packet2",
       "received_at": "2026-09-13T12:00:01Z",
       "local_name": "sensor-aabbccddeeff",
       "observed_identifier": "replay-a",
@@ -34,7 +34,7 @@
       "service_data_hex": "4001570c480f16003e2a000000540801410c0008001e00",
       "expected_status": "accepted",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "sensor_id": "sensor-aabbccddeeff",
         "report_id": 42,
         "battery_percent": 87,
@@ -47,7 +47,7 @@
       }
     },
     {
-      "id": "sensor-a-main-repeated",
+      "id": "sensor-a-packet1-repeated",
       "received_at": "2026-09-13T12:00:02Z",
       "local_name": "sensor-aabbccddeeff",
       "observed_identifier": "replay-a",
@@ -64,7 +64,7 @@
       "service_data_hex": "402e2e3e2b00000045f500",
       "expected_status": "accepted",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "sensor_id": "sensor-aabbccddeeff",
         "report_id": 43,
         "observed_at": null,
@@ -78,7 +78,7 @@
       }
     },
     {
-      "id": "sensor-a-supplementary-report-id-only",
+      "id": "sensor-a-packet2-report-id-only",
       "received_at": "2026-09-13T12:30:01Z",
       "local_name": "sensor-aabbccddeeff",
       "observed_identifier": "replay-a",
@@ -86,7 +86,7 @@
       "service_data_hex": "403e2b000000",
       "expected_status": "accepted",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "sensor_id": "sensor-aabbccddeeff",
         "report_id": 43,
         "battery_percent": null,
@@ -99,7 +99,7 @@
       }
     },
     {
-      "id": "sensor-b-supplementary-first",
+      "id": "sensor-b-packet2-first",
       "received_at": "2026-09-13T12:00:03Z",
       "local_name": "sensor-001122334455",
       "observed_identifier": "replay-b",
@@ -107,7 +107,7 @@
       "service_data_hex": "4001400c750e16013e07000000",
       "expected_status": "accepted",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "sensor_id": "sensor-001122334455",
         "report_id": 7,
         "battery_percent": 64,
@@ -128,7 +128,7 @@
       "service_data_hex": "402e373e0700000045f100504390a66a",
       "expected_status": "accepted",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "sensor_id": "sensor-001122334455",
         "report_id": 7,
         "observed_at": "2026-09-13T12:00:03Z",
@@ -150,7 +150,7 @@
       "service_data_hex": "4002b7072f283eff000000504490a66a562003",
       "expected_status": "accepted",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "sensor_id": "sensor-102030405060",
         "report_id": 255,
         "observed_at": "2026-09-13T12:00:04Z",
@@ -164,7 +164,7 @@
       }
     },
     {
-      "id": "sensor-c-supplementary-report-id-only",
+      "id": "sensor-c-packet2-report-id-only",
       "received_at": "2026-09-13T12:00:04Z",
       "local_name": "sensor-102030405060",
       "observed_identifier": "replay-c",
@@ -172,7 +172,7 @@
       "service_data_hex": "403eff000000",
       "expected_status": "accepted",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "sensor_id": "sensor-102030405060",
         "report_id": 255,
         "battery_percent": null,
@@ -185,7 +185,7 @@
       }
     },
     {
-      "id": "sensor-a-main-conflict",
+      "id": "sensor-a-packet1-conflict",
       "received_at": "2026-09-13T12:31:00Z",
       "local_name": "sensor-aabbccddeeff",
       "observed_identifier": "replay-a",

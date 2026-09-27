@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import unittest
 
-from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
+from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
 from open_plant_pulse_hub.ingestion.bthome import (
     decode_service_data,
     is_beacon,
@@ -14,8 +14,8 @@ REPLAY_FIXTURE_PATH = (
     Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
 )
 SENSOR_ID = "sensor-aabbccddeeff"
-MAIN_HEX = "40022e092e2c2f643ed2040000451001500037b86a562900"
-SUPPLEMENTARY_HEX = "4001600c401016003ed204000054080144010002000700"
+PACKET1_HEX = "40022e092e2c2f643ed2040000451001500037b86a562900"
+PACKET2_HEX = "4001600c401016003ed204000054080144010002000700"
 
 
 def decode(service_data_hex: str):
@@ -32,11 +32,11 @@ class BTHomeFixtureTests(unittest.TestCase):
         self.assertEqual(self.fixture["contract_version"], 3)
         self.assertEqual(
             {packet["expected"]["kind"] for packet in self.fixture["packets"]},
-            {"main", "supplementary", "beacon"},
+            {"packet1", "packet2", "beacon"},
         )
 
     def test_decodes_every_fixture_packet_exactly(self) -> None:
-        kinds = {"main": SensorReading, "supplementary": ReportSupplement}
+        kinds = {"packet1": SensorReading, "packet2": ReportPacket2}
         for packet in self.fixture["packets"]:
             with self.subTest(packet["name"]):
                 service_data = bytes.fromhex(packet["service_data_hex"])
@@ -55,24 +55,24 @@ class BTHomeFixtureTests(unittest.TestCase):
                 for field, value in expected.items():
                     self.assertEqual(getattr(decoded, field), value, field)
 
-    def test_every_supplementary_packet_says_whether_it_is_charging(self) -> None:
+    def test_every_packet2_says_whether_it_is_charging(self) -> None:
         charging = {
             packet["name"]: packet["expected"]["battery_charging"]
             for packet in self.fixture["packets"]
-            if packet["expected"]["kind"] == "supplementary"
+            if packet["expected"]["kind"] == "packet2"
         }
         self.assertEqual(
             charging,
             {
-                "supplementary": False,
-                "supplementary_report_id_only": None,
-                "supplementary_charging": True,
+                "packet2": False,
+                "packet2_report_id_only": None,
+                "packet2_charging": True,
             },
         )
 
     def test_decodes_every_replay_packet_as_its_expectation_says(self) -> None:
         replay = json.loads(REPLAY_FIXTURE_PATH.read_text(encoding="utf-8"))
-        kinds = {"main": SensorReading, "supplementary": ReportSupplement}
+        kinds = {"packet1": SensorReading, "packet2": ReportPacket2}
         checked = 0
         for event in replay["events"]:
             if "expected" not in event:
@@ -90,22 +90,22 @@ class BTHomeFixtureTests(unittest.TestCase):
 
 
 class BTHomeDecoderTests(unittest.TestCase):
-    def test_a_report_id_alone_is_a_supplementary_packet(self) -> None:
+    def test_a_report_id_alone_is_packet2(self) -> None:
         # Every report sends one, so that the hub knows when a report is complete
         # even when there is nothing else to put in it.
-        supplement = decode("403ed3040000")
-        self.assertIsInstance(supplement, ReportSupplement)
-        self.assertEqual(supplement.report_id, 1235)
-        self.assertIsNone(supplement.battery_percent)
-        self.assertIsNone(supplement.battery_charging)
-        self.assertIsNone(supplement.soil_ph)
+        packet2 = decode("403ed3040000")
+        self.assertIsInstance(packet2, ReportPacket2)
+        self.assertEqual(packet2.report_id, 1235)
+        self.assertIsNone(packet2.battery_percent)
+        self.assertIsNone(packet2.battery_charging)
+        self.assertIsNone(packet2.soil_ph)
 
     def test_a_timestamp_is_optional_and_never_invented(self) -> None:
         reading = decode("402e2c3ed3040000451001")
         self.assertIsNone(reading.observed_at)
         self.assertEqual(reading.report_id, 1235)
 
-    def test_decodes_supplementary_packets_with_one_group_each(self) -> None:
+    def test_decodes_packet2_variants_with_one_group_each(self) -> None:
         battery_only = decode("4001600c401016013e01000000")
         self.assertEqual(battery_only.battery_percent, 96)
         self.assertEqual(battery_only.battery_voltage_v, 4.16)
@@ -124,7 +124,7 @@ class BTHomeDecoderTests(unittest.TestCase):
             "encrypted device info": "41022e092e2c2f643ed2040000451001500037b86a562900",
             "no report ID": "40022e092e2c2f64451001500037b86a562900",
             "report ID zero": "40022e092e2c2f643e00000000451001500037b86a562900",
-            "truncated object": MAIN_HEX[:-2],
+            "truncated object": PACKET1_HEX[:-2],
             "truncated report ID": "402e2c3ed304",
             "unknown object": "40022e092e2c2f643ed2040000451001500037b86a5629005a01",
             "descending order": "402f64022e092e2c3ed2040000451001500037b86a562900",
@@ -135,8 +135,8 @@ class BTHomeDecoderTests(unittest.TestCase):
             "moisture above 100": "40022e092e2c2f653ed2040000451001500037b86a562900",
             "humidity above 100": "402e653ed3040000451001",
             "zero timestamp": "402e2c3ed304000045100150" + "00000000",
-            "mixed main and supplementary": "4001600c401016002e2c3ed3040000451001",
-            "charging in a main packet": "40022e0916002e2c2f643ed2040000451001",
+            "mixed packet 1 and packet 2": "4001600c401016002e2c3ed3040000451001",
+            "charging in packet 1": "40022e0916002e2c2f643ed2040000451001",
             "battery without voltage": "40016016003ed3040000",
             "voltage without battery": "400c401016003ed3040000",
             "battery above 100": "4001650c401016003ed3040000",
@@ -154,7 +154,7 @@ class BTHomeDecoderTests(unittest.TestCase):
             # marked one is no longer part of the contract.
             "button event": "403a013ed3040000",
             "button event with battery": "4001600c401016003a013ed304000054080144010002000700",
-            "main and report ID with a button event": "402e2c3a013ed3040000451001",
+            "packet 1 and report ID with a button event": "402e2c3a013ed3040000451001",
             "extras with the wrong length": "403ed30400005407014401000200",
             "extras of an unknown layout": "403ed304000054080244010002000700",
             "pH above 14": "403ed30400005408018d010002000700",
@@ -173,7 +173,7 @@ class BTHomeDecoderTests(unittest.TestCase):
         self.assertFalse(is_beacon(b""))
         self.assertFalse(is_beacon(b"\x41"))
         self.assertFalse(is_beacon(bytes.fromhex("400007")))
-        self.assertFalse(is_beacon(bytes.fromhex(MAIN_HEX)))
+        self.assertFalse(is_beacon(bytes.fromhex(PACKET1_HEX)))
 
     def test_accepts_only_the_lowercase_sensor_name(self) -> None:
         self.assertEqual(

@@ -94,8 +94,8 @@ size_t opp_report_queue_page(opp_report_queue_t *queue,
          counter != queue->tail && count < OPP_REPORT_QUEUE_PAGE_REPORTS; ++counter) {
         opp_queued_report_t entry;
         if (!load_at(queue, counter, &entry) ||
-            entry.main_size > OPP_BTHOME_SERVICE_DATA_MAX_SIZE ||
-            entry.supplementary_size > OPP_BTHOME_SERVICE_DATA_MAX_SIZE) {
+            entry.packet1_size > OPP_BTHOME_SERVICE_DATA_MAX_SIZE ||
+            entry.packet2_size > OPP_BTHOME_SERVICE_DATA_MAX_SIZE) {
             /* Serve what could be read; the rest waits for the next page. */
             break;
         }
@@ -103,12 +103,12 @@ size_t opp_report_queue_page(opp_report_queue_t *queue,
         output[offset++] = (uint8_t)(entry.report_id >> 8U);
         output[offset++] = (uint8_t)(entry.report_id >> 16U);
         output[offset++] = (uint8_t)(entry.report_id >> 24U);
-        output[offset++] = entry.main_size;
-        memcpy(&output[offset], entry.main, entry.main_size);
-        offset += entry.main_size;
-        output[offset++] = entry.supplementary_size;
-        memcpy(&output[offset], entry.supplementary, entry.supplementary_size);
-        offset += entry.supplementary_size;
+        output[offset++] = entry.packet1_size;
+        memcpy(&output[offset], entry.packet1, entry.packet1_size);
+        offset += entry.packet1_size;
+        output[offset++] = entry.packet2_size;
+        memcpy(&output[offset], entry.packet2, entry.packet2_size);
+        offset += entry.packet2_size;
         if (entry.report_id > queue->served_through) {
             queue->served_through = entry.report_id;
         }

@@ -10,7 +10,7 @@ from statistics import median
 from threading import Condition
 from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
-from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
+from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
 from open_plant_pulse_hub.domain.plant_profiles import load_plant_profiles
 
@@ -28,15 +28,15 @@ READING_COLUMNS = """
     soil_source_status, air_source_status, contract_version,
     battery_percent, battery_voltage_v, battery_charging
 """
-# What a main packet says about its report. The same report ID with the same
+# What packet 1 says about its report. The same report ID with the same
 # values is the sensor repeating itself; with different values it is a conflict.
-MAIN_CONTENT_COLUMNS = """
+PACKET1_CONTENT_COLUMNS = """
     observed_at, soil_temperature_c, moisture_percent, conductivity_us_cm,
     air_temperature_c, air_humidity_percent, soil_source_status, air_source_status
 """
-# The same for a supplementary packet. These are also the reading's columns, in
+# The same for packet 2. These are also the reading's columns, in
 # this order.
-SUPPLEMENT_CONTENT_COLUMNS = """
+PACKET2_CONTENT_COLUMNS = """
     battery_percent, battery_voltage_v, soil_ph, nitrogen_mg_kg,
     phosphorus_mg_kg, potassium_mg_kg, battery_charging
 """
@@ -169,12 +169,12 @@ class ReadingStore:
         rssi: Optional[int],
         service_data: bytes,
     ) -> str:
-        """Persist one decoded main packet and, for a new report, its reading.
+        """Persist one decoded packet 1 and, for a new report, its reading.
 
         The report key is the sensor and its report ID. A report already stored
         with the same measurements is the sensor advertising it again and stores
         nothing; one stored with different measurements is a conflict, which is
-        logged and never overwrites what is there. A supplement that arrived
+        logged and never overwrites what is there. A packet 2 that arrived
         first is joined onto the reading as it is stored.
         """
         received_datetime = self._observation_datetime(received_at, datetime.now(timezone.utc))
@@ -191,17 +191,17 @@ class ReadingStore:
                 )
                 stored = self._database.execute(
                     f"""
-                    SELECT {MAIN_CONTENT_COLUMNS}
+                    SELECT {PACKET1_CONTENT_COLUMNS}
                     FROM sensor_readings
                     WHERE sensor_id = ? AND report_id = ?
                     """,
                     (reading.sensor_id, reading.report_id),
                 ).fetchone()
-                status = self._report_status(stored, self._main_content(reading))
+                status = self._report_status(stored, self._packet1_content(reading))
                 advertisement_id = self._log_advertisement(
                     reading.sensor_id,
                     reading.report_id,
-                    "main",
+                    "packet1",
                     status,
                     received_at,
                     observed_identifier,
@@ -211,16 +211,16 @@ class ReadingStore:
                     service_data,
                 )
                 if status == "accepted":
-                    supplement = self._database.execute(
+                    packet2 = self._database.execute(
                         f"""
-                        SELECT {SUPPLEMENT_CONTENT_COLUMNS}
-                        FROM report_supplements
+                        SELECT {PACKET2_CONTENT_COLUMNS}
+                        FROM report_packet2
                         WHERE sensor_id = ? AND report_id = ?
                         """,
                         (reading.sensor_id, reading.report_id),
                     ).fetchone()
-                    if supplement is not None:
-                        reading = self._with_supplement(reading, supplement)
+                    if packet2 is not None:
+                        reading = self._with_packet2(reading, packet2)
                     self._insert_reading(reading, received_at, advertisement_id)
                 self._trim_receive_diagnostics()
             if status != "accepted":
@@ -237,29 +237,29 @@ class ReadingStore:
             self._condition.notify_all()
             return status
 
-    def add_supplement(
+    def add_packet2(
         self,
-        supplement: ReportSupplement,
+        packet2: ReportPacket2,
         received_at: str,
         observed_identifier: str,
         source_adapter: str,
         rssi: Optional[int],
         service_data: bytes,
     ) -> str:
-        """Persist one decoded supplementary packet and attach it to its reading.
+        """Persist one decoded packet 2 and attach it to its reading.
 
-        The supplement is kept whether or not the main packet has arrived; a
+        Packet 2 is kept whether or not packet 1 has arrived; a
         reading stored later picks it up. Duplicates and conflicts are judged
-        against the stored supplement exactly as main packets are against the
+        against the stored packet 2 exactly as packet 1 is against the
         stored reading.
         """
-        content = self._supplement_content(supplement)
+        content = self._packet2_content(packet2)
         attached: Optional[Tuple[SensorReading, str]] = None
         with self._condition:
             with self._database:
                 self._ensure_sensor(
-                    supplement.sensor_id,
-                    supplement.contract_version,
+                    packet2.sensor_id,
+                    packet2.contract_version,
                     received_at,
                     transport="bthome",
                     identity_kind="device-local-name",
@@ -268,33 +268,33 @@ class ReadingStore:
                 )
                 stored = self._database.execute(
                     f"""
-                    SELECT {SUPPLEMENT_CONTENT_COLUMNS}
-                    FROM report_supplements
+                    SELECT {PACKET2_CONTENT_COLUMNS}
+                    FROM report_packet2
                     WHERE sensor_id = ? AND report_id = ?
                     """,
-                    (supplement.sensor_id, supplement.report_id),
+                    (packet2.sensor_id, packet2.report_id),
                 ).fetchone()
                 status = self._report_status(stored, content)
                 self._log_advertisement(
-                    supplement.sensor_id,
-                    supplement.report_id,
-                    "supplementary",
+                    packet2.sensor_id,
+                    packet2.report_id,
+                    "packet2",
                     status,
                     received_at,
                     observed_identifier,
                     source_adapter,
                     rssi,
-                    supplement.contract_version,
+                    packet2.contract_version,
                     service_data,
                 )
                 if status == "accepted":
                     self._database.execute(
                         f"""
-                        INSERT INTO report_supplements (
-                            sensor_id, report_id, received_at, {SUPPLEMENT_CONTENT_COLUMNS}
+                        INSERT INTO report_packet2 (
+                            sensor_id, report_id, received_at, {PACKET2_CONTENT_COLUMNS}
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (supplement.sensor_id, supplement.report_id, received_at, *content),
+                        (packet2.sensor_id, packet2.report_id, received_at, *content),
                     )
                     self._database.execute(
                         """
@@ -304,7 +304,7 @@ class ReadingStore:
                             battery_charging = ?
                         WHERE sensor_id = ? AND report_id = ?
                         """,
-                        (*content, supplement.sensor_id, supplement.report_id),
+                        (*content, packet2.sensor_id, packet2.report_id),
                     )
                     row = self._database.execute(
                         f"""
@@ -312,7 +312,7 @@ class ReadingStore:
                         FROM sensor_readings
                         WHERE sensor_id = ? AND report_id = ?
                         """,
-                        (supplement.sensor_id, supplement.report_id),
+                        (packet2.sensor_id, packet2.report_id),
                     ).fetchone()
                     if row is not None:
                         item = self._deserialize_row(row)
@@ -332,7 +332,7 @@ class ReadingStore:
                 ),
                 maxlen=self._history_size,
             )
-            # Nutrients travel in the supplement, so a rise in them can only be
+            # Nutrients travel in packet 2, so a rise in them can only be
             # seen once it has joined its reading.
             observed_datetime = self._observation_datetime(
                 reading.observed_at,
@@ -357,9 +357,9 @@ class ReadingStore:
                 """
                 SELECT 1
                 FROM sensor_readings
-                JOIN report_supplements
-                  ON report_supplements.sensor_id = sensor_readings.sensor_id
-                 AND report_supplements.report_id = sensor_readings.report_id
+                JOIN report_packet2
+                  ON report_packet2.sensor_id = sensor_readings.sensor_id
+                 AND report_packet2.report_id = sensor_readings.report_id
                 JOIN sensors ON sensors.sensor_id = sensor_readings.sensor_id
                 WHERE sensor_readings.sensor_id = ?
                   AND sensor_readings.report_id = ?
@@ -423,9 +423,9 @@ class ReadingStore:
                 """
                 SELECT COUNT(*)
                 FROM sensor_readings
-                JOIN report_supplements
-                  ON report_supplements.sensor_id = sensor_readings.sensor_id
-                 AND report_supplements.report_id = sensor_readings.report_id
+                JOIN report_packet2
+                  ON report_packet2.sensor_id = sensor_readings.sensor_id
+                 AND report_packet2.report_id = sensor_readings.report_id
                 WHERE sensor_readings.sensor_id = ?
                   AND sensor_readings.report_id > ? AND sensor_readings.report_id < ?
                 """,
@@ -1184,7 +1184,7 @@ class ReadingStore:
             )
             self._database.execute("DELETE FROM sensor_readings WHERE sensor_id = ?", (sensor_id,))
             self._database.execute(
-                "DELETE FROM report_supplements WHERE sensor_id = ?", (sensor_id,)
+                "DELETE FROM report_packet2 WHERE sensor_id = ?", (sensor_id,)
             )
             self._database.execute("DELETE FROM care_events WHERE sensor_id = ?", (sensor_id,))
             self._database.execute("DELETE FROM advertisements WHERE sensor_id = ?", (sensor_id,))
@@ -1533,7 +1533,7 @@ class ReadingStore:
     def latest(self, sensor_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Return the newest complete reading, for one sensor or any.
 
-        A contract-v3 report is complete once its supplementary packet is
+        A contract-v3 report is complete once its packet 2 is
         stored too. The newest row can be a report whose second packet is
         seconds away, and showing it blanked pH, N/P/K and battery until then:
         with a report every few seconds the page flashed between the two.
@@ -1551,9 +1551,9 @@ class ReadingStore:
                 FROM sensor_readings AS reading
                 WHERE (? IS NULL OR sensor_id = ?)
                   AND (report_id IS NULL OR advertisement_id IS NULL OR EXISTS (
-                      SELECT 1 FROM report_supplements AS supplement
-                      WHERE supplement.sensor_id = reading.sensor_id
-                        AND supplement.report_id = reading.report_id
+                      SELECT 1 FROM report_packet2 AS packet2
+                      WHERE packet2.sensor_id = reading.sensor_id
+                        AND packet2.report_id = reading.report_id
                   ))
                 ORDER BY report_id IS NULL, report_id DESC, reading_id DESC
                 LIMIT 1
@@ -2009,18 +2009,18 @@ class ReadingStore:
             self._database.commit()
 
     def _trim_receive_diagnostics(self) -> None:
-        # Only an accepted main packet has a reading pointing at it. Everything
-        # else is diagnostics, beacons and supplements included: a supplement's
-        # values are kept in report_supplements, not in its packet.
+        # Only an accepted packet 1 has a reading pointing at it. Everything
+        # else is diagnostics, beacons and packet 2 included: packet 2's
+        # values are kept in report_packet2, not in its packet.
         self._database.execute(
             """
             DELETE FROM advertisements
-            WHERE (decode_status != 'accepted' OR packet_kind IN ('supplementary', 'beacon'))
+            WHERE (decode_status != 'accepted' OR packet_kind IN ('packet2', 'beacon'))
               AND advertisement_id NOT IN (
                   SELECT advertisement_id
                   FROM advertisements
                   WHERE decode_status != 'accepted'
-                     OR packet_kind IN ('supplementary', 'beacon')
+                     OR packet_kind IN ('packet2', 'beacon')
                   ORDER BY advertisement_id DESC
                   LIMIT ?
               )
@@ -2229,7 +2229,7 @@ class ReadingStore:
         return "duplicate" if tuple(stored) == content else "conflict"
 
     @staticmethod
-    def _main_content(reading: SensorReading) -> Tuple[Any, ...]:
+    def _packet1_content(reading: SensorReading) -> Tuple[Any, ...]:
         return (
             reading.observed_at,
             reading.soil_temperature_c,
@@ -2242,28 +2242,28 @@ class ReadingStore:
         )
 
     @staticmethod
-    def _supplement_content(supplement: ReportSupplement) -> Tuple[Any, ...]:
+    def _packet2_content(packet2: ReportPacket2) -> Tuple[Any, ...]:
         return (
-            supplement.battery_percent,
-            supplement.battery_voltage_v,
-            supplement.soil_ph,
-            supplement.nitrogen_mg_kg,
-            supplement.phosphorus_mg_kg,
-            supplement.potassium_mg_kg,
-            _charging_column(supplement.battery_charging),
+            packet2.battery_percent,
+            packet2.battery_voltage_v,
+            packet2.soil_ph,
+            packet2.nitrogen_mg_kg,
+            packet2.phosphorus_mg_kg,
+            packet2.potassium_mg_kg,
+            _charging_column(packet2.battery_charging),
         )
 
     @staticmethod
-    def _with_supplement(reading: SensorReading, supplement: Tuple[Any, ...]) -> SensorReading:
+    def _with_packet2(reading: SensorReading, packet2: Tuple[Any, ...]) -> SensorReading:
         return replace(
             reading,
-            battery_percent=supplement[0],
-            battery_voltage_v=supplement[1],
-            soil_ph=supplement[2],
-            nitrogen_mg_kg=supplement[3],
-            phosphorus_mg_kg=supplement[4],
-            potassium_mg_kg=supplement[5],
-            battery_charging=_charging_value(supplement[6]),
+            battery_percent=packet2[0],
+            battery_voltage_v=packet2[1],
+            soil_ph=packet2[2],
+            nitrogen_mg_kg=packet2[3],
+            phosphorus_mg_kg=packet2[4],
+            potassium_mg_kg=packet2[5],
+            battery_charging=_charging_value(packet2[6]),
         )
 
     @staticmethod

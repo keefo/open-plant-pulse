@@ -32,11 +32,11 @@ class SensorReading:
 
 
 @dataclass(frozen=True)
-class ReportSupplement:
-    """The part of a report that travels in its supplementary packet.
+class ReportPacket2:
+    """The part of a report that travels in packet 2.
 
     It belongs to the reading with the same sensor and report ID, and may arrive
-    before or after that reading's main packet.
+    before or after that reading's packet 1.
     """
 
     sensor_id: str

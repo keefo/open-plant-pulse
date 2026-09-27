@@ -12,24 +12,26 @@ contract version, not a BTHome format version. Every packet begins with
 device-info byte `0x40` (regular interval, unencrypted) and lists its objects in
 ascending object-ID order.
 
-One **report** is one set of measurements taken together. It travels as up to
-two packets that share a report ID: a **main** packet with the core
-measurements and, when there is anything for it, a **supplementary** packet
-with battery, the remaining soil values and the forced-report marker. Both are
-advertised alternately in the same window. A third shape, the **beacon**,
-carries no report at all.
+One **report** is one set of measurements taken together. It always travels as
+two packets that share a report ID, advertised alternately: **packet 1** with
+the soil and air measurements and the acquisition time, and **packet 2** with
+the battery, pH and N/P/K. Neither is optional; a report is complete only when
+the hub holds both. A third shape, the **beacon**, carries no report at all.
 
-### Main packet
+### Packet 1: soil, air and time
 
-| Wire order | Object | ID | Encoding | Group |
-| --- | --- | --- | --- | --- |
-| 1 | Soil temperature | `0x02` | signed 16-bit; factor 0.01 degrees C | Soil |
-| 2 | Air relative humidity | `0x2E` | unsigned 8-bit; 1 % | Air |
-| 3 | Soil moisture | `0x2F` | unsigned 8-bit; 1 % | Soil |
-| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
-| 5 | Air temperature | `0x45` | signed 16-bit; factor 0.1 degrees C | Air |
-| 6 | Acquisition timestamp | `0x50` | unsigned 32-bit Unix seconds | Optional |
-| 7 | Conductivity | `0x56` | unsigned 16-bit; 1 microS/cm | Soil |
+Sizes include the one-byte object ID.
+
+| Wire order | Object | ID | Encoding | Group | Size |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Device info | `0x40` | first byte, not an object | Required | 1 |
+| 1 | Soil temperature | `0x02` | signed 16-bit; factor 0.01 degrees C | Soil | 3 |
+| 2 | Air relative humidity | `0x2E` | unsigned 8-bit; 1 % | Air | 2 |
+| 3 | Soil moisture | `0x2F` | unsigned 8-bit; 1 % | Soil | 2 |
+| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required | 5 |
+| 5 | Air temperature | `0x45` | signed 16-bit; factor 0.1 degrees C | Air | 3 |
+| 6 | Acquisition timestamp | `0x50` | unsigned 32-bit Unix seconds | Optional | 5 |
+| 7 | Conductivity | `0x56` | unsigned 16-bit; 1 microS/cm | Soil | 3 |
 
 All multi-byte values are little-endian. A group is complete or absent: soil is
 `0x02`, `0x2F` and `0x56`; air is `0x2E` and `0x45`. At least one group is
@@ -40,22 +42,23 @@ everything present the service data after the UUID is 24 bytes, which with the
 Flags element and service-data header fills the 31-byte legacy advertisement;
 the local name travels in the scan response.
 
-### Supplementary packet
+### Packet 2: battery, pH and N/P/K
 
-| Wire order | Object | ID | Encoding | Group |
-| --- | --- | --- | --- | --- |
-| 1 | Battery | `0x01` | unsigned 8-bit; 1 % | Battery |
-| 2 | Battery voltage | `0x0C` | unsigned 16-bit; factor 0.001 V | Battery |
-| 3 | Battery charging | `0x16` | unsigned 8-bit; `0` not charging, `1` charging | Battery |
-| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
-| 5 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
+| Wire order | Object | ID | Encoding | Group | Size |
+| --- | --- | --- | --- | --- | --- |
+| 0 | Device info | `0x40` | first byte, not an object | Required | 1 |
+| 1 | Battery | `0x01` | unsigned 8-bit; 1 % | Battery | 2 |
+| 2 | Battery voltage | `0x0C` | unsigned 16-bit; factor 0.001 V | Battery | 3 |
+| 3 | Battery charging | `0x16` | unsigned 8-bit; `0` not charging, `1` charging | Battery | 2 |
+| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required | 5 |
+| 5 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras | 10 |
 
 Battery is `0x01`, `0x0C` and `0x16` together or none of them. Charging means
 current into the pack above the monitor's idle threshold (15 mA), from whatever
-source: the IP2312 or the XIAO's own USB charger. Every report sends a
-supplementary packet, even when it carries only the report ID: that is how the
-hub knows a report is complete, rather than guessing whether a second packet
-was lost or never existed. At most 23 bytes.
+source: the IP2312 or the XIAO's own USB charger. Every report sends packet 2,
+even when it carries only the report ID: that is how the hub knows a report is
+complete, rather than guessing whether a second packet was lost or never
+existed. At most 23 bytes.
 
 BTHome defines no pH or nutrient objects, so they travel in one raw object that
 only the hub decodes (Home Assistant shows battery natively and ignores it):
@@ -68,8 +71,8 @@ only the hub decodes (Home Assistant shows battery natively and ignores it):
 | 4 | 2 | Phosphorus, mg/kg |
 | 6 | 2 | Potassium, mg/kg |
 
-A packet is main if it carries any of `0x02`, `0x2E`, `0x2F`, `0x45`, `0x50` or
-`0x56`, and supplementary otherwise: `0x01`, `0x0C`, `0x16` and `0x54`, or the
+A packet is packet 1 if it carries any of `0x02`, `0x2E`, `0x2F`, `0x45`, `0x50`
+or `0x56`, and packet 2 otherwise: `0x01`, `0x0C`, `0x16` and `0x54`, or the
 report ID alone. A packet mixing the two sets, missing the report ID, or carrying any
 other object is malformed.
 
@@ -102,39 +105,51 @@ spends them the same way:
 The local name `sensor-<DEVICE_ID>` is not in this budget: it travels in the
 scan response.
 
-**Main packet**, fixture `main`, 24 of 24 bytes:
+**Packet 1**, fixture `packet1`, 24 of 24 bytes:
 `40 02 2e09 2e 2c 2f 64 3e d2040000 45 1001 50 0037b86a 56 2900`
 
-| Bytes | Object | Decoded | Size |
-| --- | --- | --- | --- |
-| `40` | Device info | | 1 |
-| `02 2e09` | Soil temperature | 0x092E = 2350 x 0.01 = 23.50 C | 3 |
-| `2e 2c` | Air relative humidity | 44 % | 2 |
-| `2f 64` | Soil moisture | 100 % | 2 |
-| `3e d2040000` | Report ID | 1234 | 5 |
-| `45 1001` | Air temperature | 0x0110 = 272 x 0.1 = 27.2 C | 3 |
-| `50 0037b86a` | Timestamp | 1790457600 = 2026-09-26T21:20:00Z | 5 |
-| `56 2900` | Conductivity | 41 uS/cm | 3 |
+| Bytes | ID | Value | Meaning | Size |
+| --- | --- | --- | --- | --- |
+| `40` | | | Device info | 1 |
+| `02 2e09` | `0x02` | 0x092E = 2350 x 0.01 | Soil temperature **23.50 C** | 3 |
+| `2e 2c` | `0x2E` | 0x2C = 44 | Air humidity **44 %** | 2 |
+| `2f 64` | `0x2F` | 0x64 = 100 | Soil moisture **100 %** | 2 |
+| `3e d2040000` | `0x3E` | 1234 | **Report ID** | 5 |
+| `45 1001` | `0x45` | 0x0110 = 272 x 0.1 | Air temperature **27.2 C** | 3 |
+| `50 0037b86a` | `0x50` | 1790457600 | Timestamp **2026-09-26T21:20:00Z** | 5 |
+| `56 2900` | `0x56` | 0x29 = 41 | Conductivity **41 uS/cm** | 3 |
+| | | | **Total** | **24** |
 
-**Supplementary packet**, fixture `supplementary`, 23 of 24 bytes:
+**Packet 2**, fixture `packet2`, 23 of 24 bytes:
 `40 01 60 0c 4010 16 00 3e d2040000 54 08 01 44 0100 0200 0700`
 
-| Bytes | Object | Decoded | Size |
+| Bytes | ID | Value | Meaning | Size |
+| --- | --- | --- | --- | --- |
+| `40` | | | Device info | 1 |
+| `01 60` | `0x01` | 0x60 = 96 | Battery **96 %** | 2 |
+| `0c 4010` | `0x0C` | 0x1040 = 4160 x 0.001 | Battery **4.160 V** | 3 |
+| `16 00` | `0x16` | 0 | Charging: **no** | 2 |
+| `3e d2040000` | `0x3E` | 1234 | **Same report ID**, joining it to packet 1 | 5 |
+| `54 08 …` | `0x54` | raw, length 8 | Soil extras, below | 10 |
+| | | | **Total** | **23** |
+
+The soil extras, `01 44 0100 0200 0700`:
+
+| Bytes | Value | Meaning | Size |
 | --- | --- | --- | --- |
-| `40` | Device info | | 1 |
-| `01 60` | Battery | 96 % | 2 |
-| `0c 4010` | Battery voltage | 0x1040 = 4160 x 0.001 = 4.160 V | 3 |
-| `16 00` | Battery charging | not charging | 2 |
-| `3e d2040000` | Report ID | 1234, joining it to its main packet | 5 |
-| `54 08 01 44 0100 0200 0700` | Soil extras | layout 1; pH 68 x 0.1 = 6.8; N 1, P 2, K 7 mg/kg | 10 |
+| `01` | 1 | Layout version | 1 |
+| `44` | 0x44 = 68 x 0.1 | pH **6.8** | 1 |
+| `0100` | 1 | Nitrogen **1 mg/kg** | 2 |
+| `0200` | 2 | Phosphorus **2 mg/kg** | 2 |
+| `0700` | 7 | Potassium **7 mg/kg** | 2 |
 
 **Room left** with every object present:
 
 | Packet | Used | Free |
 | --- | --- | --- |
-| Main | 24 | 0 |
-| Supplementary | 23 | 1 |
-| Supplementary, report ID only (`40 3e d3040000`) | 6 | 18 |
+| Packet 1 | 24 | 0 |
+| Packet 2 | 23 | 1 |
+| Packet 2, report ID only (`40 3e d3040000`) | 6 | 18 |
 | Beacon (`40`) | 1 | 23 |
 
 A new field must fit in the free bytes of the packet it belongs to, including
@@ -158,10 +173,10 @@ wrap. Gaps are allowed: the sensor reserves IDs in blocks in flash so that it
 writes flash once per block rather than once per report, and after a restart it
 continues from the end of the reserved block. `0` is never used.
 
-The hub's key for a report is `(sensor identity, report ID)`. Main and
-supplementary packets of one report may arrive in either order and are joined
-into one reading; a reading appears once its main packet is stored, with
-supplementary values attached whenever they arrive. A report is complete when
+The hub's key for a report is `(sensor identity, report ID)`. Packets 1 and 2
+of one report may arrive in either order and are joined into one reading; a
+reading appears once packet 1 is stored, with packet 2's values attached
+whenever they arrive. A report is complete when
 both are stored, and only a complete report is shown as a sensor's latest
 reading, so one whose second packet is still coming does not blank its values. Receiving a packet whose
 content matches what is already stored for its key is a duplicate and stores
@@ -179,8 +194,8 @@ Assistant interoperability. Keys must never appear in fixtures or logs.
 
 ### Fixtures
 
-[`fixtures/bthome-v3.json`](fixtures/bthome-v3.json) records a known main and
-supplementary packet pair and a beacon. The sensor's encoder tests and the hub's
+[`fixtures/bthome-v3.json`](fixtures/bthome-v3.json) records a known packet 1 and
+packet 2 pair and a beacon. The sensor's encoder tests and the hub's
 decoder tests both check against it.
 
 ### Acquisition timestamp
@@ -268,8 +283,8 @@ the drain request or after the end token.
 | 1 | 1 | Report count, `0` to `8` |
 | 2 | ... | That many records, oldest first |
 
-Each record is the report ID (4 bytes, unsigned little-endian), the main
-packet's length (1 byte) and bytes, then the supplementary packet's length (1
+Each record is the report ID (4 bytes, unsigned little-endian), packet 1's
+length (1 byte) and bytes, then packet 2's length (1
 byte) and bytes: the service data exactly as advertised, after the UUID. A page
 is fixed until the queue changes, so the reads that assemble a long value see
 the same bytes.

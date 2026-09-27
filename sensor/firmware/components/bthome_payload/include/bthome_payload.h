@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Contract v3 (protocol/README.md). The largest packet, the main one with
- * every object, is 24 bytes, which fills a 31-byte legacy advertisement once
+/* Contract v3 (protocol/README.md). The largest packet, packet 1 with every
+ * object, is 24 bytes, which fills a 31-byte legacy advertisement once
  * the Flags element and service-data header are added. */
 #define OPP_BTHOME_SERVICE_DATA_MAX_SIZE 24
 #define OPP_BTHOME_LOCAL_NAME_SIZE 20
@@ -41,14 +41,14 @@ typedef struct {
 
 /* The core measurements. Returns 0 when the report has neither soil nor air,
  * or a value out of range: such a report cannot be sent, only a beacon. */
-size_t opp_bthome_encode_main(const opp_bthome_report_t *report,
-                              uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
+size_t opp_bthome_encode_packet1(const opp_bthome_report_t *report,
+                                 uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
 
 /* Battery, pH and N/P/K. Every report has one, even if it carries only the
  * report ID: that is how the hub knows the report is complete. Returns 0 only
  * for an invalid report. */
-size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
-                                       uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
+size_t opp_bthome_encode_packet2(const opp_bthome_report_t *report,
+                                 uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
 
 /* Presence without a report: device info and nothing else. A sensor with
  * nothing to measure still has to be findable and adoptable. */

@@ -14,10 +14,10 @@
 
 typedef struct {
     uint32_t report_id;
-    uint8_t main[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
-    uint8_t main_size;
-    uint8_t supplementary[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
-    uint8_t supplementary_size;
+    uint8_t packet1[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    uint8_t packet1_size;
+    uint8_t packet2[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    uint8_t packet2_size;
 } opp_queued_report_t;
 
 typedef struct {

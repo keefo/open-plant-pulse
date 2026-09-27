@@ -135,10 +135,10 @@ static bool encode_report(opp_bthome_report_t *report, opp_queued_report_t *enco
         return false;
     }
     encoded->report_id = report->report_id;
-    encoded->main_size = (uint8_t)opp_bthome_encode_main(report, encoded->main);
-    encoded->supplementary_size =
-        (uint8_t)opp_bthome_encode_supplementary(report, encoded->supplementary);
-    return encoded->main_size > 0 && encoded->supplementary_size > 0;
+    encoded->packet1_size = (uint8_t)opp_bthome_encode_packet1(report, encoded->packet1);
+    encoded->packet2_size =
+        (uint8_t)opp_bthome_encode_packet2(report, encoded->packet2);
+    return encoded->packet1_size > 0 && encoded->packet2_size > 0;
 }
 
 static esp_err_t broadcast_report_for(const char *local_name, const opp_queued_report_t *encoded,
@@ -146,10 +146,10 @@ static esp_err_t broadcast_report_for(const char *local_name, const opp_queued_r
 {
     return opp_bthome_broadcast(
         local_name,
-        encoded->main,
-        encoded->main_size,
-        encoded->supplementary_size > 0 ? encoded->supplementary : NULL,
-        encoded->supplementary_size,
+        encoded->packet1,
+        encoded->packet1_size,
+        encoded->packet2_size > 0 ? encoded->packet2 : NULL,
+        encoded->packet2_size,
         window_ms,
 #if CONFIG_OPP_PRODUCTION_LIFECYCLE
         CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
@@ -381,7 +381,7 @@ static void advertise_reachable_window(const char *local_name, uint32_t window_m
     opp_queued_report_t report;
     const bool have_report = opp_device_identity_is_onboarded()
                                  ? opp_delivery_newest(&report)
-                                 : (report = last_unqueued, report.main_size > 0);
+                                 : (report = last_unqueued, report.packet1_size > 0);
     if (!have_report) {
         advertise_onboarding_beacon(local_name, window_ms);
         return;
@@ -397,8 +397,8 @@ static void advertise_reachable_window(const char *local_name, uint32_t window_m
 static void advertise_onboarding_beacon(const char *local_name, uint32_t window_ms)
 {
     opp_queued_report_t beacon = {0};
-    beacon.main_size = (uint8_t)opp_bthome_encode_beacon(beacon.main);
-    if (beacon.main_size == 0) {
+    beacon.packet1_size = (uint8_t)opp_bthome_encode_beacon(beacon.packet1);
+    if (beacon.packet1_size == 0) {
         ESP_LOGE(TAG, "Could not encode the onboarding beacon");
         return;
     }

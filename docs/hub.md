@@ -185,7 +185,7 @@ The subscriber must:
   decoding; do not use a scanner-level service UUID filter because CoreBluetooth
   suppresses the sensor's valid service-data-only advertisements when it is set;
 - accept only contract-v3 packets: BTHome v2 service data with unencrypted
-  device info and the main, supplementary, or beacon layout;
+  device info and the packet 1, packet 2, or beacon layout;
 - record the hub receipt time, source adapter, observed Bluetooth identifier, and
   RSSI when the platform provides them;
 - reject malformed or unsupported advertisements without stopping the scan loop;
@@ -245,7 +245,7 @@ on its own connection.
 
 A page is decoded strictly: a wrong marker, more than eight reports, truncated or
 trailing bytes, a record whose ID is not the one inside its packets, packets that
-are not a valid main and supplementary pair, or reports out of order refuse the
+are not a valid packet 1 and packet 2 pair, or reports out of order refuse the
 whole page, acknowledging nothing. A report in conflict, or one with any conflict
 logged under its key, is never acknowledged: the acknowledgement stops at the
 report before it and the drain ends, though the rest of that page is still
@@ -281,13 +281,13 @@ offers an enrollment window or an allowlist policy.
 
 Contract v3 is defined in [`protocol/README.md`](../protocol/README.md). A report is
 keyed by `(sensor identity, report ID)`, where the report ID is a 32-bit count the
-sensor never repeats. A report travels as a main packet (soil and air measurements,
-optional acquisition timestamp) and a supplementary packet (battery level, voltage
+sensor never repeats. A report travels as packet 1 (soil and air measurements,
+optional acquisition timestamp) and packet 2 (battery level, voltage
 and whether it is charging, soil pH and nitrogen/phosphorus/potassium when
 reported, or the report ID alone). The two may
 arrive in either order, and the report is complete when both are stored. A reading
-is stored, and appears in latest values, history, and care events, when its main
-packet arrives. A supplementary packet is kept in `report_supplements` whichever
+is stored, and appears in latest values, history, and care events, when its packet 1
+arrives. Packet 2 is kept in `report_packet2` whichever
 arrives first, and its values are copied onto the reading when both are present.
 
 A packet whose content matches what is stored for its key and packet kind is a
@@ -335,7 +335,7 @@ needs at least:
 
 ### `advertisements`
 
-- sensor ID, report ID, and packet kind (main, supplementary, or beacon);
+- sensor ID, report ID, and packet kind (`packet1`, `packet2`, or `beacon`);
 - hub receipt time;
 - supported BTHome contract version;
 - bounded source metadata and decode status (accepted, duplicate, conflict, or

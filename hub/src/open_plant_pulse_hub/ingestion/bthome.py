@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import re
 from typing import Dict, Optional, Tuple, Union
 
-from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
+from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
 
 
 CONTRACT_VERSION = 3
@@ -27,7 +27,7 @@ REPORT_ID_OBJECT = 0x3E
 SOIL_EXTRAS_OBJECT = 0x54
 SOIL_EXTRAS_LENGTH = 8
 SOIL_EXTRAS_LAYOUT_VERSION = 1
-MAIN_OBJECTS = frozenset({0x02, 0x2E, 0x2F, 0x45, 0x50, 0x56})
+PACKET1_OBJECTS = frozenset({0x02, 0x2E, 0x2F, 0x45, 0x50, 0x56})
 SOIL_OBJECTS = frozenset({0x02, 0x2F, 0x56})
 AIR_OBJECTS = frozenset({0x2E, 0x45})
 BATTERY_OBJECTS = frozenset({0x01, 0x0C, 0x16})
@@ -56,12 +56,11 @@ def is_beacon(service_data: bytes) -> bool:
 
 def decode_service_data(
     service_data: bytes, sensor_id: str
-) -> Union[SensorReading, ReportSupplement]:
+) -> Union[SensorReading, ReportPacket2]:
     """Decode one contract-v3 report packet, the service data after UUID 0xFCD2.
 
-    A main packet becomes a reading and a supplementary packet becomes the
-    supplement for the reading with the same report ID. Anything else, beacons
-    included, is refused.
+    Packet 1 becomes a reading and packet 2 becomes the rest of the reading
+    with the same report ID. Anything else, beacons included, is refused.
     """
     if not service_data:
         raise ValueError("BTHome service data is empty")
@@ -106,17 +105,17 @@ def decode_service_data(
     if report_id == 0:
         raise ValueError("report ID 0 is never used")
     present = set(values)
-    # Every object is either main, supplementary or the report ID, so a packet
-    # with no main object is supplementary, the report ID alone included: the
+    # Every object belongs to packet 1, packet 2 or is the report ID, so a packet
+    # with no packet-1 object is packet 2, the report ID alone included: the
     # sensor sends one with every report so that the hub knows it is complete.
-    if not present & MAIN_OBJECTS:
-        return _supplement(values, soil_extras, sensor_id, report_id)
-    if present - MAIN_OBJECTS - {REPORT_ID_OBJECT}:
-        raise ValueError("a packet cannot mix main and supplementary objects")
-    return _main_reading(values, sensor_id, report_id)
+    if not present & PACKET1_OBJECTS:
+        return _packet2(values, soil_extras, sensor_id, report_id)
+    if present - PACKET1_OBJECTS - {REPORT_ID_OBJECT}:
+        raise ValueError("a packet cannot mix packet-1 and packet-2 objects")
+    return _packet1_reading(values, sensor_id, report_id)
 
 
-def _main_reading(values: Dict[int, int], sensor_id: str, report_id: int) -> SensorReading:
+def _packet1_reading(values: Dict[int, int], sensor_id: str, report_id: int) -> SensorReading:
     present = set(values)
     if present & SOIL_OBJECTS not in (set(), SOIL_OBJECTS):
         raise ValueError("soil source must be complete or omitted")
@@ -155,9 +154,9 @@ def _main_reading(values: Dict[int, int], sensor_id: str, report_id: int) -> Sen
     )
 
 
-def _supplement(
+def _packet2(
     values: Dict[int, int], soil_extras: bytes, sensor_id: str, report_id: int
-) -> ReportSupplement:
+) -> ReportPacket2:
     present = set(values)
     if present & BATTERY_OBJECTS not in (set(), BATTERY_OBJECTS):
         raise ValueError("battery must carry level, voltage and charging together or none")
@@ -177,7 +176,7 @@ def _supplement(
         phosphorus = int.from_bytes(soil_extras[4:6], "little")
         potassium = int.from_bytes(soil_extras[6:8], "little")
 
-    return ReportSupplement(
+    return ReportPacket2(
         sensor_id=sensor_id,
         report_id=report_id,
         battery_percent=values[0x01] if has_battery else None,

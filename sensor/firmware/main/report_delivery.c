@@ -15,7 +15,7 @@
  * contract changes what a packet carries: queued reports of an older format
  * are discarded at boot, since the hub no longer accepts them and one that can
  * never be acknowledged would block the queue for good. 2 added battery
- * charging (0x16) to the supplementary packet. */
+ * charging (0x16) to the packet 2. */
 #define QUEUE_FORMAT 2U
 
 static const char *TAG = "delivery";

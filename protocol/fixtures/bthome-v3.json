@@ -3,10 +3,10 @@
   "service_uuid": "FCD2",
   "packets": [
     {
-      "name": "main",
+      "name": "packet1",
       "service_data_hex": "40022e092e2c2f643ed2040000451001500037b86a562900",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "report_id": 1234,
         "observed_at": "2026-09-26T21:20:00Z",
         "soil_temperature_c": 23.5,
@@ -19,10 +19,10 @@
       }
     },
     {
-      "name": "supplementary",
+      "name": "packet2",
       "service_data_hex": "4001600c401016003ed204000054080144010002000700",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "report_id": 1234,
         "battery_percent": 96,
         "battery_voltage_v": 4.16,
@@ -34,10 +34,10 @@
       }
     },
     {
-      "name": "supplementary_report_id_only",
+      "name": "packet2_report_id_only",
       "service_data_hex": "403ed3040000",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "report_id": 1235,
         "battery_percent": null,
         "battery_voltage_v": null,
@@ -49,10 +49,10 @@
       }
     },
     {
-      "name": "supplementary_charging",
+      "name": "packet2_charging",
       "service_data_hex": "40015b0c141016013ed4040000",
       "expected": {
-        "kind": "supplementary",
+        "kind": "packet2",
         "report_id": 1236,
         "battery_percent": 91,
         "battery_voltage_v": 4.116,
@@ -64,10 +64,10 @@
       }
     },
     {
-      "name": "main_air_only_no_timestamp",
+      "name": "packet1_air_only_no_timestamp",
       "service_data_hex": "402e2c3ed3040000451001",
       "expected": {
-        "kind": "main",
+        "kind": "packet1",
         "report_id": 1235,
         "observed_at": null,
         "air_humidity_percent": 44,

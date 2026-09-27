@@ -71,7 +71,7 @@ class AdvertisementIngestionService:
                 service_data=advertisement.service_data,
             )
         else:
-            status = self._store.add_supplement(
+            status = self._store.add_packet2(
                 packet,
                 received_at=advertisement.received_at,
                 observed_identifier=advertisement.observed_identifier,

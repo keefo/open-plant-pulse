@@ -366,10 +366,13 @@ function trackRawReportsDisclosure() {
   });
 }
 
+const PACKET_KIND_LABELS = { packet1: "packet 1", packet2: "packet 2" };
+
 function rawReportLabel(item) {
   if (item.packet_kind === "beacon") return "beacon";
   if (item.report_id == null) return "—";
-  return item.packet_kind ? `${item.report_id} · ${item.packet_kind}` : String(item.report_id);
+  if (!item.packet_kind) return String(item.report_id);
+  return `${item.report_id} · ${PACKET_KIND_LABELS[item.packet_kind] || item.packet_kind}`;
 }
 
 function renderRawReports(items) {

@@ -99,8 +99,8 @@ class QueuedReport:
     """One report from a queue page: exactly the two packets it is advertised as."""
 
     report_id: int
-    main: bytes
-    supplementary: bytes
+    packet1: bytes
+    packet2: bytes
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,7 @@ def encode_cumulative_acknowledgement(report_id: int) -> bytes:
 def decode_queue_page(payload: bytes, sensor_id: str) -> List[QueuedReport]:
     """Decode a queue page, refusing all of it if any part is wrong.
 
-    Each record must be a main packet and a supplementary packet that decode
+    Each record must be a packet 1 and a packet 2 that decode
     under the contract and carry the record's report ID, and the reports must be
     in ascending order, since the cumulative acknowledgement relies on it. A page
     that is anything else says the sensor and the hub disagree about the
@@ -149,7 +149,7 @@ def decode_queue_page(payload: bytes, sensor_id: str) -> List[QueuedReport]:
         report_id = int.from_bytes(payload[offset : offset + 4], "little")
         offset += 4
         packets = []
-        for _kind in ("main", "supplementary"):
+        for _kind in ("packet1", "packet2"):
             if offset >= len(payload):
                 raise ValueError("queue page record is truncated")
             length = payload[offset]
@@ -158,18 +158,18 @@ def decode_queue_page(payload: bytes, sensor_id: str) -> List[QueuedReport]:
                 raise ValueError("queue page record is truncated")
             packets.append(payload[offset : offset + length])
             offset += length
-        main, supplementary = packets
-        decoded_main = decode_service_data(main, sensor_id)
-        decoded_supplementary = decode_service_data(supplementary, sensor_id)
-        if not isinstance(decoded_main, SensorReading) or isinstance(
-            decoded_supplementary, SensorReading
+        packet1, packet2 = packets
+        decoded_packet1 = decode_service_data(packet1, sensor_id)
+        decoded_packet2 = decode_service_data(packet2, sensor_id)
+        if not isinstance(decoded_packet1, SensorReading) or isinstance(
+            decoded_packet2, SensorReading
         ):
-            raise ValueError("queue page record is not a main and a supplementary packet")
-        if decoded_main.report_id != report_id or decoded_supplementary.report_id != report_id:
+            raise ValueError("queue page record is not a packet 1 and a packet 2")
+        if decoded_packet1.report_id != report_id or decoded_packet2.report_id != report_id:
             raise ValueError("queue page record report ID does not match its packets")
         if reports and report_id <= reports[-1].report_id:
             raise ValueError("queue page reports are not in ascending order")
-        reports.append(QueuedReport(report_id, main, supplementary))
+        reports.append(QueuedReport(report_id, packet1, packet2))
     if offset != len(payload):
         raise ValueError("queue page has bytes after its last record")
     return reports
@@ -721,7 +721,7 @@ class DeviceConfigurationSynchronizer:
                                 source_adapter=DRAIN_SOURCE_ADAPTER,
                             ),
                         )
-                        for packet in (report.main, report.supplementary)
+                        for packet in (report.packet1, report.packet2)
                     ]
                     stored_packets += statuses.count("accepted")
                     # Everything on the page is stored, but only an unbroken
