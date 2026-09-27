@@ -428,6 +428,22 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
     }
 }
 
+/* An unclaimed sensor announces itself often, not on its reporting interval.
+ * Somebody is looking for it in a list that has to feel live: on a thirty-minute
+ * cadence that list cannot tell a sensor that was switched off from one that is
+ * simply between beacons. The sensor is powered and attended during setup, so
+ * the cost is acceptable, and it ends the moment the sensor belongs to a hub. */
+static TickType_t report_interval_ticks(void)
+{
+    if (!opp_device_identity_is_onboarded()) {
+        return pdMS_TO_TICKS(ONBOARDING_BEACON_INTERVAL_MS);
+    }
+    opp_device_config_t config;
+    opp_device_config_store_get(&config);
+    return config.revision == 0 ? pdMS_TO_TICKS(DEVELOPMENT_REPORT_INTERVAL_MS)
+                                : pdMS_TO_TICKS(1000U) * config.reporting_interval_seconds;
+}
+
 static void development_broadcast_task(void *context)
 {
     (void)context;
@@ -450,53 +466,41 @@ static void development_broadcast_task(void *context)
      * reaching this line is replaced by its predecessor at the next reset. */
     opp_firmware_update_confirm();
 
-    TickType_t next_report = xTaskGetTickCount();
+    /* The schedule counts from the last scheduled report, and the interval is
+     * read afresh on every pass. Fixing a deadline once per report meant an
+     * interval the hub changed from 30 minutes to 5 seconds waited out the
+     * rest of the 30 minutes before it took effect. */
+    TickType_t last_report = xTaskGetTickCount();
     while (true) {
-        opp_device_config_t config;
-        opp_device_config_store_get(&config);
-        /* An unclaimed sensor announces itself often, not on its reporting
-         * interval. Somebody is looking for it in a list that has to feel live:
-         * on a thirty-minute cadence that list cannot tell a sensor that was
-         * switched off from one that is simply between beacons. The sensor is
-         * powered and attended during setup, so the cost is acceptable, and it
-         * ends the moment the sensor belongs to a hub. */
-        const TickType_t report_interval_ticks =
-            !opp_device_identity_is_onboarded()
-                ? pdMS_TO_TICKS(ONBOARDING_BEACON_INTERVAL_MS)
-                : (config.revision == 0
-                       ? pdMS_TO_TICKS(DEVELOPMENT_REPORT_INTERVAL_MS)
-                       : pdMS_TO_TICKS(1000U) * config.reporting_interval_seconds);
-        next_report += report_interval_ticks;
-        while (true) {
-            uint32_t force_request_id;
-            if (opp_force_report_wait(0, &force_request_id)) {
-                broadcast_development_report(local_name, force_request_id);
-                continue;
-            }
-            const TickType_t now = xTaskGetTickCount();
-            const int32_t ticks_remaining = (int32_t)(next_report - now);
-            if (ticks_remaining <= 0) {
-                broadcast_development_report(local_name, 0);
-                break;
-            }
-            TickType_t wait_ticks = (TickType_t)ticks_remaining;
-            bool reachability_tick = false;
-            if (should_stay_reachable()) {
-                const TickType_t reachable_ticks = pdMS_TO_TICKS(REACHABLE_INTERVAL_MS);
-                if (reachable_ticks < wait_ticks) {
-                    wait_ticks = reachable_ticks;
-                    reachability_tick = true;
-                }
-            }
-            if (opp_force_report_wait(wait_ticks, &force_request_id)) {
-                broadcast_development_report(local_name, force_request_id);
-            } else if (reachability_tick) {
-                advertise_reachable_window(local_name);
-            } else {
-                broadcast_development_report(local_name, 0);
-                break;
+        uint32_t force_request_id;
+        if (opp_force_report_wait(0, &force_request_id)) {
+            /* A forced report leaves the schedule where it was. */
+            broadcast_development_report(local_name, force_request_id);
+            continue;
+        }
+        const TickType_t now = xTaskGetTickCount();
+        const int32_t ticks_remaining =
+            (int32_t)(last_report + report_interval_ticks() - now);
+        if (ticks_remaining <= 0) {
+            broadcast_development_report(local_name, 0);
+            last_report = now;
+            continue;
+        }
+        TickType_t wait_ticks = (TickType_t)ticks_remaining;
+        bool reachability_tick = false;
+        if (should_stay_reachable()) {
+            const TickType_t reachable_ticks = pdMS_TO_TICKS(REACHABLE_INTERVAL_MS);
+            if (reachable_ticks < wait_ticks) {
+                wait_ticks = reachable_ticks;
+                reachability_tick = true;
             }
         }
+        if (opp_force_report_wait(wait_ticks, &force_request_id)) {
+            broadcast_development_report(local_name, force_request_id);
+        } else if (reachability_tick) {
+            advertise_reachable_window(local_name);
+        }
+        /* Otherwise the deadline has passed; the next pass reports. */
     }
 }
 #endif

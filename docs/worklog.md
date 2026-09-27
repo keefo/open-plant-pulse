@@ -669,6 +669,19 @@
   5.6, N/P/K 1/3/7, battery 91 % at 4.112 V, and the sensor's timestamp.
   Report IDs continued across the update (1, 2, 3).
 
+- **An interval change waited out the old interval.** The report loop fixed
+  its next deadline once per report, so when the hub changed the interval from
+  30 minutes to 5 seconds two minutes after a report, the sensor kept waiting
+  for the 30-minute deadline while its own page updated every 10 seconds.
+  0.16.2 re-reads the interval on every pass, counting from the last report;
+  reports then reached the hub every few seconds.
+- At a 5-second interval the loss is visible: of reports 4-12, the hub got both
+  packets of 4, 10, 11 and 12, only the supplementary of 5, 6 and 9, and
+  nothing of 7 and 8. Each report is on air for one window before the next
+  replaces it, the Mac's scanning misses some advertisements, and the hub's own
+  connections pause advertising. At a 30-minute interval each report is
+  repeated for the whole interval.
+
 ### Not validated
 
 - Durable delivery (step 2); a report the hub misses is still lost.
