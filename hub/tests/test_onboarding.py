@@ -10,7 +10,7 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
 from open_plant_pulse_hub.web import create_server, server_address
 
-FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v2-sensor-v2.json"
+FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
 
 
 def enrolled_sensor(store, sensor_id, display_name="white bird"):
@@ -191,7 +191,7 @@ class FreshnessTests(unittest.TestCase):
             local_name="sensor-aabbccddeeff",
             observed_identifier="aa:bb:cc:dd:ee:ff",
             rssi=-40,
-            service_data=bytes([0x40, 0x00, 3]),
+            service_data=bytes([0x40]),
             source_adapter="test",
         )
 
@@ -318,7 +318,7 @@ class OnboardingBeaconTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
 
-    def beacon(self, packet_id=1, received_at=None):
+    def beacon(self, received_at=None):
         from datetime import datetime, timezone
 
         from open_plant_pulse_hub.ingestion.advertisement import Advertisement
@@ -330,7 +330,7 @@ class OnboardingBeaconTests(unittest.TestCase):
             local_name="sensor-aabbccddeeff",
             observed_identifier="aa:bb:cc:dd:ee:ff",
             rssi=-48,
-            service_data=bytes([0x40, 0x00, packet_id]),
+            service_data=bytes([0x40]),
             source_adapter="test",
         )
 
@@ -347,9 +347,35 @@ class OnboardingBeaconTests(unittest.TestCase):
         self.assertEqual(sensor["reading_count"], 0)
         self.assertIsNone(sensor["latest"])
 
-    def test_a_repeated_beacon_is_a_duplicate(self):
-        self.assertEqual(self.ingestion.ingest(self.beacon()), "accepted")
-        self.assertEqual(self.ingestion.ingest(self.beacon()), "duplicate")
+    def test_every_beacon_is_presence_and_none_is_a_reading(self):
+        # A beacon carries nothing to tell one from the next, so each is heard
+        # as presence; none is ever taken for a report.
+        self.assertEqual(
+            self.ingestion.ingest(self.beacon("2026-09-24T18:00:00Z")), "accepted"
+        )
+        self.assertEqual(
+            self.ingestion.ingest(self.beacon("2026-09-24T18:00:03Z")), "accepted"
+        )
+        sensor = self.store.sensor("sensor-aabbccddeeff")
+        self.assertEqual(sensor["last_seen_at"], "2026-09-24T18:00:03Z")
+        self.assertEqual(sensor["contract_version"], 3)
+        self.assertEqual(sensor["reading_count"], 0)
+        reports = self.store.raw_sensor_reports("sensor-aabbccddeeff")
+        self.assertEqual([item["packet_kind"] for item in reports], ["beacon", "beacon"])
+        self.assertEqual([item["report_id"] for item in reports], [None, None])
+
+    def test_the_old_three_byte_beacon_is_rejected(self):
+        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
+
+        old = Advertisement(
+            received_at="2026-09-24T18:00:00Z",
+            local_name="sensor-aabbccddeeff",
+            observed_identifier="aa:bb:cc:dd:ee:ff",
+            rssi=-48,
+            service_data=bytes([0x40, 0x00, 1]),
+            source_adapter="test",
+        )
+        self.assertEqual(self.ingestion.ingest(old), "rejected")
 
     def test_a_beacon_keeps_the_sensor_offerable_despite_old_readings(self):
         """Age since the last reading must not hide a sensor that is beaconing now."""
@@ -387,7 +413,7 @@ class OnboardingBeaconTests(unittest.TestCase):
             observed_identifier="aa:bb:cc:dd:ee:ff",
             rssi=-48,
             # Air temperature without humidity: a broken reading, not a beacon.
-            service_data=bytes([0x40, 0x00, 1, 0x45, 0x10, 0x09]),
+            service_data=bytes.fromhex("403ed3040000451001"),
             source_adapter="test",
         )
         self.assertEqual(self.ingestion.ingest(partial), "rejected")
@@ -414,10 +440,9 @@ class ConfigurationRetryRateTests(unittest.TestCase):
         self.assertIn("CONFIGURATION_RETRY_SECONDS", self.source)
 
     def test_configuration_retries_are_not_keyed_on_the_payload(self):
-        # Every beacon carries a new packet ID, so comparing payloads never
+        # Payloads change from one report to the next, so comparing them never
         # matched and the configuration rate limit never applied. A forced
-        # report legitimately still compares payloads: that is how one specific
-        # request is identified.
+        # report is identified by its report ID instead.
         self.assertNotIn("self._last_configuration_attempt", self.source)
 
 
@@ -438,10 +463,10 @@ class ReachabilityTests(unittest.TestCase):
         self.assertIn("opp_bthome_last_connection_ms()", self.source)
 
     def test_reachability_repeats_the_last_payload_rather_than_inventing_one(self):
-        # Re-sending the same packet ID is what stops a sensor that is reachable
+        # Re-sending the same report ID is what stops a sensor that is reachable
         # every few seconds from filling the database with rows saying nothing.
         self.assertIn("advertise_reachable_window", self.source)
-        self.assertIn("last_payload", self.source)
+        self.assertIn("last_advertised", self.source)
 
 
 class ReleaseProtocolTests(unittest.TestCase):

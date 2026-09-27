@@ -1,0 +1,173 @@
+{
+  "schema": "open-plant-pulse.bthome-replay.v1",
+  "contract_version": 3,
+  "service_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb",
+  "events": [
+    {
+      "id": "sensor-a-main",
+      "received_at": "2026-09-13T12:00:00Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -48,
+      "service_data_hex": "40022e092e362f203e2a00000045f200504090a66a56d204",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "main",
+        "sensor_id": "sensor-aabbccddeeff",
+        "report_id": 42,
+        "observed_at": "2026-09-13T12:00:00Z",
+        "soil_temperature_c": 23.5,
+        "moisture_percent": 32,
+        "conductivity_us_cm": 1234,
+        "air_temperature_c": 24.2,
+        "air_humidity_percent": 54,
+        "soil_source_status": "available",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-a-supplementary",
+      "received_at": "2026-09-13T12:00:01Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -48,
+      "service_data_hex": "4001570c480f3e2a000000540801410c0008001e00",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "supplementary",
+        "sensor_id": "sensor-aabbccddeeff",
+        "report_id": 42,
+        "battery_percent": 87,
+        "battery_voltage_v": 3.912,
+        "soil_ph": 6.5,
+        "nitrogen_mg_kg": 12,
+        "phosphorus_mg_kg": 8,
+        "potassium_mg_kg": 30,
+        "force_report": false
+      }
+    },
+    {
+      "id": "sensor-a-main-repeated",
+      "received_at": "2026-09-13T12:00:02Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -49,
+      "service_data_hex": "40022e092e362f203e2a00000045f200504090a66a56d204",
+      "expected_status": "duplicate"
+    },
+    {
+      "id": "sensor-a-air-only-no-timestamp",
+      "received_at": "2026-09-13T12:30:00Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -50,
+      "service_data_hex": "402e2e3e2b00000045f500",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "main",
+        "sensor_id": "sensor-aabbccddeeff",
+        "report_id": 43,
+        "observed_at": null,
+        "soil_temperature_c": null,
+        "moisture_percent": null,
+        "conductivity_us_cm": null,
+        "air_temperature_c": 24.5,
+        "air_humidity_percent": 46,
+        "soil_source_status": "unavailable",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-b-supplementary-first",
+      "received_at": "2026-09-13T12:00:03Z",
+      "local_name": "sensor-001122334455",
+      "observed_identifier": "replay-b",
+      "rssi": -61,
+      "service_data_hex": "4001400c750e3e07000000",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "supplementary",
+        "sensor_id": "sensor-001122334455",
+        "report_id": 7,
+        "battery_percent": 64,
+        "battery_voltage_v": 3.701,
+        "soil_ph": null,
+        "nitrogen_mg_kg": null,
+        "phosphorus_mg_kg": null,
+        "potassium_mg_kg": null,
+        "force_report": false
+      }
+    },
+    {
+      "id": "sensor-b-air-only",
+      "received_at": "2026-09-13T12:00:03Z",
+      "local_name": "sensor-001122334455",
+      "observed_identifier": "replay-b",
+      "rssi": -61,
+      "service_data_hex": "402e373e0700000045f100504390a66a",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "main",
+        "sensor_id": "sensor-001122334455",
+        "report_id": 7,
+        "observed_at": "2026-09-13T12:00:03Z",
+        "soil_temperature_c": null,
+        "moisture_percent": null,
+        "conductivity_us_cm": null,
+        "air_temperature_c": 24.1,
+        "air_humidity_percent": 55,
+        "soil_source_status": "unavailable",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "id": "sensor-c-soil-only",
+      "received_at": "2026-09-13T12:00:04Z",
+      "local_name": "sensor-102030405060",
+      "observed_identifier": "replay-c",
+      "rssi": -73,
+      "service_data_hex": "4002b7072f283eff000000504490a66a562003",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "main",
+        "sensor_id": "sensor-102030405060",
+        "report_id": 255,
+        "observed_at": "2026-09-13T12:00:04Z",
+        "soil_temperature_c": 19.75,
+        "moisture_percent": 40,
+        "conductivity_us_cm": 800,
+        "air_temperature_c": null,
+        "air_humidity_percent": null,
+        "soil_source_status": "available",
+        "air_source_status": "unavailable"
+      }
+    },
+    {
+      "id": "sensor-a-main-conflict",
+      "received_at": "2026-09-13T12:31:00Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -50,
+      "service_data_hex": "40022e092e362f213e2a00000045f200504090a66a56d204",
+      "expected_status": "conflict"
+    },
+    {
+      "id": "malformed-truncated",
+      "received_at": "2026-09-13T12:00:05Z",
+      "local_name": "sensor-abcdef123456",
+      "observed_identifier": "replay-malformed",
+      "rssi": -70,
+      "service_data_hex": "40022e",
+      "expected_status": "rejected"
+    },
+    {
+      "id": "unsupported-object",
+      "received_at": "2026-09-13T12:00:06Z",
+      "local_name": "sensor-abcdef123456",
+      "observed_identifier": "replay-unsupported",
+      "rssi": -70,
+      "service_data_hex": "4009013e01000000",
+      "expected_status": "rejected"
+    }
+  ]
+}

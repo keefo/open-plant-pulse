@@ -13,7 +13,7 @@ from open_plant_pulse_hub.web import create_server, server_address
 
 
 FIXTURE_PATH = (
-    Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v2-sensor-v2.json"
+    Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
 )
 
 
@@ -67,14 +67,22 @@ class SensorManagementTests(unittest.TestCase):
 
         reports = self.store.raw_sensor_reports(sensor_id)
 
-        self.assertEqual([item["packet_id"] for item in reports], [43, 42, 42])
+        self.assertEqual([item["report_id"] for item in reports], [42, 43, 42, 42, 42])
+        self.assertEqual(
+            [item["packet_kind"] for item in reports],
+            ["main", "main", "main", "supplementary", "main"],
+        )
         self.assertEqual(
             [item["decode_status"] for item in reports],
-            ["accepted", "duplicate", "accepted"],
+            ["conflict", "accepted", "duplicate", "accepted", "accepted"],
         )
-        self.assertEqual(reports[0]["service_data_hex"], "40002b03d71145f500")
+        self.assertEqual(
+            reports[0]["service_data_hex"],
+            "40022e092e362f213e2a00000045f200504090a66a56d204",
+        )
+        self.assertIn("already stored with different content", reports[0]["decode_error"])
         self.assertEqual(len(self.store.raw_sensor_reports(sensor_id, limit=2)), 2)
-        self.assertEqual(len(self.store.raw_sensor_reports("sensor-001122334455")), 1)
+        self.assertEqual(len(self.store.raw_sensor_reports("sensor-001122334455")), 2)
         self.assertEqual(self.store.raw_sensor_reports("missing"), [])
 
         ingestion = AdvertisementIngestionService(self.store)
@@ -85,7 +93,7 @@ class SensorManagementTests(unittest.TestCase):
                     local_name=sensor_id,
                     observed_identifier="replay-a",
                     rssi=-52,
-                    service_data=bytes.fromhex("40000902"),
+                    service_data=bytes.fromhex("40022e"),
                     source_adapter="test",
                 )
             ),
@@ -93,17 +101,19 @@ class SensorManagementTests(unittest.TestCase):
         )
         rejected = self.store.raw_sensor_reports(sensor_id)[0]
         self.assertEqual(rejected["decode_status"], "rejected")
-        self.assertEqual(rejected["service_data_hex"], "40000902")
+        self.assertEqual(rejected["service_data_hex"], "40022e")
+        self.assertIsNone(rejected["report_id"])
         self.assertIn("truncated", rejected["decode_error"])
 
         fixture_event = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["events"][0]
-        for packet_id in range(55):
+        for index in range(55):
             service_data = bytearray.fromhex(fixture_event["service_data_hex"])
-            service_data[2] = packet_id
+            report_id_at = service_data.index(0x3E) + 1
+            service_data[report_id_at : report_id_at + 4] = (100 + index).to_bytes(4, "little")
             self.assertEqual(
                 ingestion.ingest(
                     Advertisement(
-                        received_at=f"2026-09-13T13:00:{packet_id:02d}Z",
+                        received_at=f"2026-09-13T13:00:{index:02d}Z",
                         local_name=sensor_id,
                         observed_identifier="replay-a",
                         rssi=-48,
@@ -115,8 +125,8 @@ class SensorManagementTests(unittest.TestCase):
             )
         bounded_reports = self.store.raw_sensor_reports(sensor_id)
         self.assertEqual(len(bounded_reports), 50)
-        self.assertEqual(bounded_reports[0]["packet_id"], 54)
-        self.assertEqual(bounded_reports[-1]["packet_id"], 5)
+        self.assertEqual(bounded_reports[0]["report_id"], 154)
+        self.assertEqual(bounded_reports[-1]["report_id"], 105)
 
     def test_archives_restores_and_replaces_sensor_with_optional_history_merge(self) -> None:
         source, replacement = [item["sensor_id"] for item in self.store.sensors("unclaimed")[:2]]
@@ -351,14 +361,36 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn('window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));', app)
         self.assertIn("trackRawReportsDisclosure();", app)
 
+    def test_latest_reading_carries_the_joined_supplement(self) -> None:
+        query = urlencode({"sensor_id": "sensor-001122334455"})
+        with self.request("/api/readings/latest?" + query) as response:
+            reading = json.load(response)["reading"]
+
+        self.assertEqual(reading["report_id"], 7)
+        self.assertEqual(reading["observed_at"], "2026-09-13T12:00:03Z")
+        self.assertEqual(reading["battery_percent"], 64)
+        self.assertEqual(reading["battery_voltage_v"], 3.701)
+        self.assertIsNone(reading["soil_ph"])
+
+        page = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "index.html").read_text()
+        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
+        self.assertIn('id="battery"', page)
+        self.assertIn("<th>Report</th>", page)
+        self.assertIn("reading.battery_percent", app)
+        self.assertIn("reading.battery_voltage_v", app)
+        self.assertIn("item.report_id", app)
+        self.assertNotIn("packet_id", app)
+
     def test_raw_report_endpoint_scopes_reports_and_rejects_unknown_sensor(self) -> None:
         sensor_id = "sensor-aabbccddeeff"
         with self.request("/api/raw-reports?" + urlencode({"sensor_id": sensor_id})) as response:
             payload = json.load(response)
 
         self.assertEqual(response.status, 200)
-        self.assertEqual([item["packet_id"] for item in payload["items"]], [43, 42, 42])
-        self.assertEqual(payload["items"][0]["service_data_hex"], "40002b03d71145f500")
+        self.assertEqual(
+            [item["report_id"] for item in payload["items"]], [42, 43, 42, 42, 42]
+        )
+        self.assertEqual(payload["items"][1]["service_data_hex"], "402e2e3e2b00000045f500")
 
         with self.assertRaises(HTTPError) as raised:
             self.request("/api/raw-reports?" + urlencode({"sensor_id": "missing"}))
@@ -374,7 +406,7 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("function renderRawReports(items)", app)
         self.assertIn('if (wateringCalendarRequestKey === requestKey) return;', app)
         self.assertIn('wateringCalendarRequestKey = requestKey;', app)
-        self.assertIn('latestReading.observed_at,', app)
+        self.assertIn('latestReadingAt,', app)
         self.assertIn('profileId', app)
         self.assertIn('if (historyRequestKey === requestKey) return;', app)
         self.assertIn('refreshClimateHistory()', app)

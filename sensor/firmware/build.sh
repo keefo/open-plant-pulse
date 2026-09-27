@@ -15,6 +15,6 @@ if [ ! -f sdkconfig ] || ! grep -q '^CONFIG_IDF_TARGET="esp32c3"$' sdkconfig; th
 fi
 
 printf 'Building Open Plant Pulse firmware with %s\n' "$(idf.py --version)"
-idf.py build
+opp_run_with_progress Building "$project_dir/build/build.log" idf.py build
 
 printf '\nBuild complete: %s/build/open_plant_pulse.bin\n' "$project_dir"

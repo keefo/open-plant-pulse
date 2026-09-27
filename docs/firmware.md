@@ -29,8 +29,33 @@ sensor/firmware/flush.sh --port /dev/cu.usbmodem14801
 sensor/firmware/flush.sh --no-monitor
 ```
 
+In a terminal both scripts fold compile and flash output into one progress bar
+and hide ESP-IDF's activation messages; warnings and errors still print in
+full, and the complete output is kept in `sensor/build/build.log` and
+`sensor/build/flash.log`. On failure the last 40 lines are shown. Set
+`OPP_VERBOSE=1` for the full output in the terminal. When output is not a
+terminal (CI, a pipe, a log file) it is printed unchanged.
+
+Builds are deployed over USB-C with `flush.sh`, or over the air through the
+hub: upload the built `sensor/build/open_plant_pulse.bin` in Settings ->
+Firmware (or `POST /api/firmware`) and install it from the sensor's page (or
+`POST /api/sensors/<id>/firmware` with its digest). Over the air needs the
+sensor advertising, which development builds do continuously
+(`OPP_ALWAYS_REACHABLE`); it cannot recover a sensor that no longer boots, which
+still needs the cable. Give each deployed binary a new version, since the hub
+confirms an install by the version the sensor reports.
+
 Exit the monitor with `Ctrl-]`. Do not attach the probe or battery during the
-first USB-only smoke test. Treat these scripts as the canonical workflow for
+first USB-only smoke test. Once the probe is attached, fit the battery before
+testing it: USB alone cannot power the probe (see
+[the hardware notes](../sensor/hardware/README.md#the-node-must-have-its-battery-in)).
+
+If no serial port appears, the cable is the usual cause. A charge-only cable
+powers the board, which boots and joins Wi-Fi, but carries no data: macOS lists
+no Espressif device, and the sensor's `/status` reports `"usb_connected":
+false`. Use a data cable directly into the computer. When the monitor is not
+wanted, `flush.sh --no-monitor` flashes and returns, and the log remains
+readable at `http://<board-ip>/logs`. Treat these scripts as the canonical workflow for
 humans, CI helpers, and AI coding sessions; use raw `idf.py` only for diagnostics
 or advanced configuration such as `idf.py menuconfig`.
 
@@ -64,10 +89,25 @@ development values, not proof of a sensor's register map:
 | `OPP_CLOCK_SYNC_RETRY_MINUTES` | 15 | Delay after a failed SNTP attempt |
 | `OPP_CLOCK_RESYNC_INTERVAL_HOURS` | 12 | Opportunistic RTC drift-correction interval (6–24 hours) |
 | `OPP_CLOCK_JUMP_WARNING_SECONDS` | 300 | Log threshold for a forward or backward correction |
-| `OPP_SHT45_SDA_GPIO` | 6 | SHT45 I2C data pin (XIAO D4) |
-| `OPP_SHT45_SCL_GPIO` | 7 | SHT45 I2C clock pin (XIAO D5) |
+| `OPP_SHT45_SDA_GPIO` | 3 | I2C data pin shared by SHT45 and INA219 (XIAO D1) |
+| `OPP_SHT45_SCL_GPIO` | 5 | I2C clock pin shared by SHT45 and INA219 (XIAO D3) |
 | `OPP_SHT45_SAMPLE_INTERVAL_SECONDS` | 5 | Awake development sampling interval |
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
+| `OPP_BATTERY_MONITOR_ENABLED` | enabled | Read pack voltage and current from the INA219 |
+| `OPP_INA219_ADDRESS` | 64 (`0x40`) | INA219 I2C address |
+| `OPP_INA219_SHUNT_MILLIOHMS` | 100 | Shunt resistance; read the module's marking (`R100` is 100) |
+| `OPP_INA219_POSITIVE_IS_CHARGING` | enabled | Matches VIN+ on the system node, VIN- on the pack |
+| `OPP_BATTERY_CAPACITY_MAH` | 5000 | Combined rated capacity of the parallel cells |
+| `OPP_BATTERY_SAMPLE_INTERVAL_MS` | 1000 | Battery sampling interval |
+| `OPP_ALWAYS_REACHABLE` | enabled | Development only: keep advertising between reports on battery so updates and settings land at once |
+| `OPP_SOIL_PROBE_ENABLED` | enabled | Poll the RS485 NPKPHCTH-S soil probe |
+| `OPP_SOIL_PROBE_TX_GPIO` | 6 | RS485 board UART TX (XIAO D4) |
+| `OPP_SOIL_PROBE_RX_GPIO` | 7 | RS485 board UART RX (XIAO D5) |
+| `OPP_SOIL_PROBE_DE_GPIO` | 4 | RS485 driver enable, driven by the UART in half-duplex mode (XIAO D2) |
+| `OPP_SOIL_PROBE_POWER_GPIO` | 10 | Probe power switch (AO3400 gate, XIAO D10); -1 if always powered |
+| `OPP_SOIL_PROBE_WARMUP_MS` | 2000 | Wait after power-on before the first read |
+| `OPP_SOIL_PROBE_BAUD_RATE` | 4800 | Probe factory baud rate, 8N1 |
+| `OPP_SOIL_PROBE_SAMPLE_INTERVAL_SECONDS` | 10 | Awake development soil sampling interval |
 | `OPP_SAMPLE_INTERVAL_MINUTES` | 30 | Initial delay before hub device configuration is applied |
 
 ### Partitions and over-the-air updates
@@ -150,10 +190,10 @@ history is intentionally not added here because durable history remains owned by
 the hub. When valid, `air_sample_unix_ms` preserves the full acquisition
 timestamp represented by `air_sample_time_utc`.
 
-The console has Overview and Maintenance pages. Overview presents the ESP32-C3 and
-Hub configuration in metric-card sections, with live ESP-IDF logs at the bottom.
-The Sensors section on Maintenance can enable or disable each sensor. Maintenance
-also persists the website color mode, accent, density, IANA timezone, `/status`
+The console has Overview and Maintenance pages. Overview presents the Hub
+configuration, the ESP32-C3, and the SHT45, soil-probe and battery sections,
+with live ESP-IDF logs at the bottom. Each switchable sensor's section header
+carries its Enabled switch beside the state label. Maintenance persists the website color mode, accent, density, IANA timezone, `/status`
 refresh interval, and Overview card order, visibility, and width. The refresh choices range
 from one second to one hour, or Off; Off still permits the page's initial status
 request. The Overview
@@ -174,6 +214,7 @@ The current API is:
 | `POST` | `/api/v1/config/ui/reset` | Erase the saved value and restore firmware defaults |
 | `POST` | `/api/v1/reports/force` | Queue an immediate report and return its request ID |
 | `POST` | `/api/v1/restart` | Schedule a device restart after validating `{"confirm":"restart"}` |
+| `GET` | `/api/v1/soil/registers?function=4&start=0&count=16` | Debug: read raw soil-probe registers (function 3 or 4, up to 32) |
 
 Request bodies are limited to 1535 bytes. Unknown fields, duplicate or unknown
 card IDs, unsupported values, invalid timezone syntax, invalid spans, and
@@ -214,11 +255,12 @@ SHT4x CRC-8 check before the reading is published. Humidity is clamped to 0-100%
 
 The awake development firmware takes one-shot readings every five seconds. Valid
 samples are logged as `air_temperature_c` and `air_humidity_percent`, exposed by
-`/status`, and displayed in an automatic Overview section. The Sensors section on
-Maintenance shows the SHT45 status badge and its persisted enable switch. The Overview derives
+`/status`, and displayed in the Overview's SHT45 section, whose header shows the
+status badge and the persisted enable switch. The Overview derives
 absolute humidity in g/m³ from each temperature and relative-humidity sample using
 the Magnus saturation-vapor-pressure approximation.
-The Overview section is hidden when the SHT45 has no valid reading. A failed
+The section stays visible, showing `Unavailable` and `--`, when the SHT45 has no
+valid reading. A failed
 transaction immediately invalidates the latest sample so stale values are not
 served. Probe failures are retried without preventing the Wi-Fi diagnostics
 console from starting.
@@ -263,9 +305,10 @@ production fallback.
 The Maintenance **Report now** control is available only in the always-awake Wi-Fi
 diagnostics runtime. It queues a fresh BLE report immediately, without changing or
 resetting the configured periodic deadline. The page tracks the request ID and
-BTHome packet ID through queued, reporting, acknowledged, unacknowledged, and failed
-states. A successful result means the Hub durably accepted that exact packet and
-wrote the matching acknowledgment token back during the same BLE window.
+report ID through queued, reporting, acknowledged, unacknowledged, and failed
+states. A successful result means the Hub durably accepted that exact report and
+wrote the matching acknowledgment token (version 2, carrying the report ID) back
+during the same BLE window.
 
 The request uses the standard BTHome button-press event and the connected-BLE
 acknowledgment characteristic documented in [`protocol/README.md`](../protocol/README.md).
@@ -281,15 +324,17 @@ gate. It is suitable only for prototype validation on a trusted bench.
 
 Enable `OPP_PRODUCTION_LIFECYCLE` to replace the powered diagnostics runtime with
 one bounded wake cycle. Production firmware reads the SHT45 once, omits the complete air
-object group if acquisition fails, advertises a fresh contract-v2 sample with a
-deep-sleep-retained packet ID and eFuse-derived `sensor-<DEVICE_ID>` name, explicitly
+object group if acquisition fails, advertises a fresh contract-v3 report with a
+new report ID and eFuse-derived `sensor-<DEVICE_ID>` name, explicitly
 stops/deinitializes NimBLE, and enters timer deep sleep. The advertisement window
 defaults to 3000 ms at a 250 ms interval; the sleep interval defaults to 30 minutes
 until hub configuration is applied.
 
-This first implementation is air-only. The unverified soil UART and probe-power
-hardware are deliberately not energized. Probe power must be disabled on every
-normal and error path when that acquisition stage is added. See
+Production firmware also reads the soil probe once per wake and reports
+whichever of air and soil succeeded. It switches the probe on through GPIO10,
+waits the warm-up, reads once, and switches it off again on every path, so the
+probe is unpowered during deep sleep. The production soil path is built but
+has not been flashed or measured, and a 2 s warm-up is too short for pH. See
 [sensor power management](power-management.md) for the power-domain model,
 RTC timer behavior, peripheral shutdown requirements, and battery-life method.
 
@@ -303,8 +348,13 @@ sh scripts/test-sensor.sh
 
 The script builds with C11 and treats all warnings as errors. Tests cover the
 known Modbus request CRC, valid and corrupted responses, signed/scaled values,
-contract-v1 and contract-v2 BTHome service-data bytes, partial source omission,
-packet IDs, and stable local-name formatting.
+the NPK-type probe's request and reply exactly as printed in its manual (CRCs
+included), out-of-range probe values, both register-reading functions
+(`0x03`/`0x04`),
+the contract-v3 main, supplementary and beacon packets byte for byte against
+`protocol/fixtures/bthome-v3.json`, partial source omission, rounding and range
+limits, the forced-report acknowledgement token, and stable local-name
+formatting.
 
 ## Implementation status
 
@@ -319,3 +369,117 @@ USB source detection is not a current or energy measurement, and the 24-hour soa
 still pending. Add remaining target code in this order: UART reads with fixture data,
 verified GPIO power control, centralized probe cleanup, then physical repeated-cycle
 and power validation. See [the roadmap](roadmap.md) for acceptance criteria.
+
+Firmware 0.13.3 reads the soil probe in the always-awake diagnostics mode. It
+was flashed by USB and, with the battery fitted and the needles in water,
+reported moisture, temperature, conductivity, pH and N/P/K; the SHT45 read
+cleanly on D1/D3 alongside it. The soil values reach the hub over BTHome.
+In clean tap water it settled at moisture 100 %, 23.8 C, 41 uS/cm and pH 6.8.
+Not yet validated: 100 consecutive probe reads without a retry, soil readings
+in real soil against a reference, pH against a buffer, and the production path.
+
+### Soil probe
+
+The firmware reads a ComWinTop NPKPHCTH-S (the five-needle "NPK type" probe)
+with one Modbus RTU function `0x03` request for registers `0x0000`-`0x0006`:
+moisture (0.1 %), temperature (0.1 C, signed), conductivity (uS/cm), pH (0.1),
+and nitrogen, phosphorus and potassium (mg/kg). The register map and the host
+test vector come from the CWT "NPK type" manual V1.4. Frames with a bad address,
+length or CRC, or with moisture, temperature or conductivity outside the probe's
+measuring range, are rejected.
+
+All seven values reach the hub: moisture, soil temperature and conductivity in
+the contract-v3 main packet, and pH and N/P/K in the supplementary packet (see
+[BTHome reports](#bthome-reports)). A failed read logs the raw reply bytes,
+which distinguish a swapped A/B pair, a wrong baud rate and a wrong address.
+
+Each sample is attempted up to three times, 100 ms apart, because replies on
+the prototype occasionally arrive short or with flipped bits. A sample fails
+only when all three attempts do; a failed sample clears the previous one rather
+than reporting it as current. The console's Overview keeps both the SHT45 and
+soil sections on screen at all times and shows `Unavailable` and `--` with the
+last error when a sensor has no current reading. Each sensor section's header has its
+Enabled switch beside the state label; the soil-probe switch works like the
+SHT45 one: it is saved with the UI configuration, and
+switching it off stops polling at once, clears the reading, leaves soil out
+of reports, and drives GPIO10 low to cut the probe's power (saving 28.5 mA).
+Switching it on powers the probe, waits `OPP_SOIL_PROBE_WARMUP_MS`, and reads
+again; the log records how long the probe took to answer. `/status` reports
+`soil_probe_powered`. The production cycle powers the probe only for its one
+read and cuts power on every path. The first pH reading after power-on is
+unreliable (see [the hardware notes](../sensor/hardware/README.md#probe-power-switch)).
+
+The debug route `GET /api/v1/soil/registers` reads any register range with
+function `0x03` or `0x04` and returns the raw values, so a probe's map can be
+checked against the probe itself instead of its manual. It shares the bus with
+the sampling task under one lock. A probe that answers with a Modbus exception
+yields `422`, no reply `504`, and a garbled reply `502`.
+
+| Symptom | Likely cause |
+| --- | --- |
+| Moisture, temperature and pH exactly 0 while conductivity reads | Probe supply too weak: the node is on USB without its battery |
+| Every read times out | A/B swapped, wrong baud rate or address, or no probe power |
+| Frames a byte short, or last bits flipped | Line or supply noise; retries recover them. Check the battery and try the 120R switch off |
+| All values 0 in air, including temperature | Needles in air explain moisture and EC of 0 (pH in air is noise, not 0); a 0.0 temperature means the supply problem above |
+| pH or EC unexpected in water | Check the container first: residue in one glass read pH 4.5 and 97 uS/cm where clean tap water read 6.8 and 41. pH also takes minutes to settle |
+
+### Battery monitor
+
+The INA219 sits between the pack and the system node, so it measures the net
+current into or out of the cells from every source and load: the IP2312, the
+XIAO's own charger, the controller, and the MT3608 and probe. The monitor reads
+it every second on the shared I2C bus (D1/D3, with the SHT45), continuously
+converting with 128-sample averaging so that radio bursts are smoothed.
+
+- **Current** is the shunt voltage divided by the shunt resistance, so no
+  calibration register is involved. Positive is charging. Below 15 mA either
+  way the pack is `idle`.
+- **Charge level** starts from the pack voltage on a resting Li-ion curve,
+  then counts charge in and out. The count is pinned to 100 % when a charge
+  ends: at least 4.18 V with the current below C/20, held for a minute. The
+  hold matters because the XIAO's own charger delivers only about 250 mA,
+  below C/20 for its whole charge. From then on the level is marked
+  calibrated. Until then it is an estimate: voltage reads low under
+  load and high while charging. The count survives resets but not removing
+  the battery.
+- **Time left** divides the remaining charge by a five-minute average current,
+  to empty while discharging or to full while charging; the Overview labels it
+  `Until empty` or `Until full`. The average restarts when the current reverses,
+  so unplugging a charger does not leave minutes "until full" on a pack that is
+  now discharging. Time to full is
+  optimistic, because the current tapers near the end.
+
+With a 0.1 ohm shunt the resolution is 0.1 mA and the range about 3.2 A; an
+overflow is flagged. The shunt value and capacity are build settings and must
+match the parts. `/status` exposes the values as `battery_*` fields, and the
+Overview shows them in a Battery section.
+
+### BTHome reports
+
+Firmware 0.16.0 sends [contract v3](../protocol/README.md#bthome-contract-version-3).
+Each report takes the next report ID, gathers the latest SHT45 sample, soil
+sample (with pH and N/P/K), battery level and voltage, and the acquisition time
+when the clock is trusted, and becomes up to two packets: a main packet with
+the core measurements (24 bytes at most) and a supplementary one with battery,
+pH, N/P/K and the forced-report marker. The broadcaster swaps between the two
+every 500 ms within one advertising window, since legacy advertising accepts
+new data while it runs. Reachability windows repeat the last pair unchanged,
+which the hub recognises by its report ID and stores nothing from. With no SHT45
+or soil sample the sensor sends a beacon, the single byte `0x40`.
+
+Report IDs are reserved in blocks of 100 in NVS (namespace `report`, key
+`limit`) and kept in retained memory across deep sleep, so flash is written
+about once per hundred reports. After a reset the rest of the block is
+skipped; the IDs have gaps but never repeat. Erasing NVS restarts them, and the
+sensor must then be removed from the hub and adopted again.
+
+### Development reachability
+
+An owned sensor on battery normally advertises only at its reports (every 30
+minutes by default), while USB data is attached, and for two minutes after a
+hub connection. The hub can reach a sensor only while it advertises, so a
+settings change or update sent between reports waits for the next one; this
+stalled an install for more than six minutes on 2026-09-26.
+`OPP_ALWAYS_REACHABLE` (development builds, on by default) keeps the sensor
+advertising continuously instead. It is not deep sleep: the development
+lifecycle never sleeps, and deep sleep exists only in the production lifecycle.

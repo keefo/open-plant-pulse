@@ -3,7 +3,7 @@
 from .bthome import (
     BTHOME_SERVICE_UUID,
     decode_service_data,
-    has_force_report_event,
+    is_beacon,
     sensor_id_from_local_name,
 )
 from .device_configuration import (
@@ -30,6 +30,6 @@ __all__ = [
     "decode_report_acknowledgement",
     "encode_device_configuration",
     "encode_report_acknowledgement",
-    "has_force_report_event",
+    "is_beacon",
     "sensor_id_from_local_name",
 ]

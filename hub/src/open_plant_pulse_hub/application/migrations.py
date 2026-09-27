@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 16
+DATABASE_SCHEMA_VERSION = 17
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -396,6 +396,132 @@ MIGRATIONS: Dict[int, str] = {
         ALTER TABLE sensors ADD COLUMN firmware_update_percent INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE sensors ADD COLUMN firmware_update_error TEXT;
         ALTER TABLE sensors ADD COLUMN firmware_update_started_at TEXT;
+    """,
+    17: """
+        /* Contract v3. A report is identified by the sensor's own report ID and
+           may arrive as two packets, so readings are keyed by (sensor, report
+           ID) instead of the 8-bit packet ID, and the time a reading was taken
+           may be unknown. Both tables are rebuilt: a NOT NULL and a CHECK cannot
+           be relaxed in place.
+
+           sensor_readings holds a foreign key into advertisements, and this
+           runner keeps foreign keys enforced inside one transaction, so the old
+           advertisements cannot simply be dropped while readings point at it.
+           The new readings table is made to point at the new advertisements
+           table, both old tables are dropped child first, and the renames that
+           follow carry the reference along to the final names. */
+        CREATE TABLE advertisements_v17 (
+            advertisement_id INTEGER PRIMARY KEY,
+            sensor_id TEXT REFERENCES sensors(sensor_id),
+            report_id INTEGER
+                CHECK (report_id IS NULL OR report_id BETWEEN 1 AND 4294967295),
+            packet_kind TEXT
+                CHECK (packet_kind IS NULL OR
+                       packet_kind IN ('main', 'supplementary', 'beacon')),
+            /* The 8-bit packet ID of contract v2, kept so nothing already
+               recorded is lost. Nothing reads it. */
+            legacy_packet_id INTEGER,
+            received_at TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            source_adapter TEXT NOT NULL,
+            observed_identifier TEXT NOT NULL,
+            rssi INTEGER,
+            contract_version INTEGER,
+            payload_sha256 TEXT NOT NULL,
+            decode_status TEXT NOT NULL
+                CHECK (decode_status IN ('accepted', 'duplicate', 'conflict', 'rejected')),
+            decode_error TEXT,
+            service_data BLOB
+        );
+        INSERT INTO advertisements_v17 (
+            advertisement_id, sensor_id, legacy_packet_id, received_at, transport,
+            source_adapter, observed_identifier, rssi, contract_version,
+            payload_sha256, decode_status, decode_error, service_data
+        )
+        SELECT advertisement_id, sensor_id, packet_id, received_at, transport,
+               source_adapter, observed_identifier, rssi, contract_version,
+               payload_sha256, decode_status, decode_error, service_data
+        FROM advertisements;
+
+        CREATE TABLE sensor_readings_v17 (
+            reading_id INTEGER PRIMARY KEY,
+            /* The main packet the reading came from. */
+            advertisement_id INTEGER UNIQUE
+                REFERENCES advertisements_v17(advertisement_id) ON DELETE RESTRICT,
+            sensor_id TEXT NOT NULL REFERENCES sensors(sensor_id),
+            /* Null for readings stored before contract v3. */
+            report_id INTEGER
+                CHECK (report_id IS NULL OR report_id BETWEEN 1 AND 4294967295),
+            /* The 8-bit packet ID or sample number earlier readings carried,
+               kept so nothing already recorded is lost. Nothing reads it. */
+            legacy_packet_id INTEGER,
+            /* Null when the sensor did not know the time. received_at is never
+               copied in its place. */
+            observed_at TEXT,
+            received_at TEXT NOT NULL,
+            soil_temperature_c REAL,
+            moisture_percent REAL,
+            conductivity_us_cm INTEGER,
+            air_temperature_c REAL,
+            air_humidity_percent REAL,
+            soil_ph REAL,
+            nitrogen_mg_kg INTEGER,
+            phosphorus_mg_kg INTEGER,
+            potassium_mg_kg INTEGER,
+            battery_percent INTEGER
+                CHECK (battery_percent IS NULL OR battery_percent BETWEEN 0 AND 100),
+            battery_voltage_v REAL,
+            soil_source_status TEXT NOT NULL DEFAULT 'available'
+                CHECK (soil_source_status IN ('available', 'unavailable')),
+            air_source_status TEXT NOT NULL DEFAULT 'available'
+                CHECK (air_source_status IN ('available', 'unavailable')),
+            contract_version INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO sensor_readings_v17 (
+            reading_id, advertisement_id, sensor_id, legacy_packet_id, observed_at,
+            received_at, soil_temperature_c, moisture_percent, conductivity_us_cm,
+            air_temperature_c, air_humidity_percent, soil_ph, nitrogen_mg_kg,
+            phosphorus_mg_kg, potassium_mg_kg, soil_source_status,
+            air_source_status, contract_version
+        )
+        SELECT reading_id, advertisement_id, sensor_id, sequence, observed_at,
+               received_at, soil_temperature_c, moisture_percent, conductivity_us_cm,
+               air_temperature_c, air_humidity_percent, soil_ph, nitrogen_mg_kg,
+               phosphorus_mg_kg, potassium_mg_kg, soil_source_status,
+               air_source_status, contract_version
+        FROM sensor_readings;
+
+        DROP TABLE sensor_readings;
+        DROP TABLE advertisements;
+        ALTER TABLE advertisements_v17 RENAME TO advertisements;
+        ALTER TABLE sensor_readings_v17 RENAME TO sensor_readings;
+        CREATE INDEX advertisements_by_sensor_time
+        ON advertisements(sensor_id, advertisement_id DESC);
+        CREATE INDEX advertisements_by_status_time
+        ON advertisements(decode_status, advertisement_id DESC);
+        CREATE INDEX sensor_readings_by_sensor_time
+        ON sensor_readings(sensor_id, observed_at DESC);
+        /* The report key. Repeated advertising of one report is absorbed here. */
+        CREATE UNIQUE INDEX sensor_readings_by_report
+        ON sensor_readings(sensor_id, report_id) WHERE report_id IS NOT NULL;
+
+        /* What each report's supplementary packet said, kept whichever packet
+           arrived first. It is copied onto the reading once both are here, and
+           stays so that the packet repeating can be told from a conflict. */
+        CREATE TABLE report_supplements (
+            sensor_id TEXT NOT NULL REFERENCES sensors(sensor_id),
+            report_id INTEGER NOT NULL CHECK (report_id BETWEEN 1 AND 4294967295),
+            received_at TEXT NOT NULL,
+            battery_percent INTEGER
+                CHECK (battery_percent IS NULL OR battery_percent BETWEEN 0 AND 100),
+            battery_voltage_v REAL,
+            soil_ph REAL,
+            nitrogen_mg_kg INTEGER,
+            phosphorus_mg_kg INTEGER,
+            potassium_mg_kg INTEGER,
+            force_report INTEGER NOT NULL DEFAULT 0 CHECK (force_report IN (0, 1)),
+            PRIMARY KEY (sensor_id, report_id)
+        );
     """,
 }
 

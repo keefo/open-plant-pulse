@@ -23,6 +23,10 @@ const historyRanges = {
 };
 let profiles = null;
 let latestReading = null;
+// When the latest reading was taken, or when it was received if the sensor did
+// not know the time. Ranges and calendars need a time either way; the reading
+// itself keeps saying the time was unknown.
+let latestReadingAt = null;
 let selectedHistoryRange = "live";
 let historyRequestKey = null;
 let drainageAssessments = [];
@@ -362,6 +366,12 @@ function trackRawReportsDisclosure() {
   });
 }
 
+function rawReportLabel(item) {
+  if (item.packet_kind === "beacon") return "beacon";
+  if (item.report_id == null) return "—";
+  return item.packet_kind ? `${item.report_id} · ${item.packet_kind}` : String(item.report_id);
+}
+
 function renderRawReports(items) {
   const rows = document.getElementById("raw-report-list");
   if (!items.length) {
@@ -389,7 +399,7 @@ function renderRawReports(items) {
     });
     const values = [
       new Date(item.received_at).toLocaleString(),
-      item.packet_id == null ? "—" : String(item.packet_id),
+      rawReportLabel(item),
       status,
       item.rssi == null ? "—" : `${item.rssi} dBm`,
       [item.source_adapter, item.observed_identifier].filter(Boolean).join(" · "),
@@ -461,6 +471,7 @@ async function selectSensor(sensorId) {
   selectedSensor = fleetSensors.find((sensor) => sensor.sensor_id === sensorId) || null;
   history.pushState({}, "", `/sensors/${encodeURIComponent(sensorId)}`);
   latestReading = null;
+  latestReadingAt = null;
   historyRequestKey = null;
   wateringCalendarRequestKey = null;
   renderedCareEventIds = new Set();
@@ -637,16 +648,23 @@ function renderGauge(card, metricName, metric, value) {
   const [scaleLow, scaleHigh] = metric.scale;
   const [idealLow, idealHigh] = metric.ideal;
   const percentage = number => (number - scaleLow) / (scaleHigh - scaleLow) * 100;
-  const marker = Math.max(0, Math.min(100, percentage(value)));
   card.querySelector(".ideal-range").style.left = `${percentage(idealLow)}%`;
   card.querySelector(".ideal-range").style.width = `${percentage(idealHigh) - percentage(idealLow)}%`;
-  card.querySelector(".value-marker").style.left = `${marker}%`;
   card.querySelector(".scale-low").textContent = scaleLow;
   card.querySelector(".scale-high").textContent = scaleHigh;
   card.querySelector(".ideal-label").textContent = `Ideal ${idealLow}–${idealHigh}`;
 
   const status = card.querySelector(".range-status");
   status.className = "range-status";
+  const valueMarker = card.querySelector(".value-marker");
+  // A value the sensor did not send is not a value of zero, which is where a
+  // missing number would otherwise put the marker.
+  valueMarker.hidden = value == null;
+  if (value == null) {
+    status.textContent = "Not in the latest report";
+    return;
+  }
+  valueMarker.style.left = `${Math.max(0, Math.min(100, percentage(value)))}%`;
   const suffix = metric.unit ? ` ${metric.unit}` : "";
   if (value < idealLow) {
     status.textContent = `${formatDifference(idealLow - value, metricName)}${suffix} below ideal`;
@@ -681,7 +699,8 @@ function renderProfileRanges() {
   }
   for (const card of document.querySelectorAll(".chemistry-gauge")) {
     const metricName = card.dataset.metric;
-    document.getElementById(chemistryValueIds[metricName]).textContent = formatValue(latestReading[metricName], metricName);
+    const value = latestReading[metricName];
+    document.getElementById(chemistryValueIds[metricName]).textContent = value == null ? "--" : formatValue(value, metricName);
     renderGauge(card, metricName, profile.chemistry[metricName], latestReading[metricName]);
   }
 }
@@ -739,6 +758,12 @@ function renderDrainageAssessment(profile) {
   }
 }
 
+function batteryLabel(reading) {
+  if (reading.battery_percent == null) return "Battery not reported";
+  const voltage = reading.battery_voltage_v == null ? "" : ` · ${Number(reading.battery_voltage_v).toFixed(2)} V`;
+  return `Battery ${reading.battery_percent}%${voltage}`;
+}
+
 function renderReading(payload) {
   const reading = payload.reading;
   latestReading = reading;
@@ -754,8 +779,13 @@ function renderReading(payload) {
   const isLive = Number.isFinite(receivedAt) && Date.now() - receivedAt <= staleAfterMs;
   document.getElementById("status").textContent = isLive ? "Sensor fresh" : "Sensor stale";
   document.getElementById("status-dot").classList.toggle("live", isLive);
-  const displayedAt = reading.observed_at || payload.received_at;
-  document.getElementById("updated").textContent = `Sample ${reading.sequence} · ${new Date(displayedAt).toLocaleTimeString()}`;
+  latestReadingAt = reading.observed_at || payload.received_at;
+  const takenAt = reading.observed_at
+    ? new Date(reading.observed_at).toLocaleTimeString()
+    : `time unknown, received ${new Date(payload.received_at).toLocaleTimeString()}`;
+  const report = reading.report_id == null ? "Sample" : `Report ${reading.report_id}`;
+  document.getElementById("updated").textContent = `${report} · ${takenAt}`;
+  document.getElementById("battery").textContent = batteryLabel(reading);
   renderProfileRanges();
 }
 
@@ -888,12 +918,12 @@ function renderClimateHistory(items, startTime, endTime) {
 }
 
 async function refreshClimateHistory() {
-  if (!latestReading || !latestReading.observed_at || !selectedSensorId) return;
+  if (!latestReading || !latestReadingAt || !selectedSensorId) return;
   const range = historyRanges[selectedHistoryRange];
-  const endTime = Date.parse(latestReading.observed_at);
+  const endTime = Date.parse(latestReadingAt);
   if (!Number.isFinite(endTime)) return;
   const startTime = endTime - range.milliseconds;
-  const requestKey = `${selectedSensorId}:${selectedHistoryRange}:${latestReading.observed_at}:${latestReading.sequence}`;
+  const requestKey = `${selectedSensorId}:${selectedHistoryRange}:${latestReadingAt}:${latestReading.report_id}`;
   if (historyRequestKey === requestKey) return;
   historyRequestKey = requestKey;
   const query = new URLSearchParams({
@@ -1064,12 +1094,12 @@ function renderWateringCalendar(items, range, watering) {
 }
 
 async function refreshWateringCalendar() {
-  if (!latestReading || !latestReading.observed_at) return;
-  const range = wateringCalendarRange(latestReading.observed_at);
+  if (!latestReading || !latestReadingAt) return;
+  const range = wateringCalendarRange(latestReadingAt);
   const profileId = selectedSensor?.profile_id || profiles.default_profile;
   const requestKey = [
     latestReading.sensor_id,
-    latestReading.observed_at,
+    latestReadingAt,
     range.year,
     profileId
   ].join(":");

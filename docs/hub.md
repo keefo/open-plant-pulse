@@ -24,7 +24,7 @@ follow-up work.
 
 The checked-in vertical slice serves a standard-library HTTP dashboard. It also
 includes a Bleak BTHome subscriber,
-stable sensor-owned identity, packet deduplication, deterministic replay, explicit
+stable sensor-owned identity, report deduplication, deterministic replay, explicit
 SQLite migrations, partial-source storage, and separate scanner/database health.
 These paths are host-tested with captured advertisements. The browser now includes
 hub health, an unclaimed-sensor inbox, an enrolled fleet overview, sensor-scoped
@@ -134,7 +134,8 @@ browser `Origin` that does not match the request `Host`; requests without `Origi
 remain available to local command-line tools. The server binds to loopback unless
 `--host` is explicitly supplied. For LAN use, bind to a private interface only,
 restrict the port with the host firewall, and do not expose it to the Internet.
-Deterministic BLE tests use the advertisement replay adapter.
+Deterministic BLE tests use the advertisement replay adapter with
+[`protocol/fixtures/bthome-v3-replay.json`](../protocol/fixtures/bthome-v3-replay.json).
 
 ### Native Bluetooth setup
 
@@ -183,7 +184,8 @@ The subscriber must:
 - filter service data for BTHome UUID `0xFCD2` in the discovery callback before
   decoding; do not use a scanner-level service UUID filter because CoreBluetooth
   suppresses the sensor's valid service-data-only advertisements when it is set;
-- accept only supported BTHome v2 device-info flags and object layouts;
+- accept only contract-v3 packets: BTHome v2 service data with unencrypted
+  device info and the main, supplementary, or beacon layout;
 - record the hub receipt time, source adapter, observed Bluetooth identifier, and
   RSSI when the platform provides them;
 - reject malformed or unsupported advertisements without stopping the scan loop;
@@ -199,18 +201,24 @@ read-back; saving a new hub interval leaves the last confirmed sensor interval
 unchanged until synchronization succeeds. The hub does not connect when no
 configuration is pending.
 
+A report forced from the sensor's console carries button event `0x3A` in its
+supplementary packet. Once both of that report's packets are stored, the subscriber
+connects once, reads the nine-byte forced-report acknowledgement token (version 2:
+request ID and report ID), checks that its report ID is the forced report the hub
+stored, and writes the identical token back. A token naming any other report is not
+acknowledged. The repeated advertising of one forced report does not open further
+connections.
+
 `bleak` presents platform-specific device identifiers: Linux commonly exposes a
 Bluetooth address while macOS exposes a CoreBluetooth UUID. Neither is guaranteed
 to be portable across hosts or OS resets. Identity must therefore be an explicit
 part of the enrollment design rather than an undocumented use of `device.address`.
 
-Contract v2 uses the complete BLE local name `sensor-<DEVICE_ID>`, where `DEVICE_ID`
+Contract v3 uses the complete BLE local name `sensor-<DEVICE_ID>`, where `DEVICE_ID`
 is the sensor's immutable 48-bit hardware device ID encoded as 12 lowercase
 hexadecimal digits. The advertised name and hub canonical ID both use
-`sensor-<lowercase-device-id>`. During firmware transitions, previous uppercase
-`sensor-<DEVICE_ID>` and legacy uppercase `OPP-<DEVICE_ID>` advertisements are
-accepted and mapped to the same canonical identity so history and enrollment remain
-continuous.
+`sensor-<lowercase-device-id>`. Earlier name forms are not accepted; a sensor still
+using one is reflashed.
 This sensor-owned identity survives sensor reset, hub replacement, and changes to
 the Linux address or macOS CoreBluetooth UUID. Platform identifiers remain bounded
 receive diagnostics only. The identifier is observable and spoofable under the
@@ -221,20 +229,34 @@ The user then assigns a display name, plant, profile, and room. Unknown BTHome
 devices must not silently appear as trusted Open Plant Pulse sensors unless the UI
 offers an enrollment window or an allowlist policy.
 
-### Duplicate and partial advertisements
-The sensor increments BTHome packet ID `0x00` modulo 256 once per new wake-cycle
-sample and holds it constant through the advertisement burst. The ingestion path
-compares packet IDs within stable sensor identity and stores duplicate callbacks as
-bounded diagnostics without creating readings. Database uniqueness provides a
-second guard for deterministic captured replay across restart.
-Packet-ID wraparound is valid after intervening accepted samples; any time-window
-fallback must be documented as heuristic and must not collapse distinct
-equal-valued samples.
+### Reports, duplicates, and partial advertisements
+
+Contract v3 is defined in [`protocol/README.md`](../protocol/README.md). A report is
+keyed by `(sensor identity, report ID)`, where the report ID is a 32-bit count the
+sensor never repeats. A report travels as a main packet (soil and air measurements,
+optional acquisition timestamp) and, when there is anything for it, a supplementary
+packet (battery, soil pH and nitrogen/phosphorus/potassium, forced-report marker).
+The two may arrive in either order. A reading is stored, and appears in latest
+values, history, and care events, when its main packet arrives. A supplementary
+packet is kept in `report_supplements` whichever arrives first, and its values are
+copied onto the reading when both are present.
+
+A packet whose content matches what is stored for its key and packet kind is a
+duplicate: it is logged as such and stores nothing, which is how the sensor's repeated
+advertising is absorbed. The same key with different content is a conflict: it is
+logged with decode status `conflict` and never overwrites the stored values. The
+beacon, the single byte `0x40`, records presence only and stores no reading. The raw
+report log records every packet with its report ID and kind.
+
+`observed_at` is the sensor's acquisition timestamp (`0x50`) as RFC 3339 UTC. A report
+without one stores `observed_at` as null alongside `received_at`; ranges, calendars,
+and journey summaries place such a reading by its receipt time without recording that
+as the observation time.
 
 A failed source omits that source's complete object group. Soil requires `0x02`,
-`0x14`, and `0x56`; air requires `0x03` and `0x45`. The hub stores source
-availability with the reading and never fills a missing value from an earlier wake
-cycle. Incomplete groups are malformed. Contract changes require matching fixtures,
+`0x2F`, and `0x56`; air requires `0x2E` and `0x45`. The hub stores source
+availability with the reading and never fills a missing value from an earlier
+report. Incomplete groups are malformed. Contract changes require matching fixtures,
 sensor encoder tests, hub decoder tests, and hardware compatibility checks.
 
 ### Security and privacy
@@ -264,15 +286,18 @@ needs at least:
 
 ### `advertisements`
 
-- sensor ID and deduplication key;
-- hub receipt time and optional sensor sequence/packet ID;
+- sensor ID, report ID, and packet kind (main, supplementary, or beacon);
+- hub receipt time;
 - supported BTHome contract version;
-- bounded source metadata and decode status.
+- bounded source metadata and decode status (accepted, duplicate, conflict, or
+  rejected).
 
 ### `readings`
 
-- advertisement ID and sensor ID;
-- available measurements in canonical units;
+- advertisement ID, sensor ID, and report ID, unique per sensor (null only for
+  readings stored before contract v3);
+- acquisition time, null when the sensor did not know it, and receipt time;
+- available measurements in canonical units, including battery level and voltage;
 - explicit source status for partial samples; and
 - no fabricated values for unavailable sources.
 
@@ -477,12 +502,13 @@ without manual terminal steps.
 
 ## Decisions still required before the first hub release
 
-Identity, packet deduplication, SHT45/partial-source semantics, and initial
-unencrypted operation are frozen in protocol contract v2. Remaining decisions and
+Identity, report deduplication, SHT45/partial-source semantics, and initial
+unencrypted operation are frozen in protocol contract v3. Remaining decisions and
 validation are:
 
 1. complete Bluetooth adapter and permission validation on supported macOS/Linux hosts;
-2. verify Home Assistant behavior for the contract-v2 identity and temperature objects;
+2. verify Home Assistant behavior for the contract-v3 identity, report ID, and
+   temperature objects;
 3. decide whether authenticated telemetry justifies bind-key provisioning in a later
    encrypted contract; and
 4. decide whether future remote configuration justifies connected BLE, Wi-Fi/HTTP, or a

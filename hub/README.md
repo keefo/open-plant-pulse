@@ -65,11 +65,13 @@ python3 -m pip install -e './hub[dev]'
 
 ## Current status
 
-The development hub receives BTHome v2 advertisements through Bleak, persists
-unique readings and bounded receive
+The development hub receives contract-v3 BTHome advertisements through Bleak, joins
+each report's main and supplementary packets into one reading keyed by report ID,
+persists unique readings and bounded receive
 diagnostics in migrated SQLite storage, restores a short live history after
 restart, serves JSON endpoints, and renders a local dashboard. The shared replay
-path tests three stable sensor identities, duplicate suppression, partial sources,
+path tests three stable sensor identities, joining in either packet order, duplicate
+and conflict handling, partial sources, readings without a sensor timestamp,
 malformed isolation, and adapter recovery. The production subscriber stored physical
 BTHome reports on macOS, and direct CoreBluetooth access verified the firmware's
 configuration write/read-back on 2026-09-14; Linux remains unvalidated.
@@ -80,8 +82,10 @@ destructive deletion, and pending/applied/retrying state for plant name, room, a
 reporting interval. The requested hub interval remains editable while a separate
 read-only field shows the interval last confirmed from firmware and used for hub
 freshness calculations.
-Each sensor detail page also includes a temporary, newest-first raw BTHome report
-log for debugging, capped at the latest 50 reports.
+Each sensor detail page shows battery level and voltage and soil pH, nitrogen,
+phosphorus, and potassium when the sensor reports them, and includes a temporary,
+newest-first raw BTHome report log for debugging, capped at the latest 50 reports,
+listing each packet's report ID and kind.
 The sensor inbox retains deliberate enrollment.
 These flows and the connected-BLE codec/read-back synchronizer are integration-tested;
 single-sensor physical configuration delivery is verified, while production-hub

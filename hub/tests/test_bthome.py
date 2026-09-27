@@ -2,97 +2,138 @@ import json
 from pathlib import Path
 import unittest
 
+from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
 from open_plant_pulse_hub.ingestion.bthome import (
     decode_service_data,
-    has_force_report_event,
+    is_beacon,
     sensor_id_from_local_name,
 )
 
+FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3.json"
+SENSOR_ID = "sensor-aabbccddeeff"
+MAIN_HEX = "40022e092e2c2f643ed2040000451001500037b86a562900"
+SUPPLEMENTARY_HEX = "4001600c40103ed204000054080144010002000700"
 
-class BTHomeDecoderTests(unittest.TestCase):
-    def test_decodes_forced_report_button_event_without_changing_measurements(self) -> None:
-        payload = bytes.fromhex("400007037c153a0145f100")
-        reading = decode_service_data(payload, "sensor-aabbccddeeff")
 
-        self.assertTrue(has_force_report_event(payload))
-        self.assertEqual(reading.sequence, 7)
-        self.assertEqual(reading.air_temperature_c, 24.1)
-        self.assertEqual(reading.air_humidity_percent, 55.0)
-        self.assertFalse(has_force_report_event(bytes.fromhex("400007037c1545f100")))
+def decode(service_data_hex: str):
+    return decode_service_data(bytes.fromhex(service_data_hex), SENSOR_ID)
+
+
+class BTHomeFixtureTests(unittest.TestCase):
+    """The shared fixture the sensor's encoder tests also check against."""
 
     def setUp(self) -> None:
-        fixture_path = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v2.json"
-        self.fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
-    def test_decodes_shared_sensor_fixture(self) -> None:
-        reading = decode_service_data(bytes.fromhex(self.fixture["service_data_hex"]))
-
+    def test_fixture_is_contract_version_3(self) -> None:
+        self.assertEqual(self.fixture["contract_version"], 3)
         self.assertEqual(
-            reading.soil_temperature_c,
-            self.fixture["expected"]["soil_temperature_c"],
-        )
-        self.assertEqual(reading.moisture_percent, self.fixture["expected"]["moisture_percent"])
-        self.assertEqual(
-            reading.conductivity_us_cm,
-            self.fixture["expected"]["conductivity_us_cm"],
+            {packet["expected"]["kind"] for packet in self.fixture["packets"]},
+            {"main", "supplementary", "beacon"},
         )
 
-    def test_rejects_wrong_object_order(self) -> None:
-        payload = bytearray.fromhex(self.fixture["service_data_hex"])
-        payload[4] = 0x03
+    def test_decodes_every_fixture_packet_exactly(self) -> None:
+        kinds = {"main": SensorReading, "supplementary": ReportSupplement}
+        for packet in self.fixture["packets"]:
+            with self.subTest(packet["name"]):
+                service_data = bytes.fromhex(packet["service_data_hex"])
+                expected = dict(packet["expected"])
+                kind = expected.pop("kind")
+                if kind == "beacon":
+                    self.assertTrue(is_beacon(service_data))
+                    with self.assertRaises(ValueError):
+                        decode_service_data(service_data, SENSOR_ID)
+                    continue
+                self.assertFalse(is_beacon(service_data))
+                decoded = decode_service_data(service_data, SENSOR_ID)
+                self.assertIsInstance(decoded, kinds[kind])
+                self.assertEqual(decoded.sensor_id, SENSOR_ID)
+                self.assertEqual(decoded.contract_version, 3)
+                for field, value in expected.items():
+                    self.assertEqual(getattr(decoded, field), value, field)
 
-        with self.assertRaisesRegex(ValueError, "object order"):
-            decode_service_data(bytes(payload))
 
-    def test_decodes_version_2_full_and_partial_fixtures(self) -> None:
-        fixture_path = (
-            Path(__file__).parents[2]
-            / "protocol"
-            / "fixtures"
-            / "bthome-v2-sensor-v2.json"
-        )
-        events = json.loads(fixture_path.read_text(encoding="utf-8"))["events"]
+class BTHomeDecoderTests(unittest.TestCase):
+    def test_decodes_the_forced_report_marker_from_the_supplementary_packet(self) -> None:
+        forced = decode("4001600c40103a013ed304000054080144010002000700")
+        self.assertIsInstance(forced, ReportSupplement)
+        self.assertTrue(forced.force_report)
+        self.assertEqual(forced.report_id, 1235)
+        self.assertFalse(decode(SUPPLEMENTARY_HEX).force_report)
 
-        for event in events:
-            if "expected" not in event:
-                continue
-            sensor_id = sensor_id_from_local_name(event["local_name"])
-            reading = decode_service_data(bytes.fromhex(event["service_data_hex"]), sensor_id)
-            for field, expected in event["expected"].items():
-                self.assertEqual(getattr(reading, field), expected, event["id"])
+    def test_a_timestamp_is_optional_and_never_invented(self) -> None:
+        reading = decode("402e2c3ed3040000451001")
+        self.assertIsNone(reading.observed_at)
+        self.assertEqual(reading.report_id, 1235)
 
-    def test_rejects_truncated_and_unsupported_version_2_objects(self) -> None:
-        fixture_path = (
-            Path(__file__).parents[2]
-            / "protocol"
-            / "fixtures"
-            / "bthome-v2-sensor-v2.json"
-        )
-        events = json.loads(fixture_path.read_text(encoding="utf-8"))["events"]
-        rejected = [event for event in events if event.get("expected_status") == "rejected"]
+    def test_decodes_supplementary_packets_with_one_group_each(self) -> None:
+        battery_only = decode("4001600c40103e01000000")
+        self.assertEqual(battery_only.battery_percent, 96)
+        self.assertEqual(battery_only.battery_voltage_v, 4.16)
+        self.assertIsNone(battery_only.soil_ph)
+        forced_only = decode("403a013e01000000")
+        self.assertTrue(forced_only.force_report)
+        self.assertIsNone(forced_only.battery_percent)
+        extras_only = decode("403e0100000054080100ffff00000100")
+        self.assertEqual(extras_only.soil_ph, 0.0)
+        self.assertEqual(extras_only.nitrogen_mg_kg, 65535)
+        self.assertEqual(extras_only.phosphorus_mg_kg, 0)
+        self.assertEqual(extras_only.potassium_mg_kg, 1)
 
-        for event in rejected:
-            with self.assertRaises(ValueError, msg=event["id"]):
-                decode_service_data(
-                    bytes.fromhex(event["service_data_hex"]),
-                    "sensor-abcdef123456",
-                )
+    def test_rejects_malformed_packets(self) -> None:
+        cases = {
+            "empty": "",
+            "encrypted device info": "41022e092e2c2f643ed2040000451001500037b86a562900",
+            "no report ID": "40022e092e2c2f64451001500037b86a562900",
+            "report ID zero": "40022e092e2c2f643e00000000451001500037b86a562900",
+            "report ID alone": "403ed2040000",
+            "truncated object": MAIN_HEX[:-2],
+            "truncated report ID": "402e2c3ed304",
+            "unknown object": "40022e092e2c2f643ed2040000451001500037b86a5629005a01",
+            "descending order": "402f64022e092e2c3ed2040000451001500037b86a562900",
+            "repeated object": "402e2c2e2c3ed3040000451001",
+            "partial soil group": "40022e092e2c3ed2040000451001",
+            "partial air group": "40022e092e2c2f643ed2040000562900",
+            "timestamp only": "403ed204000050003bb86a",
+            "moisture above 100": "40022e092e2c2f653ed2040000451001500037b86a562900",
+            "humidity above 100": "402e653ed3040000451001",
+            "zero timestamp": "402e2c3ed304000045100150" + "00000000",
+            "mixed main and supplementary": "4001600c40102e2c3ed3040000451001",
+            "battery without voltage": "4001603ed3040000",
+            "voltage without battery": "400c40103ed3040000",
+            "battery above 100": "4001650c40103ed3040000",
+            "button that is not a press": "403a023ed3040000",
+            "extras with the wrong length": "403ed30400005407014401000200",
+            "extras of an unknown layout": "403ed304000054080244010002000700",
+            "pH above 14": "403ed30400005408018d010002000700",
+            "truncated extras": "403ed3040000540801440100020007",
+            "extras missing their length": "403ed304000054",
+            "old three-byte beacon": "400007",
+            "old contract v2 packet": "40002a022e0903f014148a0c45f20056d204",
+        }
+        for name, service_data_hex in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    decode(service_data_hex)
 
-    def test_uses_sensor_name_and_canonicalizes_legacy_name_during_upgrade(self) -> None:
+    def test_only_the_single_device_info_byte_is_a_beacon(self) -> None:
+        self.assertTrue(is_beacon(b"\x40"))
+        self.assertFalse(is_beacon(b""))
+        self.assertFalse(is_beacon(b"\x41"))
+        self.assertFalse(is_beacon(bytes.fromhex("400007")))
+        self.assertFalse(is_beacon(bytes.fromhex(MAIN_HEX)))
+
+    def test_accepts_only_the_lowercase_sensor_name(self) -> None:
         self.assertEqual(
             sensor_id_from_local_name("sensor-aabbccddeeff"),
             "sensor-aabbccddeeff",
         )
-        self.assertEqual(
-            sensor_id_from_local_name("sensor-AABBCCDDEEFF"),
-            "sensor-aabbccddeeff",
-        )
-        self.assertEqual(
-            sensor_id_from_local_name("OPP-AABBCCDDEEFF"),
-            "sensor-aabbccddeeff",
-        )
-        with self.assertRaisesRegex(ValueError, "sensor- followed by 12 lowercase hex digits"):
-            sensor_id_from_local_name("sensor-not-a-device")
+        for name in ("sensor-AABBCCDDEEFF", "OPP-AABBCCDDEEFF", "sensor-not-a-device", None):
+            with self.subTest(name):
+                with self.assertRaisesRegex(
+                    ValueError, "sensor- followed by 12 lowercase hex digits"
+                ):
+                    sensor_id_from_local_name(name)
 
 
 if __name__ == "__main__":

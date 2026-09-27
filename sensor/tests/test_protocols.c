@@ -1,11 +1,15 @@
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
+#include "battery_gauge.h"
 #include "bthome_payload.h"
 #include "clock_policy.h"
 #include "device_config_protocol.h"
 #include "firmware_update_protocol.h"
+#include "ina219_decode.h"
 #include "power_source.h"
 #include "report_ack_protocol.h"
 #include "wifi_credentials_protocol.h"
@@ -38,64 +42,383 @@ static void test_modbus_response(void)
     assert(!opp_modbus_parse_three_registers(response, sizeof(response), 1, &reading));
 }
 
-static void test_bthome_v1_payload(void)
+/* The request and response below are the worked example in the CWT "NPK type"
+ * manual V1.4, CRCs included, so they check the register map against the
+ * vendor's own document rather than against this code. */
+static void test_soil_probe_request(void)
 {
-    const opp_sensor_reading_t reading = {
-        .moisture_tenths_percent = 321,
-        .temperature_tenths_celsius = 235,
-        .conductivity_us_cm = 1234,
-    };
-    const uint8_t expected[] = {0x40, 0x02, 0x2e, 0x09, 0x14,
-                                0x8a, 0x0c, 0x56, 0xd2, 0x04};
-    uint8_t payload[OPP_BTHOME_SERVICE_DATA_SIZE];
+    uint8_t request[8];
+    const uint8_t expected[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x07, 0x04, 0x08};
 
-    assert(opp_bthome_encode_service_data(&reading, payload) == sizeof(payload));
-    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+    opp_modbus_build_read_request(1, OPP_SOIL_PROBE_FIRST_REGISTER,
+                                  OPP_SOIL_PROBE_REGISTER_COUNT, request);
+    assert(memcmp(request, expected, sizeof(expected)) == 0);
 }
 
-static void test_bthome_v2_payload(void)
+static void test_soil_probe_response(void)
 {
-    const opp_bthome_sample_t sample = {
-        .packet_id = 42,
+    uint8_t response[] = {
+        0x01, 0x03, 0x0e, 0x01, 0xd0, 0x01, 0x4c, 0x00, 0x2c, 0x00,
+        0x5a, 0x00, 0x20, 0x00, 0x58, 0x00, 0x68, 0x70, 0x29,
+    };
+    assert(sizeof(response) == OPP_SOIL_PROBE_RESPONSE_SIZE);
+
+    opp_soil_probe_reading_t reading;
+    assert(opp_modbus_parse_soil_probe_response(response, sizeof(response), 1, &reading));
+    assert(reading.moisture_tenths_percent == 464);
+    assert(reading.temperature_tenths_celsius == 332);
+    assert(reading.conductivity_us_cm == 44);
+    assert(reading.ph_tenths == 90);
+    assert(reading.nitrogen_mg_kg == 32);
+    assert(reading.phosphorus_mg_kg == 88);
+    assert(reading.potassium_mg_kg == 104);
+
+    assert(!opp_modbus_parse_soil_probe_response(response, sizeof(response), 2, &reading));
+    assert(!opp_modbus_parse_soil_probe_response(response, sizeof(response) - 1, 1, &reading));
+    response[18] ^= 0xff;
+    assert(!opp_modbus_parse_soil_probe_response(response, sizeof(response), 1, &reading));
+}
+
+static void test_soil_probe_negative_temperature(void)
+{
+    uint8_t response[] = {
+        0x01, 0x03, 0x0e, 0x00, 0x00, 0xff, 0x9c, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0, 0,
+    };
+    const uint16_t crc = opp_modbus_crc16(response, sizeof(response) - 2);
+    response[17] = (uint8_t)crc;
+    response[18] = (uint8_t)(crc >> 8U);
+
+    opp_soil_probe_reading_t reading;
+    assert(opp_modbus_parse_soil_probe_response(response, sizeof(response), 1, &reading));
+    assert(reading.temperature_tenths_celsius == -100);
+}
+
+static void test_soil_probe_rejects_out_of_range(void)
+{
+    /* 0xffff moisture with a valid CRC: a frame, but not a measurement. */
+    uint8_t response[] = {
+        0x01, 0x03, 0x0e, 0xff, 0xff, 0x00, 0xeb, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0, 0,
+    };
+    const uint16_t crc = opp_modbus_crc16(response, sizeof(response) - 2);
+    response[17] = (uint8_t)crc;
+    response[18] = (uint8_t)(crc >> 8U);
+
+    opp_soil_probe_reading_t reading;
+    assert(!opp_modbus_parse_soil_probe_response(response, sizeof(response), 1, &reading));
+}
+
+static void test_modbus_generic_read(void)
+{
+    uint8_t request[8];
+    const uint8_t holding[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x07, 0x04, 0x08};
+    assert(opp_modbus_build_read(1, 0x03, 0, 7, request));
+    assert(memcmp(request, holding, sizeof(holding)) == 0);
+
+    assert(opp_modbus_build_read(1, 0x04, 0, 7, request));
+    assert(request[1] == 0x04);
+    const uint16_t crc = opp_modbus_crc16(request, 6);
+    assert(request[6] == (uint8_t)crc && request[7] == (uint8_t)(crc >> 8U));
+
+    assert(!opp_modbus_build_read(1, 0x06, 0, 7, request));
+    assert(!opp_modbus_build_read(1, 0x03, 0, 0, request));
+    assert(!opp_modbus_build_read(1, 0x03, 0, OPP_MODBUS_MAX_READ_REGISTERS + 1, request));
+
+    uint8_t response[] = {0x01, 0x04, 0x04, 0x01, 0xd0, 0xff, 0x9c, 0, 0};
+    const uint16_t response_crc = opp_modbus_crc16(response, 7);
+    response[7] = (uint8_t)response_crc;
+    response[8] = (uint8_t)(response_crc >> 8U);
+    uint16_t registers[2];
+    assert(opp_modbus_parse_registers(response, sizeof(response), 1, 0x04, 2, registers));
+    assert(registers[0] == 0x01d0 && registers[1] == 0xff9c);
+    /* A 0x04 reply is not an answer to a 0x03 request. */
+    assert(!opp_modbus_parse_registers(response, sizeof(response), 1, 0x03, 2, registers));
+}
+
+static bool near(float actual, float expected, float tolerance)
+{
+    return fabsf(actual - expected) <= tolerance;
+}
+
+static void test_ina219_decode(void)
+{
+    /* Datasheet examples: 0x1f40 is 1000 bus steps (4.000 V); the shunt
+     * register is two's complement in 10 uV steps. */
+    assert(opp_ina219_bus_millivolts(0x1f40U) == 4000);
+    assert(opp_ina219_bus_millivolts((uint16_t)(1000U << 3U)) == 4000);
+    assert(opp_ina219_bus_millivolts((uint16_t)((1000U << 3U) | 0x0003U)) == 4000);
+    assert(!opp_ina219_bus_overflow((uint16_t)(1000U << 3U)));
+    assert(opp_ina219_bus_overflow(0x0001U));
+    assert(opp_ina219_shunt_microvolts(0x0fa0U) == 40000);
+    assert(opp_ina219_shunt_microvolts(0xf060U) == -40000);
+    /* 40 mV across 0.1 ohm is 400 mA, either way round. */
+    assert(near(opp_ina219_current_ma(40000, 100), 400.0f, 0.001f));
+    assert(near(opp_ina219_current_ma(-40000, 100), -400.0f, 0.001f));
+    assert(near(opp_ina219_current_ma(10, 100), 0.1f, 0.0001f));
+    assert(opp_ina219_current_ma(40000, 0) == 0.0f);
+}
+
+static void test_battery_voltage_curve(void)
+{
+    assert(opp_battery_percent_from_millivolts(3000) == 0.0f);
+    assert(opp_battery_percent_from_millivolts(3270) == 0.0f);
+    assert(opp_battery_percent_from_millivolts(3840) == 50.0f);
+    assert(opp_battery_percent_from_millivolts(4200) == 100.0f);
+    assert(opp_battery_percent_from_millivolts(4350) == 100.0f);
+    /* Halfway between 3.84 V (50 %) and 3.85 V (55 %). */
+    assert(near(opp_battery_percent_from_millivolts(3845), 52.5f, 0.001f));
+
+    assert(opp_battery_classify(100.0f) == OPP_BATTERY_CHARGING);
+    assert(opp_battery_classify(-100.0f) == OPP_BATTERY_DISCHARGING);
+    assert(opp_battery_classify(5.0f) == OPP_BATTERY_IDLE);
+    assert(opp_battery_classify(-5.0f) == OPP_BATTERY_IDLE);
+}
+
+static void test_battery_gauge(void)
+{
+    opp_battery_gauge_t gauge;
+    opp_battery_gauge_init(&gauge, 5000.0f);
+
+    /* The first sample seeds the count from voltage: 3.84 V is 50 %. */
+    opp_battery_gauge_update(&gauge, 3840, -100.0f, 1.0f);
+    assert(gauge.seeded && !gauge.calibrated);
+    assert(near(opp_battery_gauge_percent(&gauge), 50.0f, 0.001f));
+
+    /* An hour at 100 mA out of the pack removes 100 mAh (2 %). */
+    for (int second = 0; second < 3600; ++second) {
+        opp_battery_gauge_update(&gauge, 3830, -100.0f, 1.0f);
+    }
+    assert(near(gauge.charge_mah, 2400.0f, 0.5f));
+    assert(near(gauge.average_current_ma, -100.0f, 0.1f));
+    float hours;
+    assert(opp_battery_gauge_hours_to_empty(&gauge, &hours));
+    assert(near(hours, 24.0f, 0.05f));
+    assert(!opp_battery_gauge_hours_to_full(&gauge, &hours));
+
+    /* Charging at 1 A: the count rises, and time to full is (5000-charge)/1000. */
+    for (int second = 0; second < 1800; ++second) {
+        opp_battery_gauge_update(&gauge, 4000, 1000.0f, 1.0f);
+    }
+    assert(near(gauge.charge_mah, 2900.0f, 1.0f));
+    assert(opp_battery_gauge_hours_to_full(&gauge, &hours));
+    assert(hours > 1.9f && hours < 2.3f);
+    assert(!gauge.calibrated);
+
+    /* A weak charger's whole charge runs below C/20; at 4.16 V that is the
+     * constant-voltage top-up, not a full pack (seen on the XIAO's charger). */
+    for (int second = 0; second < 600; ++second) {
+        opp_battery_gauge_update(&gauge, 4160, 245.0f, 1.0f);
+    }
+    assert(!gauge.calibrated);
+
+    /* At 4.2 V below C/20, but not yet for a whole minute. */
+    for (int second = 0; second < 59; ++second) {
+        opp_battery_gauge_update(&gauge, 4200, 200.0f, 1.0f);
+    }
+    assert(!gauge.calibrated);
+    /* A burst above the taper restarts the hold. */
+    opp_battery_gauge_update(&gauge, 4200, 400.0f, 1.0f);
+    for (int second = 0; second < 30; ++second) {
+        opp_battery_gauge_update(&gauge, 4200, 200.0f, 1.0f);
+    }
+    assert(!gauge.calibrated);
+
+    /* Held for a minute: the pack is full, and the count is pinned to 100 %
+     * whatever it had drifted to. */
+    for (int second = 0; second < 31; ++second) {
+        opp_battery_gauge_update(&gauge, 4200, 200.0f, 1.0f);
+    }
+    assert(gauge.calibrated);
+    assert(opp_battery_gauge_percent(&gauge) == 100.0f);
+
+    /* Never below empty or above full. */
+    for (int second = 0; second < 1000; ++second) {
+        opp_battery_gauge_update(&gauge, 4200, 5000.0f, 10.0f);
+    }
+    assert(opp_battery_gauge_percent(&gauge) == 100.0f);
+    opp_battery_gauge_update(&gauge, 3300, -100000.0f, 3600.0f);
+    assert(opp_battery_gauge_percent(&gauge) == 0.0f);
+}
+
+static void test_battery_gauge_follows_unplugging(void)
+{
+    opp_battery_gauge_t gauge;
+    opp_battery_gauge_init(&gauge, 5000.0f);
+    opp_battery_gauge_update(&gauge, 4180, 250.0f, 1.0f);
+    for (int second = 0; second < 600; ++second) {
+        opp_battery_gauge_update(&gauge, 4180, 250.0f, 1.0f);
+    }
+    /* Unplugged: the next discharging sample must not leave a charging
+     * average behind (it once showed six minutes "until full"). */
+    opp_battery_gauge_update(&gauge, 4160, -100.0f, 1.0f);
+    float hours;
+    assert(!opp_battery_gauge_hours_to_full(&gauge, &hours));
+    assert(opp_battery_gauge_hours_to_empty(&gauge, &hours));
+    assert(hours > 40.0f);
+
+    /* Load pulses within one direction still average normally. */
+    opp_battery_gauge_update(&gauge, 4160, -150.0f, 1.0f);
+    assert(gauge.average_current_ma < -100.0f && gauge.average_current_ma > -101.0f);
+}
+
+static void test_battery_gauge_ignores_interrupted_charge(void)
+{
+    opp_battery_gauge_t gauge;
+    opp_battery_gauge_init(&gauge, 5000.0f);
+    opp_battery_gauge_update(&gauge, 3900, 500.0f, 1.0f);
+    opp_battery_gauge_update(&gauge, 4000, 500.0f, 60.0f);
+    /* Unplugged at 4.0 V: back on battery, then a high voltage spike under no
+     * charge must not be taken for a completed charge. */
+    opp_battery_gauge_update(&gauge, 3990, -100.0f, 1.0f);
+    opp_battery_gauge_update(&gauge, 4160, 0.0f, 1.0f);
+    assert(!gauge.calibrated);
+}
+
+/* The packets below are protocol/fixtures/bthome-v3.json, which the hub's
+ * decoder tests read too, so both ends are held to the same bytes. */
+static size_t from_hex(const char *hex, uint8_t *output)
+{
+    size_t size = 0;
+    for (; hex[0] != '\0' && hex[1] != '\0'; hex += 2) {
+        unsigned int value;
+        assert(sscanf(hex, "%2x", &value) == 1);
+        output[size++] = (uint8_t)value;
+    }
+    return size;
+}
+
+static opp_bthome_report_t fixture_report(void)
+{
+    return (opp_bthome_report_t){
+        .report_id = 1234,
+        .timestamp_valid = true,
+        .timestamp_unix_s = 1790457600U, /* 2026-09-26T21:20:00Z */
         .soil_available = true,
-        .soil = {
-            .moisture_tenths_percent = 321,
-            .temperature_tenths_celsius = 235,
-            .conductivity_us_cm = 1234,
-        },
+        .soil_temperature_tenths_celsius = 235,
+        .soil_moisture_tenths_percent = 1000,
+        .conductivity_us_cm = 41,
         .air_available = true,
-        .air_temperature_tenths_celsius = 242,
-        .air_humidity_hundredths_percent = 5360,
+        .air_temperature_tenths_celsius = 272,
+        .air_humidity_hundredths_percent = 4420,
+        .battery_available = true,
+        .battery_percent = 96,
+        .battery_millivolts = 4160,
+        .soil_extras_available = true,
+        .ph_tenths = 68,
+        .nitrogen_mg_kg = 1,
+        .phosphorus_mg_kg = 2,
+        .potassium_mg_kg = 7,
     };
-    const uint8_t expected[] = {
-        0x40, 0x00, 0x2a, 0x02, 0x2e, 0x09, 0x03, 0xf0, 0x14,
-        0x14, 0x8a, 0x0c, 0x45, 0xf2, 0x00, 0x56, 0xd2, 0x04,
-    };
-    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
+}
 
-    assert(opp_bthome_encode_v2_service_data(&sample, payload) == sizeof(expected));
-    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+static void assert_encodes(size_t (*encode)(const opp_bthome_report_t *, uint8_t *),
+                           const opp_bthome_report_t *report, const char *expected_hex)
+{
+    uint8_t expected[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    uint8_t payload[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    const size_t expected_size = from_hex(expected_hex, expected);
+    assert(encode(report, payload) == expected_size);
+    assert(memcmp(payload, expected, expected_size) == 0);
+}
 
-    const opp_bthome_sample_t air_only = {
-        .packet_id = 7,
-        .air_available = true,
-        .air_temperature_tenths_celsius = 241,
-        .air_humidity_hundredths_percent = 5500,
-    };
-    const uint8_t expected_air_only[] = {
-        0x40, 0x00, 0x07, 0x03, 0x7c, 0x15, 0x45, 0xf1, 0x00,
-    };
-    assert(opp_bthome_encode_v2_service_data(&air_only, payload) ==
-           sizeof(expected_air_only));
-    assert(memcmp(payload, expected_air_only, sizeof(expected_air_only)) == 0);
+static void test_bthome_v3_fixture(void)
+{
+    opp_bthome_report_t report = fixture_report();
+    assert_encodes(opp_bthome_encode_main, &report,
+                   "40022e092e2c2f643ed2040000451001500037b86a562900");
+    assert_encodes(opp_bthome_encode_supplementary, &report,
+                   "4001600c40103ed204000054080144010002000700");
 
-    opp_bthome_sample_t forced = air_only;
-    forced.button_event = true;
-    const uint8_t expected_forced[] = {
-        0x40, 0x00, 0x07, 0x03, 0x7c, 0x15, 0x3a, 0x01, 0x45, 0xf1, 0x00,
+    report.report_id = 1235;
+    report.forced = true;
+    assert_encodes(opp_bthome_encode_supplementary, &report,
+                   "4001600c40103a013ed304000054080144010002000700");
+
+    report.forced = false;
+    report.timestamp_valid = false;
+    report.soil_available = false;
+    assert_encodes(opp_bthome_encode_main, &report, "402e2c3ed3040000451001");
+
+    uint8_t payload[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    assert(opp_bthome_encode_beacon(payload) == 1 && payload[0] == 0x40);
+}
+
+static void test_bthome_v3_rules(void)
+{
+    uint8_t payload[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    opp_bthome_report_t report = fixture_report();
+
+    /* The largest packets still fit a legacy advertisement. */
+    assert(opp_bthome_encode_main(&report, payload) == OPP_BTHOME_SERVICE_DATA_MAX_SIZE);
+    report.forced = true;
+    assert(opp_bthome_encode_supplementary(&report, payload) == 23);
+
+    /* Percentages round to the nearest whole point. */
+    report = fixture_report();
+    report.air_humidity_hundredths_percent = 4449;
+    report.soil_moisture_tenths_percent = 325;
+    assert(opp_bthome_encode_main(&report, payload) > 0);
+    assert(payload[4] == 0x2E && payload[5] == 44 && payload[6] == 0x2F && payload[7] == 33);
+
+    /* Report ID 0 is never valid. */
+    report = fixture_report();
+    report.report_id = 0;
+    assert(opp_bthome_encode_main(&report, payload) == 0);
+    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+
+    /* No soil and no air: no main packet, only a beacon. */
+    report = fixture_report();
+    report.soil_available = false;
+    report.air_available = false;
+    assert(opp_bthome_encode_main(&report, payload) == 0);
+
+    /* Nothing for the supplementary packet: only the main one is sent. */
+    report = fixture_report();
+    report.battery_available = false;
+    report.soil_extras_available = false;
+    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+
+    /* Out-of-range values are refused rather than sent. */
+    report = fixture_report();
+    report.soil_moisture_tenths_percent = 1001;
+    assert(opp_bthome_encode_main(&report, payload) == 0);
+    report = fixture_report();
+    report.ph_tenths = 141;
+    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+    report = fixture_report();
+    report.battery_percent = 101;
+    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+
+    /* A negative soil temperature is two's complement in hundredths. */
+    report = fixture_report();
+    report.soil_temperature_tenths_celsius = -52;
+    assert(opp_bthome_encode_main(&report, payload) > 0);
+    assert(payload[1] == 0x02 && payload[2] == 0xf8 && payload[3] == 0xfd);
+}
+
+static void test_report_acknowledgement(void)
+{
+    const opp_report_ack_t expected = {
+        .request_id = 0x01020304U,
+        .report_id = 1235,
     };
-    assert(opp_bthome_encode_v2_service_data(&forced, payload) == sizeof(expected_forced));
-    assert(memcmp(payload, expected_forced, sizeof(expected_forced)) == 0);
+    const uint8_t expected_payload[] = {0x02, 0x04, 0x03, 0x02, 0x01, 0xd3, 0x04, 0x00, 0x00};
+    uint8_t payload[OPP_REPORT_ACK_PAYLOAD_SIZE];
+    opp_report_ack_t decoded;
+
+    assert(opp_report_ack_encode(&expected, payload) == sizeof(expected_payload));
+    assert(memcmp(payload, expected_payload, sizeof(expected_payload)) == 0);
+    assert(opp_report_ack_decode(payload, sizeof(payload), &decoded));
+    assert(opp_report_ack_equal(&decoded, &expected));
+
+    /* The v1 six-byte token is gone, as are zero IDs. */
+    const uint8_t version_one[] = {0x01, 0x04, 0x03, 0x02, 0x01, 0x2a};
+    assert(!opp_report_ack_decode(version_one, sizeof(version_one), &decoded));
+    payload[5] = payload[6] = payload[7] = payload[8] = 0;
+    assert(!opp_report_ack_decode(payload, sizeof(payload), &decoded));
+    const opp_report_ack_t no_report = {.request_id = 1, .report_id = 0};
+    assert(opp_report_ack_encode(&no_report, payload) == 0);
 }
 
 static void test_bthome_identity(void)
@@ -178,29 +501,6 @@ static void test_sht45_response(void)
     assert(!opp_sht45_decode_response(corrupted_response, &sample));
 }
 
-static void test_report_acknowledgement(void)
-{
-    const opp_report_ack_t expected = {
-        .request_id = UINT32_C(0x12345678),
-        .packet_id = 42,
-    };
-    const uint8_t expected_payload[] = {0x01, 0x78, 0x56, 0x34, 0x12, 0x2a};
-    uint8_t payload[OPP_REPORT_ACK_PAYLOAD_SIZE];
-    opp_report_ack_t decoded;
-
-    assert(opp_report_ack_encode(&expected, payload) == sizeof(expected_payload));
-    assert(memcmp(payload, expected_payload, sizeof(expected_payload)) == 0);
-    assert(opp_report_ack_decode(payload, sizeof(payload), &decoded));
-    assert(opp_report_ack_equal(&decoded, &expected));
-
-    payload[0] = 2;
-    assert(!opp_report_ack_decode(payload, sizeof(payload), &decoded));
-    payload[0] = OPP_REPORT_ACK_PROTOCOL_VERSION;
-    memset(payload + 1, 0, 4);
-    assert(!opp_report_ack_decode(payload, sizeof(payload), &decoded));
-    assert(!opp_report_ack_decode(expected_payload, sizeof(expected_payload) - 1, &decoded));
-}
-
 static void test_sht45_humidity_clamping(void)
 {
     const uint8_t dry_response[] = {0x66, 0x66, 0x93, 0x00, 0x00, 0x81};
@@ -233,24 +533,6 @@ static void test_power_source_policy(void)
 {
     assert(strcmp(opp_power_source_status_value(true), "usb") == 0);
     assert(strcmp(opp_power_source_status_value(false), "battery_inferred") == 0);
-}
-
-static void test_bthome_onboarding_beacon(void)
-{
-    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-    const size_t size = opp_bthome_encode_v2_beacon(9, payload);
-    assert(size == 3);
-    assert(payload[0] == 0x40);
-    assert(payload[1] == 0x00);
-    assert(payload[2] == 9);
-
-    /* A beacon says only that the sensor exists. A measurement payload for the
-     * same sensor stays longer, so the two can never be confused. */
-    opp_bthome_sample_t sample = {.packet_id = 9, .air_available = true,
-                                  .air_temperature_tenths_celsius = 214,
-                                  .air_humidity_hundredths_percent = 4800};
-    uint8_t measured[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-    assert(opp_bthome_encode_v2_service_data(&sample, measured) > size);
 }
 
 static void test_wifi_credentials(void)
@@ -414,8 +696,18 @@ int main(void)
 {
     test_modbus_request();
     test_modbus_response();
-    test_bthome_v1_payload();
-    test_bthome_v2_payload();
+    test_modbus_generic_read();
+    test_soil_probe_request();
+    test_ina219_decode();
+    test_battery_voltage_curve();
+    test_battery_gauge();
+    test_battery_gauge_follows_unplugging();
+    test_battery_gauge_ignores_interrupted_charge();
+    test_soil_probe_response();
+    test_soil_probe_negative_temperature();
+    test_soil_probe_rejects_out_of_range();
+    test_bthome_v3_fixture();
+    test_bthome_v3_rules();
     test_bthome_identity();
     test_device_configuration();
     test_report_acknowledgement();
@@ -423,7 +715,6 @@ int main(void)
     test_sht45_humidity_clamping();
     test_clock_policy();
     test_power_source_policy();
-    test_bthome_onboarding_beacon();
     test_wifi_credentials();
     test_firmware_update_command();
     test_firmware_update_url();

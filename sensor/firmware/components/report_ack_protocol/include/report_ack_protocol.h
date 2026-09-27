@@ -4,12 +4,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define OPP_REPORT_ACK_PROTOCOL_VERSION 1
-#define OPP_REPORT_ACK_PAYLOAD_SIZE 6
+/* Forced-report acknowledgement version 2: the report ID replaces the 8-bit
+ * packet ID that contract v3 no longer sends. */
+#define OPP_REPORT_ACK_PROTOCOL_VERSION 2
+#define OPP_REPORT_ACK_PAYLOAD_SIZE 9
 
 typedef struct {
     uint32_t request_id;
-    uint8_t packet_id;
+    uint32_t report_id;
 } opp_report_ack_t;
 
 size_t opp_report_ack_encode(

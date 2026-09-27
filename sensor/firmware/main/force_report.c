@@ -67,14 +67,14 @@ bool opp_force_report_wait(TickType_t timeout_ticks, uint32_t *request_id)
            xQueueReceive(report_queue, request_id, timeout_ticks) == pdTRUE;
 }
 
-void opp_force_report_started(uint32_t request_id, uint8_t packet_id)
+void opp_force_report_started(uint32_t request_id, uint32_t report_id)
 {
     portENTER_CRITICAL(&status_lock);
     if (report_status.request_id == request_id &&
         report_status.state == OPP_FORCE_REPORT_QUEUED) {
         report_status.state = OPP_FORCE_REPORT_REPORTING;
-        report_status.packet_id_valid = true;
-        report_status.packet_id = packet_id;
+        report_status.report_id_valid = true;
+        report_status.report_id = report_id;
     }
     portEXIT_CRITICAL(&status_lock);
 }
@@ -123,10 +123,10 @@ bool opp_force_report_get_ack(opp_report_ack_t *ack)
     }
     bool available = false;
     portENTER_CRITICAL(&status_lock);
-    if (report_status.request_id != 0 && report_status.packet_id_valid &&
+    if (report_status.request_id != 0 && report_status.report_id_valid &&
         report_status.state == OPP_FORCE_REPORT_REPORTING) {
         ack->request_id = report_status.request_id;
-        ack->packet_id = report_status.packet_id;
+        ack->report_id = report_status.report_id;
         available = true;
     }
     portEXIT_CRITICAL(&status_lock);
@@ -141,14 +141,14 @@ esp_err_t opp_force_report_acknowledge(const opp_report_ack_t *ack)
     esp_err_t result = ESP_ERR_INVALID_STATE;
     portENTER_CRITICAL(&status_lock);
     if (report_status.state == OPP_FORCE_REPORT_REPORTING &&
-        report_status.request_id == ack->request_id && report_status.packet_id_valid &&
-        report_status.packet_id == ack->packet_id) {
+        report_status.request_id == ack->request_id && report_status.report_id_valid &&
+        report_status.report_id == ack->report_id) {
         report_status.state = OPP_FORCE_REPORT_ACKNOWLEDGED;
         report_status.acknowledged_at_ms = monotonic_ms();
         result = ESP_OK;
     } else if (report_status.state == OPP_FORCE_REPORT_ACKNOWLEDGED &&
                report_status.request_id == ack->request_id &&
-               report_status.packet_id == ack->packet_id) {
+               report_status.report_id == ack->report_id) {
         result = ESP_OK;
     }
     portEXIT_CRITICAL(&status_lock);

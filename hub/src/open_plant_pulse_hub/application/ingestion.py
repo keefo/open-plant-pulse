@@ -1,10 +1,11 @@
 import logging
-from dataclasses import replace
 
+from open_plant_pulse_hub.domain import SensorReading
 from open_plant_pulse_hub.ingestion.advertisement import Advertisement
 from open_plant_pulse_hub.ingestion.bthome import (
-    decode_beacon_packet_id,
+    CONTRACT_VERSION,
     decode_service_data,
+    is_beacon,
     sensor_id_from_local_name,
 )
 
@@ -20,24 +21,29 @@ class AdvertisementIngestionService:
         self._store = store
 
     def ingest(self, advertisement: Advertisement) -> str:
+        """Store one advertisement and say what became of it.
+
+        The answer is accepted, duplicate, conflict or rejected. A conflict is a
+        packet whose report ID is already stored with different content; it is
+        logged and nothing is overwritten.
+        """
         sensor_id = None
         try:
             sensor_id = sensor_id_from_local_name(advertisement.local_name)
-            # An unclaimed sensor with nothing to measure still announces itself,
-            # so it can be found and adopted. That is presence, not a reading, and
-            # is deliberately not stored as one.
-            beacon_packet_id = decode_beacon_packet_id(advertisement.service_data)
-            if beacon_packet_id is not None:
+            # A sensor with nothing to report still announces itself, so it can
+            # be found and adopted. That is presence, not a reading, and is
+            # deliberately not stored as one.
+            if is_beacon(advertisement.service_data):
                 return self._store.record_beacon(
                     sensor_id=sensor_id,
-                    packet_id=beacon_packet_id,
                     received_at=advertisement.received_at,
                     observed_identifier=advertisement.observed_identifier,
                     source_adapter=advertisement.source_adapter,
                     rssi=advertisement.rssi,
                     service_data=advertisement.service_data,
+                    contract_version=CONTRACT_VERSION,
                 )
-            reading = decode_service_data(advertisement.service_data, sensor_id)
+            packet = decode_service_data(advertisement.service_data, sensor_id)
         except ValueError as error:
             self._store.record_rejected_advertisement(
                 received_at=advertisement.received_at,
@@ -55,13 +61,35 @@ class AdvertisementIngestionService:
             )
             return "rejected"
 
-        reading = replace(reading, observed_at=advertisement.received_at)
-        accepted = self._store.add_advertisement(
-            reading,
-            received_at=advertisement.received_at,
-            observed_identifier=advertisement.observed_identifier,
-            source_adapter=advertisement.source_adapter,
-            rssi=advertisement.rssi,
-            service_data=advertisement.service_data,
-        )
-        return "accepted" if accepted else "duplicate"
+        if isinstance(packet, SensorReading):
+            status = self._store.add_advertisement(
+                packet,
+                received_at=advertisement.received_at,
+                observed_identifier=advertisement.observed_identifier,
+                source_adapter=advertisement.source_adapter,
+                rssi=advertisement.rssi,
+                service_data=advertisement.service_data,
+            )
+        else:
+            status = self._store.add_supplement(
+                packet,
+                received_at=advertisement.received_at,
+                observed_identifier=advertisement.observed_identifier,
+                source_adapter=advertisement.source_adapter,
+                rssi=advertisement.rssi,
+                service_data=advertisement.service_data,
+            )
+        if status == "conflict":
+            LOGGER.warning(
+                "ignored BTHome report %d from %s: already stored with different content",
+                packet.report_id,
+                sensor_id,
+            )
+        return status
+
+    def stored_forced_report(self, sensor_id: str, report_id: int) -> bool:
+        """Return whether this report is stored in full and was forced by a person.
+
+        Only then may the sensor be told it arrived.
+        """
+        return self._store.stored_forced_report(sensor_id, report_id)

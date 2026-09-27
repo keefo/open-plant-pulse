@@ -10,6 +10,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "battery_monitor.h"
 #include "bthome_broadcaster.h"
 #include "bthome_payload.h"
 #include "clock_sync.h"
@@ -17,13 +18,14 @@
 #include "device_identity.h"
 #include "firmware_update.h"
 #include "force_report.h"
+#include "report_id.h"
 #include "sht45.h"
 #include "sht45_monitor.h"
+#include "soil_probe.h"
 #include "web_ui.h"
 #include "web_ui_config.h"
 
 static const char *TAG = "plant_pulse";
-static RTC_DATA_ATTR uint8_t bthome_packet_id;
 
 #define DEVELOPMENT_REPORT_INTERVAL_MS 5000
 /* Three seconds, which is also the advertising window, so an unclaimed sensor
@@ -36,7 +38,7 @@ static RTC_DATA_ATTR uint8_t bthome_packet_id;
  * Reachability is not reporting. A hub can only reach a sensor while it is
  * advertising, so a sensor that advertises every half hour takes half an hour to
  * accept a settings change. Re-advertising the last payload unchanged reopens
- * that door without inventing a measurement: the hub sees the same packet ID,
+ * that door without inventing a measurement: the hub sees the same report ID,
  * stores nothing, and can connect. */
 /* A short gap, not a long one. Each window already costs the Bluetooth stack
  * starting and stopping, so spacing windows out adds that cost to the delay
@@ -62,14 +64,94 @@ static uint64_t device_id(void)
     return value;
 }
 
-static void set_air_sample(opp_bthome_sample_t *sample, const opp_sht45_sample_t *air)
+static void set_air(opp_bthome_report_t *report, const opp_sht45_sample_t *air)
 {
-    sample->air_available = true;
-    sample->air_temperature_tenths_celsius =
+    report->air_available = true;
+    report->air_temperature_tenths_celsius =
         (int16_t)(air->air_temperature_c * 10.0f +
                   (air->air_temperature_c >= 0.0f ? 0.5f : -0.5f));
-    sample->air_humidity_hundredths_percent =
+    report->air_humidity_hundredths_percent =
         (uint16_t)(air->air_humidity_percent * 100.0f + 0.5f);
+}
+
+static void set_soil(opp_bthome_report_t *report, const opp_soil_probe_reading_t *soil)
+{
+    report->soil_available = true;
+    report->soil_moisture_tenths_percent = soil->moisture_tenths_percent;
+    report->soil_temperature_tenths_celsius = soil->temperature_tenths_celsius;
+    report->conductivity_us_cm = soil->conductivity_us_cm;
+    report->soil_extras_available = true;
+    report->ph_tenths = soil->ph_tenths;
+    report->nitrogen_mg_kg = soil->nitrogen_mg_kg;
+    report->phosphorus_mg_kg = soil->phosphorus_mg_kg;
+    report->potassium_mg_kg = soil->potassium_mg_kg;
+}
+
+#if !CONFIG_OPP_PRODUCTION_LIFECYCLE
+/* The production cycle does not run the battery monitor yet. */
+static void set_battery(opp_bthome_report_t *report)
+{
+    opp_battery_status_t battery;
+    int64_t age_ms;
+    if (!opp_battery_monitor_get(&battery, &age_ms) || battery.millivolts <= 0) {
+        return;
+    }
+    float percent = battery.percent + 0.5f;
+    if (percent < 0.0f) {
+        percent = 0.0f;
+    } else if (percent > 100.0f) {
+        percent = 100.0f;
+    }
+    report->battery_available = true;
+    report->battery_percent = (uint8_t)percent;
+    report->battery_millivolts =
+        battery.millivolts > UINT16_MAX ? UINT16_MAX : (uint16_t)battery.millivolts;
+}
+#endif
+
+/* Only a trusted clock is stamped; without one the report carries no time
+ * rather than a guess (see "Acquisition timestamp" in protocol/README.md). */
+static void set_timestamp(opp_bthome_report_t *report)
+{
+    int64_t unix_time_ms;
+    if (opp_clock_capture_timestamp(&unix_time_ms) && unix_time_ms > 0) {
+        report->timestamp_valid = true;
+        report->timestamp_unix_s = (uint32_t)(unix_time_ms / 1000);
+    }
+}
+
+/* A report's two packets, ready to advertise. */
+typedef struct {
+    uint8_t main[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    size_t main_size;
+    uint8_t supplementary[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
+    size_t supplementary_size;
+} encoded_report_t;
+
+/* Take a report ID and encode. False when there is no ID to give or nothing
+ * valid to send; the ID is spent either way, which only leaves a gap. */
+static bool encode_report(opp_bthome_report_t *report, encoded_report_t *encoded)
+{
+    report->report_id = opp_report_id_next();
+    if (report->report_id == 0) {
+        return false;
+    }
+    encoded->main_size = opp_bthome_encode_main(report, encoded->main);
+    encoded->supplementary_size =
+        opp_bthome_encode_supplementary(report, encoded->supplementary);
+    return encoded->main_size > 0;
+}
+
+static esp_err_t broadcast_report(const char *local_name, const encoded_report_t *encoded)
+{
+    return opp_bthome_broadcast(
+        local_name,
+        encoded->main,
+        encoded->main_size,
+        encoded->supplementary_size > 0 ? encoded->supplementary : NULL,
+        encoded->supplementary_size,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
+        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
 }
 
 #if CONFIG_OPP_PRODUCTION_LIFECYCLE
@@ -86,7 +168,7 @@ static esp_err_t initialise_nvs(void)
     return error;
 }
 
-static bool acquire_air_sample(opp_bthome_sample_t *sample)
+static bool acquire_air_sample(opp_bthome_report_t *report)
 {
     opp_sht45_sample_t air;
     esp_err_t error = opp_sht45_init();
@@ -105,9 +187,40 @@ static bool acquire_air_sample(opp_bthome_sample_t *sample)
         return false;
     }
 
-    set_air_sample(sample, &air);
+    set_air(report, &air);
     ESP_LOGI(TAG, "Fresh SHT45 sample temperature=%.2f C humidity=%.2f%%",
              air.air_temperature_c, air.air_humidity_percent);
+    return true;
+}
+
+static bool acquire_soil_sample(opp_bthome_report_t *report)
+{
+    opp_soil_probe_reading_t soil;
+    esp_err_t error = opp_soil_probe_set_power(true);
+    if (error == ESP_OK) {
+        error = opp_soil_probe_init();
+    }
+    if (error == ESP_OK) {
+        error = opp_soil_probe_read(&soil);
+    }
+    esp_err_t cleanup_error = opp_soil_probe_deinit();
+    /* Every path, success or not, leaves the probe unpowered for the sleep. */
+    esp_err_t power_error = opp_soil_probe_set_power(false);
+    if (cleanup_error == ESP_OK) {
+        cleanup_error = power_error;
+    }
+    if (error == ESP_OK && cleanup_error != ESP_OK) {
+        error = cleanup_error;
+    }
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "Soil probe acquisition unavailable: %s", esp_err_to_name(error));
+        return false;
+    }
+
+    set_soil(report, &soil);
+    ESP_LOGI(TAG, "Fresh soil sample moisture=%.1f%% temperature=%.1f C ec=%u uS/cm",
+             soil.moisture_tenths_percent / 10.0, soil.temperature_tenths_celsius / 10.0,
+             soil.conductivity_us_cm);
     return true;
 }
 
@@ -149,27 +262,31 @@ static void run_production_cycle(void)
         enter_deep_sleep();
     }
 
-    opp_bthome_sample_t sample = {.packet_id = bthome_packet_id++};
-    if (!acquire_air_sample(&sample)) {
+    esp_err_t id_error = opp_report_id_init();
+    if (id_error != ESP_OK) {
+        ESP_LOGE(TAG, "Report IDs unavailable: %s", esp_err_to_name(id_error));
         enter_deep_sleep();
     }
 
-    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-    const size_t payload_size = opp_bthome_encode_v2_service_data(&sample, payload);
+    opp_bthome_report_t report = {0};
+    const bool air_available = acquire_air_sample(&report);
+    const bool soil_available = acquire_soil_sample(&report);
+    if (!air_available && !soil_available) {
+        enter_deep_sleep();
+    }
+    set_timestamp(&report);
+
+    encoded_report_t encoded;
     char local_name[OPP_BTHOME_LOCAL_NAME_SIZE];
-    if (payload_size == 0 || !opp_bthome_format_local_name(device_id(), local_name)) {
-        ESP_LOGE(TAG, "Could not encode BTHome payload or stable identity");
+    if (!encode_report(&report, &encoded) ||
+        !opp_bthome_format_local_name(device_id(), local_name)) {
+        ESP_LOGE(TAG, "Could not encode BTHome report or stable identity");
         enter_deep_sleep();
     }
 
-    ESP_LOGI(TAG, "Advertising %s packet %u for %d ms", local_name, sample.packet_id,
-             CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
-    esp_err_t error = opp_bthome_broadcast(
-        local_name,
-        payload,
-        payload_size,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    ESP_LOGI(TAG, "Advertising %s report %lu for %d ms", local_name,
+             (unsigned long)report.report_id, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
+    esp_err_t error = broadcast_report(local_name, &encoded);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "BTHome advertising cycle failed: %s", esp_err_to_name(error));
     } else {
@@ -181,13 +298,18 @@ static void run_production_cycle(void)
 #endif
 
 #if !CONFIG_OPP_PRODUCTION_LIFECYCLE
-static uint8_t last_payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-static size_t last_payload_size;
+/* What was last advertised, for reachability windows to repeat unchanged. */
+static encoded_report_t last_advertised;
 
 /* Mains power removes the reason to be frugal, so a plugged-in sensor is always
  * reachable. On battery it is reachable only while somebody is working with it. */
 static bool should_stay_reachable(void)
 {
+#if CONFIG_OPP_ALWAYS_REACHABLE
+    /* On the bench, a sensor that goes quiet for half an hour between reports
+     * stalls every update and settings change sent to it. */
+    return true;
+#endif
     if (usb_serial_jtag_is_connected()) {
         return true;
     }
@@ -204,28 +326,23 @@ static bool should_stay_reachable(void)
     return (esp_timer_get_time() / 1000) - last < RESPONSIVE_WINDOW_MS;
 }
 
-/* Re-advertise what was last sent, unchanged.
- *
- * The same packet ID is the point: the hub recognises a duplicate and stores no
- * reading, so opening the door often does not fill the database with rows that
- * say nothing new. */
 static void advertise_onboarding_beacon(const char *local_name);
 
+/* Re-advertise what was last sent, unchanged.
+ *
+ * The same report ID is the point: the hub recognises a duplicate and stores
+ * no reading, so opening the door often does not fill the database with rows
+ * that say nothing new. */
 static void advertise_reachable_window(const char *local_name)
 {
-    if (last_payload_size == 0) {
+    if (last_advertised.main_size == 0) {
         /* Nothing has been sent yet, so there is nothing to repeat. Announce
          * presence instead: a beacon stores no reading, and it gives the next
          * window something to echo. */
         advertise_onboarding_beacon(local_name);
         return;
     }
-    esp_err_t error = opp_bthome_broadcast(
-        local_name,
-        last_payload,
-        last_payload_size,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    esp_err_t error = broadcast_report(local_name, &last_advertised);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Reachability window failed: %s", esp_err_to_name(error));
     }
@@ -235,20 +352,14 @@ static void advertise_reachable_window(const char *local_name)
  * nothing about a plant, because there is nothing to tell. */
 static void advertise_onboarding_beacon(const char *local_name)
 {
-    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-    const size_t payload_size = opp_bthome_encode_v2_beacon(bthome_packet_id++, payload);
-    if (payload_size == 0) {
+    encoded_report_t beacon = {0};
+    beacon.main_size = opp_bthome_encode_beacon(beacon.main);
+    if (beacon.main_size == 0) {
         ESP_LOGE(TAG, "Could not encode the onboarding beacon");
         return;
     }
-    memcpy(last_payload, payload, payload_size);
-    last_payload_size = payload_size;
-    esp_err_t error = opp_bthome_broadcast(
-        local_name,
-        payload,
-        payload_size,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    last_advertised = beacon;
+    esp_err_t error = broadcast_report(local_name, &beacon);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Onboarding beacon failed: %s", esp_err_to_name(error));
     }
@@ -258,8 +369,12 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
 {
     const bool forced = force_request_id != 0;
     opp_sht45_sample_record_t air;
-    int64_t sample_age_ms;
-    if (!opp_sht45_monitor_get_latest(&air, &sample_age_ms)) {
+    int64_t air_age_ms;
+    const bool air_available = opp_sht45_monitor_get_latest(&air, &air_age_ms);
+    opp_soil_probe_sample_record_t soil;
+    int64_t soil_age_ms;
+    const bool soil_available = opp_soil_probe_monitor_get_latest(&soil, &soil_age_ms);
+    if (!air_available && !soil_available) {
         /* Say "I am here with nothing to report" rather than saying nothing.
          *
          * Silence cannot be told apart from a flat battery or a sensor out of
@@ -267,7 +382,7 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
          * learns why. A beacon carries no measurement, which is the truth when
          * the probe is absent or broken, and lets the hub say so. It is also
          * what makes an unowned sensor findable in the first place. */
-        ESP_LOGW(TAG, "No SHT45 sample; sending a beacon with no measurement");
+        ESP_LOGW(TAG, "No SHT45 or soil sample; sending a beacon with no measurement");
         advertise_onboarding_beacon(local_name);
         if (forced) {
             opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_NO_SAMPLE);
@@ -275,36 +390,35 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
         return;
     }
 
-    opp_bthome_sample_t sample = {
-        .packet_id = bthome_packet_id++,
-        .button_event = forced,
-    };
-    set_air_sample(&sample, &air.values);
-    uint8_t payload[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE];
-    const size_t payload_size = opp_bthome_encode_v2_service_data(&sample, payload);
-    if (payload_size == 0) {
-        ESP_LOGW(TAG, "Skipping %s BLE report: payload encoding failed",
+    opp_bthome_report_t report = {.forced = forced};
+    if (air_available) {
+        set_air(&report, &air.values);
+    }
+    if (soil_available) {
+        set_soil(&report, &soil.values);
+    }
+    set_battery(&report);
+    set_timestamp(&report);
+    encoded_report_t encoded;
+    if (!encode_report(&report, &encoded)) {
+        ESP_LOGW(TAG, "Skipping %s BLE report: no report ID or encoding failed",
                  forced ? "forced" : "scheduled");
         if (forced) {
             opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_ENCODING);
         }
         return;
     }
-    memcpy(last_payload, payload, payload_size);
-    last_payload_size = payload_size;
+    last_advertised = encoded;
     if (forced) {
-        opp_force_report_started(force_request_id, sample.packet_id);
+        opp_force_report_started(force_request_id, report.report_id);
     }
 
-    ESP_LOGI(TAG, "%s BLE report %s packet %u (sample age %lld ms)",
-             forced ? "Forced" : "Scheduled", local_name, sample.packet_id,
-             (long long)sample_age_ms);
-    esp_err_t error = opp_bthome_broadcast(
-        local_name,
-        payload,
-        payload_size,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
-        CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+    ESP_LOGI(TAG, "%s BLE report %s report %lu (air %s, soil %s, battery %s, %s)",
+             forced ? "Forced" : "Scheduled", local_name, (unsigned long)report.report_id,
+             air_available ? "yes" : "no", soil_available ? "yes" : "no",
+             report.battery_available ? "yes" : "no",
+             report.timestamp_valid ? "timestamped" : "no clock");
+    esp_err_t error = broadcast_report(local_name, &encoded);
     if (forced) {
         opp_force_report_finished(force_request_id, error);
     }
@@ -394,6 +508,11 @@ void app_main(void)
 #else
     ESP_ERROR_CHECK(opp_firmware_update_init());
     ESP_ERROR_CHECK(web_ui_config_init());
+    esp_err_t report_id_error = opp_report_id_init();
+    if (report_id_error != ESP_OK) {
+        ESP_LOGE(TAG, "Report IDs unavailable; only beacons can be sent: %s",
+                 esp_err_to_name(report_id_error));
+    }
     ESP_ERROR_CHECK(opp_device_identity_init());
     ESP_ERROR_CHECK(opp_device_config_store_init());
     ESP_ERROR_CHECK(opp_force_report_init());
@@ -402,6 +521,18 @@ void app_main(void)
     if (sht45_error != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start SHT45 monitor: %s", esp_err_to_name(sht45_error));
     }
+#if CONFIG_OPP_BATTERY_MONITOR_ENABLED
+    esp_err_t battery_error = opp_battery_monitor_start();
+    if (battery_error != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start battery monitor: %s", esp_err_to_name(battery_error));
+    }
+#endif
+#if CONFIG_OPP_SOIL_PROBE_ENABLED
+    esp_err_t soil_error = opp_soil_probe_monitor_start(web_ui_config_soil_probe_enabled());
+    if (soil_error != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start soil probe monitor: %s", esp_err_to_name(soil_error));
+    }
+#endif
     BaseType_t broadcast_task_created = xTaskCreate(
         development_broadcast_task,
         "bthome_report",

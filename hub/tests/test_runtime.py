@@ -24,7 +24,7 @@ def sample_reading():
     """
     return SensorReading(
         sensor_id="plant-01",
-        sequence=42,
+        report_id=42,
         observed_at="2026-09-01T12:00:00Z",
         soil_temperature_c=21.8,
         moisture_percent=38.4,
@@ -50,8 +50,8 @@ class CareLogTests(unittest.TestCase):
             (5, "2027-01-03T01:00:00Z", 34.0),
             (6, "2027-01-04T02:00:00Z", 55.0),
         ]
-        for sequence, observed_at, moisture in samples:
-            store.add(replace(reading, sequence=sequence, observed_at=observed_at, moisture_percent=moisture))
+        for report_id, observed_at, moisture in samples:
+            store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
 
         self.assertEqual(
             store.plant_journey(reading.sensor_id),
@@ -74,8 +74,8 @@ class CareLogTests(unittest.TestCase):
             (4, "2027-01-01T00:13:00Z", 45.0),
             (5, "2027-01-01T00:14:00Z", 45.0),
         ]
-        for sequence, observed_at, moisture in samples:
-            store.add(replace(reading, sequence=sequence, observed_at=observed_at, moisture_percent=moisture))
+        for report_id, observed_at, moisture in samples:
+            store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
 
         assessments = store.drainage_assessments(reading.sensor_id)
 
@@ -94,8 +94,8 @@ class CareLogTests(unittest.TestCase):
             (5, "2027-01-31T08:00:00Z", 30.0),
             (6, "2027-02-01T08:00:00Z", 50.0),
         ]
-        for sequence, observed_at, moisture in samples:
-            store.add(replace(reading, sequence=sequence, observed_at=observed_at, moisture_percent=moisture))
+        for report_id, observed_at, moisture in samples:
+            store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
 
         self.assertEqual(
             store.watering_interval_summary(reading.sensor_id),
@@ -110,7 +110,7 @@ class CareLogTests(unittest.TestCase):
             store.add(
                 replace(
                     reading,
-                    sequence=1,
+                    report_id=1,
                     observed_at="2030-01-01T12:00:00Z",
                     moisture_percent=35.0,
                 )
@@ -118,7 +118,7 @@ class CareLogTests(unittest.TestCase):
             store.add(
                 replace(
                     reading,
-                    sequence=2,
+                    report_id=2,
                     observed_at="2030-01-01T12:02:00Z",
                     moisture_percent=70.0,
                 )
@@ -139,8 +139,8 @@ class CareLogTests(unittest.TestCase):
         reading = sample_reading()
         store = ReadingStore()
         store.set_sensor_profile(reading.sensor_id, "monstera")
-        store.add(replace(reading, sequence=1, moisture_percent=44.0))
-        store.add(replace(reading, sequence=2, moisture_percent=39.0))
+        store.add(replace(reading, report_id=1, moisture_percent=44.0))
+        store.add(replace(reading, report_id=2, moisture_percent=39.0))
 
         events = store.care_log()
 
@@ -153,14 +153,14 @@ class CareLogTests(unittest.TestCase):
         samples = [
             (1, "2027-01-01T00:00:00Z", 40.0),
             (2, "2027-01-01T01:00:00Z", 34.0),
-            (7, "2027-01-01T02:00:00Z", 36.0),
-            (3, "2027-01-02T02:00:00Z", 33.0),
-            (4, "2027-01-03T02:00:00Z", 30.0),
-            (5, "2027-01-04T02:00:00Z", 25.0),
-            (6, "2027-01-05T00:00:00Z", 50.0),
+            (3, "2027-01-01T02:00:00Z", 36.0),
+            (4, "2027-01-02T02:00:00Z", 33.0),
+            (5, "2027-01-03T02:00:00Z", 30.0),
+            (6, "2027-01-04T02:00:00Z", 25.0),
+            (7, "2027-01-05T00:00:00Z", 50.0),
         ]
-        for sequence, observed_at, moisture in samples:
-            store.add(replace(reading, sequence=sequence, observed_at=observed_at, moisture_percent=moisture))
+        for report_id, observed_at, moisture in samples:
+            store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
 
         activity = store.watering_calendar(
             reading.sensor_id,
@@ -185,24 +185,24 @@ class CareLogTests(unittest.TestCase):
         try:
             store.add(reading)
             rows = []
-            for sequence in range(1, 40321):
-                day_index = (sequence - 1) // 120
-                sample_index = (sequence - 1) % 120
+            for report_id in range(1, 40321):
+                day_index = (report_id - 1) // 120
+                sample_index = (report_id - 1) % 120
                 rows.append(
                     (
                         reading.sensor_id,
-                        sequence,
+                        report_id,
                         f"2026-{(day_index // 28) + 1:02d}-{(day_index % 28) + 1:02d}"
                         f"T{sample_index // 60:02d}:{sample_index % 60:02d}:00Z",
                         "2026-09-01T12:00:00Z",
-                        float(sequence % 101),
+                        float(report_id % 101),
                     )
                 )
             with store._condition, store._database:
                 store._database.executemany(
                     """
                     INSERT OR IGNORE INTO sensor_readings (
-                        sensor_id, sequence, observed_at, received_at,
+                        sensor_id, report_id, observed_at, received_at,
                         moisture_percent, soil_source_status, air_source_status,
                         contract_version
                     ) VALUES (?, ?, ?, ?, ?, 'available', 'available', 1)
@@ -230,9 +230,9 @@ class ReadingPersistenceTests(unittest.TestCase):
             database_path = str(Path(directory) / "hub.sqlite3")
             store = ReadingStore(history_size=2, database_path=database_path)
             store.set_reporting_interval(18)
-            for sequence in range(1, 4):
-                store.add(replace(reading, sequence=sequence, moisture_percent=40.0 + sequence))
-            store.add(replace(reading, sequence=3, moisture_percent=99.0))
+            for report_id in range(1, 4):
+                store.add(replace(reading, report_id=report_id, moisture_percent=40.0 + report_id))
+            store.add(replace(reading, report_id=3, moisture_percent=99.0))
             store.close()
 
             with sqlite3.connect(database_path) as database:
@@ -246,7 +246,7 @@ class ReadingPersistenceTests(unittest.TestCase):
             reopened = ReadingStore(history_size=2, database_path=database_path)
             try:
                 self.assertEqual(
-                    [item["reading"]["sequence"] for item in reopened.history()],
+                    [item["reading"]["report_id"] for item in reopened.history()],
                     [2, 3],
                 )
                 self.assertEqual(reopened.latest()["reading"]["moisture_percent"], 43.0)
@@ -261,13 +261,13 @@ class ReadingPersistenceTests(unittest.TestCase):
         reading = sample_reading()
         store = ReadingStore(history_size=2)
         try:
-            for sequence in range(12):
+            for hour in range(12):
                 store.add(
                     replace(
                         reading,
-                        sequence=sequence,
-                        observed_at=f"2027-01-01T{sequence:02d}:00:00Z",
-                        air_temperature_c=20.0 + sequence,
+                        report_id=hour + 1,
+                        observed_at=f"2027-01-01T{hour:02d}:00:00Z",
+                        air_temperature_c=20.0 + hour,
                     )
                 )
 
@@ -279,8 +279,8 @@ class ReadingPersistenceTests(unittest.TestCase):
             )
 
             self.assertLessEqual(len(items), 4)
-            self.assertEqual(items[0]["reading"]["sequence"], 1)
-            self.assertEqual(items[-1]["reading"]["sequence"], 10)
+            self.assertEqual(items[0]["reading"]["report_id"], 2)
+            self.assertEqual(items[-1]["reading"]["report_id"], 11)
         finally:
             store.close()
 
@@ -289,7 +289,7 @@ class WebApiTests(unittest.TestCase):
     def test_serves_bounded_sensor_climate_history_range(self) -> None:
         store = ReadingStore()
         reading = sample_reading()
-        for sequence, observed_at in enumerate(
+        for report_id, observed_at in enumerate(
             [
                 "2027-01-01T00:00:00Z",
                 "2027-01-02T00:00:00Z",
@@ -297,7 +297,7 @@ class WebApiTests(unittest.TestCase):
             ],
             start=1,
         ):
-            store.add(replace(reading, sequence=sequence, observed_at=observed_at))
+            store.add(replace(reading, report_id=report_id, observed_at=observed_at))
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -314,7 +314,7 @@ class WebApiTests(unittest.TestCase):
                 payload = json.load(response)
 
             self.assertEqual(
-                [item["reading"]["sequence"] for item in payload["items"]],
+                [item["reading"]["report_id"] for item in payload["items"]],
                 [2, 3],
             )
         finally:
@@ -374,8 +374,8 @@ class WebApiTests(unittest.TestCase):
     def test_serves_sensor_watering_calendar_range(self) -> None:
         store = ReadingStore()
         reading = sample_reading()
-        store.add(replace(reading, sequence=1, observed_at="2027-03-01T10:00:00Z", moisture_percent=30.0))
-        store.add(replace(reading, sequence=2, observed_at="2027-03-01T10:10:00Z", moisture_percent=60.0))
+        store.add(replace(reading, report_id=1, observed_at="2027-03-01T10:00:00Z", moisture_percent=30.0))
+        store.add(replace(reading, report_id=2, observed_at="2027-03-01T10:10:00Z", moisture_percent=60.0))
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -489,8 +489,8 @@ class WebApiTests(unittest.TestCase):
     def test_serves_detected_care_events(self) -> None:
         store = ReadingStore()
         reading = sample_reading()
-        store.add(replace(reading, sequence=1, moisture_percent=35.0))
-        store.add(replace(reading, sequence=2, moisture_percent=70.0))
+        store.add(replace(reading, report_id=1, moisture_percent=35.0))
+        store.add(replace(reading, report_id=2, moisture_percent=70.0))
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()

@@ -1,0 +1,75 @@
+{
+  "contract_version": 3,
+  "service_uuid": "FCD2",
+  "packets": [
+    {
+      "name": "main",
+      "service_data_hex": "40022e092e2c2f643ed2040000451001500037b86a562900",
+      "expected": {
+        "kind": "main",
+        "report_id": 1234,
+        "observed_at": "2026-09-26T21:20:00Z",
+        "soil_temperature_c": 23.5,
+        "air_humidity_percent": 44,
+        "moisture_percent": 100,
+        "air_temperature_c": 27.2,
+        "conductivity_us_cm": 41,
+        "soil_source_status": "available",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "name": "supplementary",
+      "service_data_hex": "4001600c40103ed204000054080144010002000700",
+      "expected": {
+        "kind": "supplementary",
+        "report_id": 1234,
+        "battery_percent": 96,
+        "battery_voltage_v": 4.16,
+        "soil_ph": 6.8,
+        "nitrogen_mg_kg": 1,
+        "phosphorus_mg_kg": 2,
+        "potassium_mg_kg": 7,
+        "force_report": false
+      }
+    },
+    {
+      "name": "supplementary_forced",
+      "service_data_hex": "4001600c40103a013ed304000054080144010002000700",
+      "expected": {
+        "kind": "supplementary",
+        "report_id": 1235,
+        "battery_percent": 96,
+        "battery_voltage_v": 4.16,
+        "soil_ph": 6.8,
+        "nitrogen_mg_kg": 1,
+        "phosphorus_mg_kg": 2,
+        "potassium_mg_kg": 7,
+        "force_report": true
+      }
+    },
+    {
+      "name": "main_air_only_no_timestamp",
+      "service_data_hex": "402e2c3ed3040000451001",
+      "expected": {
+        "kind": "main",
+        "report_id": 1235,
+        "observed_at": null,
+        "air_humidity_percent": 44,
+        "air_temperature_c": 27.2,
+        "soil_temperature_c": null,
+        "moisture_percent": null,
+        "conductivity_us_cm": null,
+        "soil_source_status": "unavailable",
+        "air_source_status": "available"
+      }
+    },
+    {
+      "name": "beacon",
+      "service_data_hex": "40",
+      "expected": {
+        "kind": "beacon"
+      }
+    }
+  ]
+}

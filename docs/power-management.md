@@ -13,8 +13,13 @@ Assistant receiver, and returns to deep sleep.
 The checked-in ESP32-C3 application provides powered bench diagnostics and an
 opt-in production mode. Production mode performs one fresh SHT45 acquisition,
 runs a bounded BTHome advertising window, stops the radio, and enters timer deep
-sleep. This path builds but is not physically validated. Probe power control,
-Modbus acquisition, and complete assembled-node power measurements remain pending.
+sleep. This path builds but is not physically validated. Modbus acquisition of
+the soil probe works in the always-awake development mode (firmware 0.13.3).
+Probe power is switched by an AO3400 MOSFET in the MT3608's ground, driven
+from GPIO10 (firmware 0.15.0). The MT3608 and probe draw 28.5 mA from the
+battery while on. pH needs a long warm-up after each power-on, which matters
+for the per-reading power cycle below. Complete
+assembled-node power measurements remain pending.
 
 ## Why deep sleep
 

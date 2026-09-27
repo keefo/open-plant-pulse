@@ -14,7 +14,7 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
 from open_plant_pulse_hub.web import create_server, server_address
 
-FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v2-sensor-v2.json"
+FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
 
 
 def main() -> None:

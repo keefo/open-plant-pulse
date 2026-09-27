@@ -19,6 +19,8 @@ Options:
 
 Environment:
   OPP_PORT       Serial port, equivalent to --port.
+  OPP_VERBOSE    Set to 1 to show full build and flash output instead of a
+                 progress bar.
   IDF_PATH       ESP-IDF installation; defaults to ~/esp/esp-idf.
 
 Exit the monitor with Ctrl-].
@@ -90,7 +92,7 @@ project_dir=$(opp_project_dir)
 cd "$project_dir"
 
 printf '\nFlashing %s\n' "$port"
-idf.py -p "$port" flash
+opp_run_with_progress Flashing "$project_dir/build/flash.log" idf.py -p "$port" flash
 
 # A self-built sensor has no label, and cannot show its pairing code on its own
 # console before it is paired, because that console needs Wi-Fi that only arrives

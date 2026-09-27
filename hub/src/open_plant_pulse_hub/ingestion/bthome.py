@@ -1,161 +1,193 @@
+from datetime import datetime, timezone
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
-from open_plant_pulse_hub.domain import SensorReading
+from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
 
 
+CONTRACT_VERSION = 3
 BTHOME_V2_UNENCRYPTED = 0x40
 BTHOME_SERVICE_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 SENSOR_NAME = re.compile(r"^sensor-([0-9a-f]{12})$")
-LEGACY_SENSOR_NAME = re.compile(r"^sensor-([0-9A-F]{12})$")
-LEGACY_OPEN_PLANT_PULSE_NAME = re.compile(r"^OPP-([0-9A-F]{12})$")
-LEGACY_OBJECT_IDS = (0x02, 0x14, 0x56)
-LEGACY_SERVICE_DATA_LENGTH = 10
-OBJECT_FORMATS: Dict[int, Tuple[int, bool, float]] = {
-    0x00: (1, False, 1.0),
-    0x02: (2, True, 0.01),
-    0x03: (2, False, 0.01),
-    0x14: (2, False, 0.01),
-    0x3A: (1, False, 1.0),
-    0x45: (2, True, 0.1),
-    0x56: (2, False, 1.0),
+# Object ID to (size, signed). Soil extras are variable length and handled
+# separately; everything else has a fixed size.
+OBJECT_FORMATS: Dict[int, Tuple[int, bool]] = {
+    0x01: (1, False),
+    0x02: (2, True),
+    0x0C: (2, False),
+    0x2E: (1, False),
+    0x2F: (1, False),
+    0x3A: (1, False),
+    0x3E: (4, False),
+    0x45: (2, True),
+    0x50: (4, False),
+    0x56: (2, False),
 }
+REPORT_ID_OBJECT = 0x3E
+SOIL_EXTRAS_OBJECT = 0x54
+SOIL_EXTRAS_LENGTH = 8
+SOIL_EXTRAS_LAYOUT_VERSION = 1
+MAIN_OBJECTS = frozenset({0x02, 0x2E, 0x2F, 0x45, 0x50, 0x56})
+SUPPLEMENTARY_OBJECTS = frozenset({0x01, 0x0C, 0x3A, SOIL_EXTRAS_OBJECT})
+SOIL_OBJECTS = frozenset({0x02, 0x2F, 0x56})
+AIR_OBJECTS = frozenset({0x2E, 0x45})
+BATTERY_OBJECTS = frozenset({0x01, 0x0C})
+# The sensor only sends a timestamp its clock can vouch for, inside this window.
+# Anything outside it is not a time the sensor would have sent.
+EARLIEST_TIMESTAMP = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
+LATEST_TIMESTAMP = int(datetime(2100, 1, 1, tzinfo=timezone.utc).timestamp()) - 1
 
 
 def sensor_id_from_local_name(local_name: Optional[str]) -> str:
     """Return a portable identity from the sensor-owned BLE local name."""
-    name = local_name or ""
-    match = (
-        SENSOR_NAME.fullmatch(name)
-        or LEGACY_SENSOR_NAME.fullmatch(name)
-        or LEGACY_OPEN_PLANT_PULSE_NAME.fullmatch(name)
-    )
+    match = SENSOR_NAME.fullmatch(local_name or "")
     if match is None:
         raise ValueError("sensor local name must be sensor- followed by 12 lowercase hex digits")
-    return f"sensor-{match.group(1).lower()}"
+    return f"sensor-{match.group(1)}"
 
 
-def decode_beacon_packet_id(service_data: bytes) -> Optional[int]:
-    """Return the packet ID when this is an onboarding beacon, else None.
+def is_beacon(service_data: bytes) -> bool:
+    """Return whether this is a beacon: device info and nothing else.
 
-    A beacon is exactly device info plus a packet ID and nothing else. An
-    unclaimed sensor sends one when it has no reading, so that a sensor whose
-    probe is absent or broken can still be found and adopted rather than being
-    invisible. The shape is checked strictly: anything carrying a partial
-    measurement source is a malformed reading, not a beacon, and must still be
-    rejected as one.
+    A sensor with no report to send beacons so that it can still be found and
+    adopted. It says the sensor exists and is in range, and nothing more.
     """
-    if len(service_data) != 3:
-        return None
-    if service_data[0] != BTHOME_V2_UNENCRYPTED or service_data[1] != 0x00:
-        return None
-    return int(service_data[2])
+    return service_data == bytes((BTHOME_V2_UNENCRYPTED,))
 
 
 def decode_service_data(
-    service_data: bytes, sensor_id: str = "unenrolled-bthome"
-) -> SensorReading:
-    """Decode the Open Plant Pulse BTHome service data after UUID 0xFCD2."""
+    service_data: bytes, sensor_id: str
+) -> Union[SensorReading, ReportSupplement]:
+    """Decode one contract-v3 report packet, the service data after UUID 0xFCD2.
+
+    A main packet becomes a reading and a supplementary packet becomes the
+    supplement for the reading with the same report ID. Anything else, beacons
+    included, is refused.
+    """
     if not service_data:
         raise ValueError("BTHome service data is empty")
     if service_data[0] != BTHOME_V2_UNENCRYPTED:
         raise ValueError("expected unencrypted, regular BTHome v2 device info")
 
-    if sensor_id == "unenrolled-bthome":
-        return _decode_legacy(service_data, sensor_id)
-
-    values: Dict[int, float] = {}
+    values: Dict[int, int] = {}
+    soil_extras = b""
     offset = 1
     previous_object_id = -1
     while offset < len(service_data):
         object_id = service_data[offset]
         offset += 1
-        if object_id not in OBJECT_FORMATS:
+        if object_id not in OBJECT_FORMATS and object_id != SOIL_EXTRAS_OBJECT:
             raise ValueError(f"unsupported BTHome object 0x{object_id:02x}")
         if object_id <= previous_object_id:
             raise ValueError("BTHome objects must be unique and in ascending order")
-        size, signed, factor = OBJECT_FORMATS[object_id]
+        previous_object_id = object_id
+        if object_id == SOIL_EXTRAS_OBJECT:
+            if offset >= len(service_data):
+                raise ValueError("truncated BTHome object 0x54")
+            if service_data[offset] != SOIL_EXTRAS_LENGTH:
+                raise ValueError("soil extras must be 8 bytes long")
+            offset += 1
+            if offset + SOIL_EXTRAS_LENGTH > len(service_data):
+                raise ValueError("truncated BTHome object 0x54")
+            soil_extras = service_data[offset : offset + SOIL_EXTRAS_LENGTH]
+            values[object_id] = 0
+            offset += SOIL_EXTRAS_LENGTH
+            continue
+        size, signed = OBJECT_FORMATS[object_id]
         if offset + size > len(service_data):
             raise ValueError(f"truncated BTHome object 0x{object_id:02x}")
-        raw = int.from_bytes(service_data[offset : offset + size], "little", signed=signed)
-        values[object_id] = round(raw * factor, 2)
-        previous_object_id = object_id
+        values[object_id] = int.from_bytes(
+            service_data[offset : offset + size], "little", signed=signed
+        )
         offset += size
 
-    if 0x00 not in values:
-        raise ValueError("contract version 2 requires BTHome packet ID 0x00")
-    soil_objects = {0x02, 0x14, 0x56}
-    air_objects = {0x03, 0x45}
+    if REPORT_ID_OBJECT not in values:
+        raise ValueError("a report packet requires report ID object 0x3e")
+    report_id = values[REPORT_ID_OBJECT]
+    if report_id == 0:
+        raise ValueError("report ID 0 is never used")
     present = set(values)
-    if present.intersection(soil_objects) not in (set(), soil_objects):
+    is_main = bool(present & MAIN_OBJECTS)
+    is_supplementary = bool(present & SUPPLEMENTARY_OBJECTS)
+    if is_main and is_supplementary:
+        raise ValueError("a packet cannot mix main and supplementary objects")
+    if is_main:
+        return _main_reading(values, sensor_id, report_id)
+    if is_supplementary:
+        return _supplement(values, soil_extras, sensor_id, report_id)
+    raise ValueError("a report ID alone is neither a main nor a supplementary packet")
+
+
+def _main_reading(values: Dict[int, int], sensor_id: str, report_id: int) -> SensorReading:
+    present = set(values)
+    if present & SOIL_OBJECTS not in (set(), SOIL_OBJECTS):
         raise ValueError("soil source must be complete or omitted")
-    if present.intersection(air_objects) not in (set(), air_objects):
+    if present & AIR_OBJECTS not in (set(), AIR_OBJECTS):
         raise ValueError("air source must be complete or omitted")
-    soil_available = soil_objects.issubset(present)
-    air_available = air_objects.issubset(present)
+    soil_available = SOIL_OBJECTS <= present
+    air_available = AIR_OBJECTS <= present
     if not soil_available and not air_available:
         raise ValueError("advertisement contains no supported measurement source")
-    if soil_available and not 0 <= values[0x14] <= 100:
+    if soil_available and not 0 <= values[0x2F] <= 100:
         raise ValueError("soil moisture must be between 0 and 100 percent")
-    if air_available and not 0 <= values[0x03] <= 100:
+    if air_available and not 0 <= values[0x2E] <= 100:
         raise ValueError("air humidity must be between 0 and 100 percent")
-    if 0x3A in values and values[0x3A] != 1:
-        raise ValueError("button event must be a press")
+    observed_at = None
+    if 0x50 in values:
+        if not EARLIEST_TIMESTAMP <= values[0x50] <= LATEST_TIMESTAMP:
+            raise ValueError("acquisition timestamp is outside the plausible window")
+        observed_at = (
+            datetime.fromtimestamp(values[0x50], timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
     return SensorReading(
         sensor_id=sensor_id,
-        sequence=int(values[0x00]),
-        observed_at="",
-        soil_temperature_c=values.get(0x02),
-        moisture_percent=values.get(0x14),
-        conductivity_us_cm=int(values[0x56]) if 0x56 in values else None,
-        air_temperature_c=values.get(0x45),
-        air_humidity_percent=values.get(0x03),
+        report_id=report_id,
+        observed_at=observed_at,
+        soil_temperature_c=round(values[0x02] * 0.01, 2) if soil_available else None,
+        moisture_percent=float(values[0x2F]) if soil_available else None,
+        conductivity_us_cm=values[0x56] if soil_available else None,
+        air_temperature_c=round(values[0x45] * 0.1, 1) if air_available else None,
+        air_humidity_percent=float(values[0x2E]) if air_available else None,
         soil_source_status="available" if soil_available else "unavailable",
         air_source_status="available" if air_available else "unavailable",
-        contract_version=2,
+        contract_version=CONTRACT_VERSION,
     )
 
 
-def has_force_report_event(service_data: bytes) -> bool:
-    """Return whether validated contract-v2 data contains a button-press event."""
-    if not service_data or service_data[0] != BTHOME_V2_UNENCRYPTED:
-        return False
-    offset = 1
-    while offset < len(service_data):
-        object_id = service_data[offset]
-        offset += 1
-        object_format = OBJECT_FORMATS.get(object_id)
-        if object_format is None:
-            return False
-        size, _, _ = object_format
-        if offset + size > len(service_data):
-            return False
-        if object_id == 0x3A:
-            return size == 1 and service_data[offset] == 1
-        offset += size
-    return False
+def _supplement(
+    values: Dict[int, int], soil_extras: bytes, sensor_id: str, report_id: int
+) -> ReportSupplement:
+    present = set(values)
+    if present & BATTERY_OBJECTS not in (set(), BATTERY_OBJECTS):
+        raise ValueError("battery must carry both level and voltage or neither")
+    has_battery = BATTERY_OBJECTS <= present
+    if has_battery and not 0 <= values[0x01] <= 100:
+        raise ValueError("battery level must be between 0 and 100 percent")
+    if 0x3A in values and values[0x3A] != 1:
+        raise ValueError("button event must be a press")
+    soil_ph = nitrogen = phosphorus = potassium = None
+    if soil_extras:
+        if soil_extras[0] != SOIL_EXTRAS_LAYOUT_VERSION:
+            raise ValueError(f"soil extras layout {soil_extras[0]} is unsupported")
+        if soil_extras[1] > 140:
+            raise ValueError("soil pH must be between 0 and 14")
+        soil_ph = round(soil_extras[1] * 0.1, 1)
+        nitrogen = int.from_bytes(soil_extras[2:4], "little")
+        phosphorus = int.from_bytes(soil_extras[4:6], "little")
+        potassium = int.from_bytes(soil_extras[6:8], "little")
 
-
-def _decode_legacy(service_data: bytes, sensor_id: str) -> SensorReading:
-    """Decode the preserved contract-v1 soil-only fixture."""
-    if len(service_data) != LEGACY_SERVICE_DATA_LENGTH:
-        raise ValueError(f"expected {LEGACY_SERVICE_DATA_LENGTH} service-data bytes")
-
-    object_ids = (service_data[1], service_data[4], service_data[7])
-    if object_ids != LEGACY_OBJECT_IDS:
-        raise ValueError("unexpected BTHome object order or measurement type")
-
-    temperature_raw = int.from_bytes(service_data[2:4], "little", signed=True)
-    moisture_raw = int.from_bytes(service_data[5:7], "little", signed=False)
-    conductivity = int.from_bytes(service_data[8:10], "little", signed=False)
-    return SensorReading(
+    return ReportSupplement(
         sensor_id=sensor_id,
-        sequence=0,
-        observed_at="",
-        soil_temperature_c=temperature_raw * 0.01,
-        moisture_percent=moisture_raw * 0.01,
-        conductivity_us_cm=conductivity,
-        air_source_status="unavailable",
-        contract_version=1,
+        report_id=report_id,
+        battery_percent=values[0x01] if has_battery else None,
+        battery_voltage_v=round(values[0x0C] * 0.001, 3) if has_battery else None,
+        soil_ph=soil_ph,
+        nitrogen_mg_kg=nitrogen,
+        phosphorus_mg_kg=phosphorus,
+        potassium_mg_kg=potassium,
+        force_report=0x3A in values,
+        contract_version=CONTRACT_VERSION,
     )

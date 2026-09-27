@@ -8,38 +8,49 @@ deep sleep, switched rails, wake timing, and current consumption.
 ## Before power
 
 - [ ] Exact controller, expansion board, probe, and SHT45 revisions recorded.
-- [ ] NPKPHCTH-S supply range and wire functions confirmed from its manual/label.
+- [x] NPKPHCTH-S supply range and wire functions confirmed from its manual/label
+	(CWT "NPK type" manual V1.4: DC 4.5-30 V; brown +, black -, yellow/green A, blue B).
 - [ ] RS485 board input/output ranges and 12 V current limit confirmed.
 - [ ] Power-enable signal, polarity, and default state verified.
-- [ ] UART pins verified as D6/GPIO21 TX and D7/GPIO20 RX.
+- [x] UART pins verified as D4/GPIO6 TX, D5/GPIO7 RX and D2/GPIO4 DE by working
+	Modbus reads through the XIAO RS485 board (2026-09-26).
 - [ ] Battery holder polarity and protected-cell requirement verified.
 - [ ] All power rails checked for shorts with no battery or USB attached.
 
 ## SHT45 bench test
 
 - [ ] Exact bare-sensor or breakout pinout and supply range confirmed.
-- [ ] I2C address `0x44` is detected on D4/GPIO6 SDA and D5/GPIO7 SCL.
+- [x] I2C address `0x44` is detected on D1/GPIO3 SDA and D3/GPIO5 SCL, shared with
+	the INA219 at `0x40`. D4/D5 belong to the RS485 board (2026-09-26).
 - [ ] Pull-up configuration and bus voltage verified with the actual assembly.
-- [ ] CRC-checked temperature and humidity reads complete without errors.
+- [x] CRC-checked temperature and humidity reads complete without errors
+	(firmware 0.13.2 and 0.13.3 serial logs, 2026-09-26).
 - [ ] Readings are compared with a reference instrument after thermal settling.
 - [ ] Self-heating and nearby electronics heat are checked in final placement.
 - [ ] Ventilation protects the sensing opening from splashes and condensation.
 
 ## USB-only firmware
 
-- [ ] ESP-IDF target builds without warnings.
-- [ ] Board boots and emits the startup log over USB.
+- [x] ESP-IDF target builds without warnings.
+- [x] Board boots and emits the startup log over USB (needs a data cable; a
+	charge-only cable powers the board but no port appears).
 - [ ] Reset and bootloader recovery procedure tested.
 
 ## Bench supply and probe
 
 - [ ] Probe first powered from a current-limited bench supply.
+- [x] Probe tested with the battery fitted. On USB alone the XIAO's charger
+	cannot supply it, and moisture, temperature and pH read 0 (2026-09-26).
 - [ ] Idle, startup, and measurement currents recorded.
-- [ ] Modbus baud, parity, address, function, registers, and scaling confirmed.
+- [x] Modbus baud, parity, address, function, registers, and scaling confirmed
+	by a raw register dump and a tap-water test (2026-09-26).
 - [ ] Moisture, soil temperature, conductivity, pH, N, P, and K registers are
 	individually identified rather than inferred from a family/model name.
-- [ ] At least 100 reads complete without CRC or timeout errors.
-- [ ] Open-air/water/reference-medium values are plausible and repeatable.
+- [ ] At least 100 reads complete without CRC or timeout errors. Not yet: replies
+	occasionally arrive short and are recovered by retries.
+- [ ] Open-air/water/reference-medium values are plausible and repeatable. Clean tap
+	water: 100 %, 23.8 C, 41 uS/cm, pH 6.8; air: 0 %, 0 uS/cm. No reference medium
+	or soil yet.
 
 ## Power gating and radio
 

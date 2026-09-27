@@ -1,5 +1,5 @@
 """Core domain types without platform dependencies."""
 
-from .models import SensorReading
+from .models import ReportSupplement, SensorReading
 
-__all__ = ["SensorReading"]
+__all__ = ["ReportSupplement", "SensorReading"]

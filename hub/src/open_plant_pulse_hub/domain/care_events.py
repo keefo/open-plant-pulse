@@ -44,6 +44,9 @@ class DrainageObservation:
 class CareEventDetector:
     def __init__(self) -> None:
         self._previous: Dict[str, SensorReading] = {}
+        # The reading before the previous one, which a supplement arriving late
+        # for the previous one is compared with.
+        self._before_previous: Dict[str, SensorReading] = {}
         self._last_event_at: Dict[Tuple[str, str], datetime] = {}
         self._drainage_observations: Dict[str, DrainageObservation] = {}
         self._watering_rearm_below: Dict[str, float] = {}
@@ -51,6 +54,7 @@ class CareEventDetector:
 
     def forget_sensor(self, sensor_id: str) -> None:
         self._previous.pop(sensor_id, None)
+        self._before_previous.pop(sensor_id, None)
         self._drainage_observations.pop(sensor_id, None)
         self._watering_rearm_below.pop(sensor_id, None)
         self._dry_alerted.discard(sensor_id)
@@ -69,16 +73,20 @@ class CareEventDetector:
         if reading.moisture_percent is None:
             return []
         previous = self._previous.get(reading.sensor_id)
-        self._previous[reading.sensor_id] = reading
+        # Report IDs only ever increase, so a report numbered at or below the
+        # last one is older news, however late it arrived, and says nothing
+        # about what changed since.
         if (
-            previous is None
-            or previous.moisture_percent is None
-            or (
-                reading.contract_version != 2
-                and reading.sequence <= previous.sequence
-            )
+            previous is not None
+            and reading.report_id is not None
+            and previous.report_id is not None
+            and reading.report_id <= previous.report_id
         ):
             return []
+        self._previous[reading.sensor_id] = reading
+        if previous is None or previous.moisture_percent is None:
+            return []
+        self._before_previous[reading.sensor_id] = previous
 
         events: List[CareEvent] = []
         if reading.moisture_percent >= refill_below + DRY_ALERT_REARM_MARGIN_PERCENT:
@@ -136,6 +144,32 @@ class CareEventDetector:
         if drainage_event is not None:
             events.append(drainage_event)
 
+        events.extend(self._detect_fertilizing(previous, reading, detected_at))
+        return events
+
+    def amend(self, reading: SensorReading, detected_at: datetime) -> List[CareEvent]:
+        """Take in a reading whose supplement arrived after it was detected on.
+
+        Nutrients travel in the supplement, so a fertilizing rise can only be
+        judged once it has arrived. Only the latest reading is amended; an older
+        one no longer describes the plant.
+        """
+        current = self._previous.get(reading.sensor_id)
+        if (
+            current is None
+            or reading.report_id is None
+            or current.report_id != reading.report_id
+        ):
+            return []
+        self._previous[reading.sensor_id] = reading
+        previous = self._before_previous.get(reading.sensor_id)
+        if previous is None:
+            return []
+        return self._detect_fertilizing(previous, reading, detected_at)
+
+    def _detect_fertilizing(
+        self, previous: SensorReading, reading: SensorReading, detected_at: datetime
+    ) -> List[CareEvent]:
         nutrient_changes = self._nutrient_changes(previous, reading)
         conductivity_rise = (
             reading.conductivity_us_cm - previous.conductivity_us_cm
@@ -148,7 +182,7 @@ class CareEventDetector:
             and nutrient_changes
             and self._ready(reading.sensor_id, "fertilizing", detected_at)
         ):
-            events.append(
+            return [
                 self._event(
                     reading,
                     detected_at,
@@ -158,8 +192,8 @@ class CareEventDetector:
                     "medium",
                     {"conductivity_us_cm": float(conductivity_rise), **nutrient_changes},
                 )
-            )
-        return events
+            ]
+        return []
 
     def _observe_drainage(
         self, reading: SensorReading, detected_at: datetime, watering_started: bool

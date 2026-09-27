@@ -86,16 +86,18 @@ endif
 config OPP_SHT45_SDA_GPIO
     int "SHT45 SDA GPIO"
     range 0 21
-    default 6
+    default 3
     help
-        I2C data pin. GPIO6 is D4 on the Seeed Studio XIAO ESP32-C3.
+        I2C data pin. GPIO3 is D1 on the Seeed Studio XIAO ESP32-C3. The SHT45
+        shares this bus with the INA219. D4 and D5 are taken by the RS485
+        board's UART, whose receiver drives the line and would corrupt I2C.
 
 config OPP_SHT45_SCL_GPIO
     int "SHT45 SCL GPIO"
     range 0 21
-    default 7
+    default 5
     help
-        I2C clock pin. GPIO7 is D5 on the Seeed Studio XIAO ESP32-C3.
+        I2C clock pin. GPIO5 is D3 on the Seeed Studio XIAO ESP32-C3.
 
 config OPP_SHT45_SAMPLE_INTERVAL_SECONDS
     int "SHT45 bench sampling interval in seconds"
@@ -110,6 +112,128 @@ config OPP_SENSOR_MODBUS_ADDRESS
     int "Sensor Modbus address"
     range 1 247
     default 1
+
+config OPP_BATTERY_MONITOR_ENABLED
+    bool "Monitor the battery with an INA219"
+    default y
+    help
+        Read pack voltage and current from an INA219 on the shared I2C bus and
+        estimate the state of charge and remaining runtime.
+
+if OPP_BATTERY_MONITOR_ENABLED
+
+config OPP_INA219_ADDRESS
+    int "INA219 I2C address"
+    range 64 79
+    default 64
+    help
+        64 is 0x40, with A0 and A1 open. Do not bridge A1 alone: 0x44 is the
+        SHT45.
+
+config OPP_INA219_SHUNT_MILLIOHMS
+    int "INA219 shunt resistance in milliohms"
+    range 1 1000
+    default 100
+    help
+        100 is the R100 (0.1 ohm) shunt most INA219 modules carry, giving
+        0.1 mA resolution up to about 3.2 A. Read the marking on your module.
+
+config OPP_INA219_POSITIVE_IS_CHARGING
+    bool "Positive shunt current means the pack is charging"
+    default y
+    help
+        True when VIN+ is on the system node and VIN- on the pack, as on the
+        assembled node: current into the pack then flows VIN+ to VIN-.
+
+config OPP_BATTERY_CAPACITY_MAH
+    int "Pack capacity in mAh"
+    range 100 20000
+    default 5000
+    help
+        The combined rated capacity of the cells in parallel, for example
+        5000 for two 2500 mAh cells. Used for the charge count and runtime.
+
+config OPP_BATTERY_SAMPLE_INTERVAL_MS
+    int "Battery sampling interval in milliseconds"
+    range 250 60000
+    default 1000
+
+endif
+
+config OPP_ALWAYS_REACHABLE
+    bool "Stay reachable over Bluetooth continuously"
+    depends on !OPP_PRODUCTION_LIFECYCLE
+    default y
+    help
+        Keep re-advertising between reports even on battery, so the hub can
+        deliver a firmware update or settings change at any time instead of
+        waiting for the next report. For bench development; it keeps the
+        Bluetooth radio busy. Disable it to measure the battery-saving
+        behaviour, where an owned sensor on battery is reachable only at its
+        reports, while USB is attached, and for two minutes after a hub
+        connection.
+
+config OPP_SOIL_PROBE_ENABLED
+    bool "Read the RS485 soil probe"
+    default y
+    help
+        Poll a ComWinTop NPKPHCTH-S (NPK-type, five-needle) probe over Modbus
+        RTU and report its moisture, temperature and conductivity.
+
+if OPP_SOIL_PROBE_ENABLED
+
+config OPP_SOIL_PROBE_TX_GPIO
+    int "RS485 UART TX GPIO"
+    range 0 21
+    default 6
+    help
+        GPIO6 is D4, wired to the XIAO RS485 board's transceiver input.
+
+config OPP_SOIL_PROBE_RX_GPIO
+    int "RS485 UART RX GPIO"
+    range 0 21
+    default 7
+    help
+        GPIO7 is D5, wired to the XIAO RS485 board's transceiver output.
+
+config OPP_SOIL_PROBE_DE_GPIO
+    int "RS485 driver-enable GPIO"
+    range 0 21
+    default 4
+    help
+        GPIO4 is D2, the RS485 board's driver-enable. The UART drives it high
+        while transmitting.
+
+config OPP_SOIL_PROBE_POWER_GPIO
+    int "Probe power switch GPIO (-1 for none)"
+    range -1 21
+    default 10
+    help
+        GPIO10 is D10, driving the gate of an AO3400 N-MOSFET between the
+        MT3608's input ground and system ground: high powers the MT3608 and
+        probe, low cuts both. A gate-to-source pull-down keeps the probe off
+        through reset. Set -1 when the probe is powered permanently.
+
+config OPP_SOIL_PROBE_WARMUP_MS
+    int "Probe warm-up after power-on in milliseconds"
+    range 0 60000
+    default 2000
+    help
+        Wait this long after switching the probe on before the first read.
+        The firmware logs how long the probe actually took to answer.
+
+config OPP_SOIL_PROBE_BAUD_RATE
+    int "Soil probe baud rate"
+    default 4800
+    help
+        The probe ships at 4800 baud, 8 data bits, no parity, one stop bit.
+
+config OPP_SOIL_PROBE_SAMPLE_INTERVAL_SECONDS
+    int "Soil probe bench sampling interval in seconds"
+    range 1 3600
+    default 10
+
+endif
 
 config OPP_SAMPLE_INTERVAL_MINUTES
     int "Sampling interval in minutes"

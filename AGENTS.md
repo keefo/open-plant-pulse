@@ -9,6 +9,12 @@
 - For sensor firmware releases, update `sensor/version.txt` before building, use
   `sensor/firmware/build.sh` and `sensor/firmware/flush.sh`, and verify the running
   device reports the new version when hardware is available.
+- Deploy sensor firmware either over USB-C with `sensor/firmware/flush.sh`, or
+  over the air by uploading the built image to the hub (`POST /api/firmware`)
+  and requesting the install (`POST /api/sensors/<id>/firmware`). Either way,
+  confirm the sensor then reports the new version. Give every deployed binary a
+  new version number: the hub judges an over-the-air install by the version the
+  sensor reports back.
 - Report each skipped or blocked step plainly. Distinguish code completion, build
   success, flash success, and hardware validation; none implies the others.
 - Never describe a build, flash, test, or hardware behavior as successful without

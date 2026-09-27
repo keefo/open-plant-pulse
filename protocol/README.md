@@ -3,135 +3,116 @@
 This directory owns the contract between the battery sensor and desktop hub.
 Neither product may change its payload independently.
 
-## Historical BTHome contract version 1
+## BTHome contract version 3
 
-BLE/BTHome is the first hub-ingestion transport. The existing fixture uses
-unencrypted BTHome v2 service data under UUID `0xFCD2`:
+Contract v3 is the only contract. Earlier contracts are not decoded; a sensor
+still sending one is reflashed rather than accommodated. It remains unencrypted
+BTHome v2 service data under UUID `0xFCD2`; `3` is the Open Plant Pulse
+contract version, not a BTHome format version. Every packet begins with
+device-info byte `0x40` (regular interval, unencrypted) and lists its objects in
+ascending object-ID order.
 
-| Order | Object | ID | Encoding |
-| --- | --- | --- | --- |
-| 1 | Soil temperature | `0x02` | signed 16-bit little-endian; factor 0.01 degrees C |
-| 2 | Moisture | `0x14` | unsigned 16-bit little-endian; factor 0.01% |
-| 3 | Conductivity | `0x56` | unsigned 16-bit little-endian; 1 microS/cm |
+One **report** is one set of measurements taken together. It travels as up to
+two packets that share a report ID: a **main** packet with the core
+measurements and, when there is anything for it, a **supplementary** packet
+with battery, the remaining soil values and the forced-report marker. Both are
+advertised alternately in the same window. A third shape, the **beacon**,
+carries no report at all.
 
-The first service-data byte is `0x40`: BTHome v2, regular interval, unencrypted.
-The [shared fixture](fixtures/bthome-v2.json) records a known payload for sensor
-encoder, hub decoder, and Home Assistant compatibility tests.
+### Main packet
 
-Version 1 has no stable identity or packet ID. The decoder retains it only for the
-historical fixture and returns `unenrolled-bthome` with sequence `0`; the Bleak
-ingestion path does not accept it for durable multi-sensor collection.
-
-## Implemented BTHome contract version 2
-
-Contract v2 uses standard BTHome objects in ascending object-ID order:
-
-| Order | Object | ID | Encoding | Source |
+| Wire order | Object | ID | Encoding | Group |
 | --- | --- | --- | --- | --- |
-| 1 | Packet ID | `0x00` | unsigned 8-bit | Wake-cycle sample |
-| 2 | Soil temperature | `0x02` | signed 16-bit; factor 0.01 degrees C | RS485 soil probe |
-| 3 | Air relative humidity | `0x03` | unsigned 16-bit; factor 0.01% | SHT45 |
-| 4 | Soil moisture | `0x14` | unsigned 16-bit; factor 0.01% | RS485 soil probe |
-| 5 | Button event | `0x3A` | unsigned 8-bit; `0x01` press | Forced-report request only |
-| 6 | Air temperature | `0x45` | signed 16-bit; factor 0.1 degrees C | SHT45 |
-| 7 | Conductivity | `0x56` | unsigned 16-bit; 1 microS/cm | RS485 soil probe |
+| 1 | Soil temperature | `0x02` | signed 16-bit; factor 0.01 degrees C | Soil |
+| 2 | Air relative humidity | `0x2E` | unsigned 8-bit; 1 % | Air |
+| 3 | Soil moisture | `0x2F` | unsigned 8-bit; 1 % | Soil |
+| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
+| 5 | Air temperature | `0x45` | signed 16-bit; factor 0.1 degrees C | Air |
+| 6 | Acquisition timestamp | `0x50` | unsigned 32-bit Unix seconds | Optional |
+| 7 | Conductivity | `0x56` | unsigned 16-bit; 1 microS/cm | Soil |
 
-`0x02` and `0x45` intentionally distinguish the two temperature sources without
-positional inference. A soil sample is complete only when `0x02`, `0x14`, and
-`0x56` are present. An air sample is complete only when `0x03` and `0x45` are
-present. A failed source omits its complete object group; receivers store null
-measurements and an unavailable source status rather than copying earlier values.
-Packets with incomplete source groups are malformed.
+All multi-byte values are little-endian. A group is complete or absent: soil is
+`0x02`, `0x2F` and `0x56`; air is `0x2E` and `0x45`. At least one group is
+present. A failed source omits its whole group, and the receiver stores null
+measurements with an unavailable source status rather than copying earlier
+values. Percentages are rounded to the nearest whole point, `0` to `100`. With
+everything present the service data after the UUID is 24 bytes, which with the
+Flags element and service-data header fills the 31-byte legacy advertisement;
+the local name travels in the scan response.
 
-### Identity and deduplication
+### Supplementary packet
 
-The sensor advertises the complete local name `sensor-<DEVICE_ID>`, where `DEVICE_ID`
-is its immutable 48-bit hardware device ID encoded as 12 lowercase hexadecimal
-digits. The advertised name and hub canonical ID use the same
-`sensor-<lowercase-device-id>` format. Previous uppercase `sensor-<DEVICE_ID>` and
-legacy uppercase `OPP-<DEVICE_ID>` names are accepted during upgrades and
-canonicalized to the same lowercase hyphenated identity. The name is
-sensor-owned, so it remains stable across sensor reset, hub replacement, macOS
-CoreBluetooth UUID changes, and Linux adapter changes. Platform-observed addresses
-are stored only as diagnostics. The identifier is visible and spoofable because
-contract v2 is unauthenticated.
+| Wire order | Object | ID | Encoding | Group |
+| --- | --- | --- | --- | --- |
+| 1 | Battery | `0x01` | unsigned 8-bit; 1 % | Battery |
+| 2 | Battery voltage | `0x0C` | unsigned 16-bit; factor 0.001 V | Battery |
+| 3 | Button event | `0x3A` | unsigned 8-bit; `0x01` press | Forced report |
+| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
+| 5 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
 
-The BTHome packet ID increments modulo 256 once for every new wake-cycle sample
-and remains unchanged throughout that sample's advertisement burst. The durable
-deduplication key is the stable sensor identity plus packet ID compared with the
-sensor's previous accepted advertisement. Database uniqueness also rejects a
-captured packet replayed after restart.
+Battery is `0x01` and `0x0C` together or neither. `0x3A` appears only in the
+report a user forced from the sensor's console. At least one group besides the
+report ID is present; a report with nothing for the supplementary packet sends
+only the main one. At most 23 bytes.
 
-The [contract-v2 replay fixture](fixtures/bthome-v2-sensor-v2.json) covers three
-sensors, a duplicate, full and partial samples, malformed data, and an unsupported
-object. It drives the same application ingestion interface as Bleak.
+BTHome defines no pH or nutrient objects, so they travel in one raw object that
+only the hub decodes (Home Assistant shows battery natively and ignores it):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Layout version, `1` |
+| 1 | 1 | pH, factor 0.1 (`0`-`140`) |
+| 2 | 2 | Nitrogen, mg/kg |
+| 4 | 2 | Phosphorus, mg/kg |
+| 6 | 2 | Potassium, mg/kg |
+
+A packet is main if it carries any of `0x02`, `0x2E`, `0x2F`, `0x45`, `0x50` or
+`0x56`, and supplementary if it carries any of `0x01`, `0x0C`, `0x3A` or `0x54`.
+A packet mixing the two sets, missing the report ID, or carrying any other
+object is malformed.
+
+### Beacon
+
+The single byte `0x40`, with no objects. A sensor sends it when it has no
+report (for example, no sensor is available yet), so that it can still be found
+and adopted. A beacon is presence only: nothing is stored from it.
+
+### Identity, report IDs and deduplication
+
+The sensor advertises the complete local name `sensor-<DEVICE_ID>`, where
+`DEVICE_ID` is its immutable 48-bit hardware device ID as 12 lowercase
+hexadecimal digits. The name is the sensor's identity and stays stable across
+resets, hub replacement and platform address changes. Platform-observed
+addresses are diagnostics only. The identity is visible and spoofable because
+the contract is unauthenticated.
+
+Report IDs start at `1`, increase with every new report, never repeat and never
+wrap. Gaps are allowed: the sensor reserves IDs in blocks in flash so that it
+writes flash once per block rather than once per report, and after a restart it
+continues from the end of the reserved block. `0` is never used.
+
+The hub's key for a report is `(sensor identity, report ID)`. Main and
+supplementary packets of one report may arrive in either order and are joined
+into one reading; a reading appears once its main packet is stored, with
+supplementary values attached whenever they arrive. Receiving a packet whose
+content matches what is already stored for its key is a duplicate and stores
+nothing; this is how repeated advertising of one report is absorbed. The same
+key with different content for the same packet kind is a conflict: it is
+logged and not stored. Erasing the sensor's flash restarts its report IDs, so
+such a sensor must be removed from the hub and adopted again.
 
 ### Security
 
-Contract v2 keeps BTHome device-info byte `0x40`: regular interval and unencrypted.
-Measurements, stable identifiers, and device presence are observable and not
-authenticated. Encryption requires a new contract with a 16-byte BTHome bind-key
-provisioning, protected key storage, replacement/recovery, and Home Assistant
-interoperability design. Keys must never appear in fixtures or logs.
+Contract v3 is unencrypted: measurements, identity and presence are observable
+and not authenticated. Encryption requires a new contract with BTHome bind-key
+provisioning, protected key storage, replacement and recovery, and Home
+Assistant interoperability. Keys must never appear in fixtures or logs.
 
-The selected NPKPHCTH-S probe can also report soil pH and N/P/K. Those values stay
-absent until the purchased revision's Modbus mapping is hardware-verified and
-suitable BTHome semantics are selected.
+### Fixtures
 
-## Target BTHome contract version 3
-
-Contract v3 adds store-and-forward identity and acquisition time. It remains a
-BTHome v2 advertisement; `3` is the Open Plant Pulse contract version, not a new
-BTHome format version. Contract v2 remains the implemented compatibility contract
-until the v3 sensor encoder, durable queue, Hub decoder/storage, acknowledgements,
-fixtures, and hardware delivery tests are complete.
-
-The logical report schema puts acquisition time in position 2 as follows:
-
-| Position | Field | Required | Meaning |
-| --- | --- | --- | --- |
-| 1 | Report ID | Yes | Durable, sensor-assigned identity for one immutable sample |
-| 2 | Observed at | When the sensor clock is known | UTC acquisition datetime |
-| 3 | Soil temperature | With the soil source group | RS485 soil probe value |
-| 4 | Air relative humidity | With the air source group | SHT45 value |
-| 5 | Soil moisture | With the soil source group | RS485 soil probe value |
-| 6 | Air temperature | With the air source group | SHT45 value |
-| 7 | Conductivity | With the soil source group | RS485 soil probe value |
-
-Logical position is not byte order. BTHome requires object IDs in ascending numeric
-order, so the standard timestamp object cannot physically be the second object.
-The v3 wire order is:
-
-| Wire order | Object | ID | Encoding | Source |
-| --- | --- | --- | --- | --- |
-| 1 | Soil temperature | `0x02` | signed 16-bit little-endian; factor 0.01 degrees C | RS485 soil probe |
-| 2 | Air relative humidity | `0x2E` | unsigned 8-bit; 1% | SHT45 |
-| 3 | Soil moisture | `0x2F` | unsigned 8-bit; 1% | RS485 soil probe |
-| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit little-endian | Durable sensor queue |
-| 5 | Air temperature | `0x45` | signed 16-bit little-endian; factor 0.1 degrees C | SHT45 |
-| 6 | Acquisition timestamp | `0x50` | unsigned 32-bit little-endian Unix seconds | Sensor clock |
-| 7 | Conductivity | `0x56` | unsigned 16-bit little-endian; 1 microS/cm | RS485 soil probe |
-
-The service-data device-info byte remains `0x40`. Report ID `0` is reserved; IDs
-increase monotonically and never wrap or repeat within one enrollment. The next ID
-and its immutable report are committed together before advertising. A normal reset,
-deep sleep, or firmware upgrade must not reset the counter. A destructive reset that
-loses the counter invalidates the enrollment and requires an explicit Hub
-re-enrollment before reports are accepted. Contract v3 omits BTHome packet ID
-`0x00`; the report ID provides durable Hub deduplication and changes whenever the
-measurement data changes.
-
-Objects `0x2E` and `0x2F` replace the v2 hundredth-percent objects so a complete v3
-report fits legacy BLE advertising. Percentages are rounded to the nearest whole
-percentage point and remain constrained to `0` through `100`. With all source
-objects and a timestamp, the data after UUID `0xFCD2` is 24 bytes. Together with
-the service-data header and the recommended Flags element, this consumes the full
-31-byte legacy advertising payload. The complete local name remains in the scan
-response. The v2 button event is not emitted in v3 telemetry; forced reports use
-the same durable delivery and acknowledgement path as scheduled reports.
-
-Soil and air source-group completeness rules remain unchanged. Report ID is always
-present. Timestamp is the only optional report metadata field.
+[`fixtures/bthome-v3.json`](fixtures/bthome-v3.json) records a known main and
+supplementary packet pair and a beacon. The sensor's encoder tests and the hub's
+decoder tests both check against it.
 
 ### Acquisition timestamp
 
@@ -157,7 +138,11 @@ report. The Hub stores `observed_at` as null for such a report while retaining
 `received_at`; this requires a v3 storage migration because the v2 column is not
 nullable.
 
-### Durable delivery and acknowledgement
+### Durable delivery and acknowledgement (step 2, not implemented)
+
+Contract v3 is being introduced in two steps. The telemetry above is step 1.
+Durable delivery below is step 2; until it lands, a report the hub misses is
+lost, and repeated advertising is the only protection.
 
 The sensor persists each complete report before its first advertisement and keeps
 it until acknowledged. It advertises the oldest unacknowledged report first and
@@ -171,12 +156,12 @@ same key and identical immutable content is a successful duplicate and must prod
 the same acknowledgement; receiving the same key with different content is a
 conflict and must not be acknowledged.
 
-Connected-BLE report acknowledgement version 2 is a five-byte token on the existing
-read/write characteristic:
+Connected-BLE report acknowledgement version 3 is a five-byte token on the existing
+read/write characteristic (version 2 is the forced-report acknowledgement):
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Acknowledgement protocol version, `2` |
+| 0 | 1 | Acknowledgement protocol version, `3` |
 | 1 | 4 | Report ID, unsigned little-endian |
 
 Only an exact acknowledgement for a durably stored report removes that report from
@@ -186,9 +171,9 @@ before the next report is advertised.
 
 ## Change policy
 
-- Preserve fixtures for every released BTHome contract version.
-- Update sensor encoding, hub decoding, replay behavior, and compatibility tests
-  together.
+- There is one contract at a time. A new contract replaces the old one in the
+  sensor, the hub and the fixtures together; no compatibility is kept.
+- Update sensor encoding, hub decoding, replay behavior, and tests together.
 - Treat incompatible identity, deduplication, encryption, or object semantics as
   a new contract version.
 - Add BTHome fields in ascending object-ID order unless a documented compatibility
@@ -231,37 +216,35 @@ This prototype characteristic is unencrypted and unauthenticated. Nearby clients
 can observe or overwrite configuration. Pairing, authorization, recovery, and
 measured connection-window energy are required before production deployment.
 
-## Connected-BLE forced-report acknowledgement version 1
+## Connected-BLE forced-report acknowledgement version 2
 
 The always-awake diagnostics firmware can request an immediate report from its
-Maintenance page, bypassing the current reporting interval without changing the
-next scheduled deadline. The forced BTHome packet includes the standard button
-event object `0x3A` with press event `0x01`. The hub first durably ingests that
-packet, then connects to the existing service and uses its established read/write
-characteristic `7f510002-1b15-4c28-9a4a-8d0f4f505000` to acknowledge the exact
-request. Reusing the established characteristic avoids stale GATT service caches
-during firmware upgrades; payload version and length distinguish acknowledgments
-from device configuration.
+console, bypassing the current reporting interval without changing the next
+scheduled deadline. That report's supplementary packet carries the button event
+`0x3A` with press `0x01`. The hub first durably ingests the report, then
+connects to the existing service and uses its read/write characteristic
+`7f510002-1b15-4c28-9a4a-8d0f4f505000` to acknowledge the exact request.
+Payload version and length distinguish the token from device configuration.
 
-The characteristic value is a canonical six-byte token:
+The characteristic value is a canonical nine-byte token:
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Protocol version, currently `1` |
+| 0 | 1 | Protocol version, `2` |
 | 1 | 4 | Non-zero force-report request ID, unsigned little-endian |
-| 5 | 1 | BTHome packet ID |
+| 5 | 4 | Report ID of the forced report, unsigned little-endian |
 
-While a request awaits acknowledgment, firmware returns the token instead of device
-configuration when the characteristic is read. The hub verifies that
-its packet ID matches the durably ingested advertisement, and writes the identical
-token back. Only that exact write changes sensor state to acknowledged; subsequent
-reads return device configuration normally. A missing,
-mismatched, or late acknowledgment is not reported as success. Repeated callbacks
-for one advertisement burst do not trigger repeated Hub connections.
+While a request awaits acknowledgment, firmware returns the token instead of
+device configuration when the characteristic is read. The hub verifies that its
+report ID matches the report it stored with the button event, and writes the
+identical token back. Only that exact write marks the request acknowledged;
+subsequent reads return device configuration normally. A missing, mismatched or
+late acknowledgment is not reported as success. Repeated callbacks for one
+advertisement burst do not trigger repeated hub connections.
 
-This acknowledgment is deliberately limited to user-initiated reports in the
-always-awake diagnostics runtime. Scheduled and production deep-sleep telemetry
-remain one-way and never extend their bounded awake window waiting for a Hub.
+This acknowledgment is limited to user-initiated reports in the always-awake
+diagnostics runtime. Scheduled and production telemetry remain one-way until
+durable delivery (step 2) lands.
 
 ## Connected-BLE Wi-Fi credentials version 3
 
@@ -301,5 +284,5 @@ no status response, log, or serial output.
 
 ## Development transports
 
-BLE is the only transport. Deterministic tests replay the contract-v2 fixture
+BLE is the only transport. Deterministic tests replay the contract-v3 fixtures
 above; there is no side channel a sensor may use instead.

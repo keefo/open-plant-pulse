@@ -3,12 +3,12 @@
 #include <stdint.h>
 
 #include "driver/i2c_master.h"
+#include "i2c_bus.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #include "sht45_decode.h"
 
-#define SHT45_I2C_PORT I2C_NUM_0
 #define SHT45_I2C_ADDRESS 0x44
 #define SHT45_I2C_FREQUENCY_HZ 100000
 #define SHT45_TRANSACTION_TIMEOUT_MS 100
@@ -23,16 +23,7 @@ esp_err_t opp_sht45_init(void)
     if (i2c_bus != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-
-    const i2c_master_bus_config_t bus_config = {
-        .i2c_port = SHT45_I2C_PORT,
-        .sda_io_num = CONFIG_OPP_SHT45_SDA_GPIO,
-        .scl_io_num = CONFIG_OPP_SHT45_SCL_GPIO,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    return i2c_new_master_bus(&bus_config, &i2c_bus);
+    return opp_i2c_bus_acquire(&i2c_bus);
 }
 
 esp_err_t opp_sht45_deinit(void)
@@ -49,7 +40,7 @@ esp_err_t opp_sht45_deinit(void)
         sht45_device = NULL;
     }
 
-    esp_err_t error = i2c_del_master_bus(i2c_bus);
+    esp_err_t error = opp_i2c_bus_release();
     if (error == ESP_OK) {
         i2c_bus = NULL;
     }

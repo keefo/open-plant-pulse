@@ -522,3 +522,124 @@
   at a time, and the sensor's refusal of an image whose digest does not match:
   the hub checks its files against the name they are stored under, so it cannot
   serve a mismatching image, and proving that path needs a server built to lie.
+
+## 2026-09-26
+
+### Assembled node: power path and pins
+
+- The node now runs from two parallel 18650 cells charged by an IP2312 USB-C
+  module, with an INA219 in series with the pack and an MT3608 boosting the
+  system node to 12.4 V for the soil probe. The full table is in
+  `sensor/hardware/README.md`.
+- **Pin conflict found before any Modbus code ran.** The XIAO RS485 board uses
+  D4/D5 for its UART and D2 for driver enable, which is where the SHT45 was.
+  The board's receiver drives D5, which would corrupt I2C, and the ESP32-C3 has
+  one I2C controller, so the SHT45 moved to D1/D3 beside the INA219. The Kconfig
+  defaults now describe this board: I2C on GPIO3/GPIO5, UART on GPIO6/GPIO7, DE
+  on GPIO4.
+- After the move the SHT45 acknowledged `0x44` but every measurement failed
+  its CRC. The cause was a broken wire, not the pins; after repair it read
+  cleanly. A broken I2C joint can still acknowledge an address.
+
+### NPKPHCTH-S soil probe support (0.13.0-0.13.3)
+
+- The purchased probe has four wires and five needles; the vendor's readme maps
+  it to the "NPK type (5Pin probe)" manual V1.4, whose register map, address 1,
+  4800 baud 8N1 and wire colours were used. The table's "function 0x30" is a
+  typo for `0x03`; the manual's own examples use `0x03`.
+- The manual's worked request and reply, CRCs included, are host test vectors,
+  so the parser is checked against the vendor's document rather than itself.
+- Firmware reads all seven registers every 10 s, rejects out-of-range values,
+  broadcasts moisture, soil temperature and conductivity over BTHome (the hub
+  already decodes them), and shows pH and N/P/K on the sensor's own page. The
+  BTHome payload is at its 20-byte limit.
+- **Occasional short or corrupted replies** (for example a CRC of `ef d5`
+  instead of `ef 15`, and one- or two-byte replies) led to three attempts per
+  sample in 0.13.2. The console's soil and SHT45 sections now stay visible and
+  say `Unavailable` rather than disappearing on a failed sample.
+- **Moisture, temperature and pH read exactly 0 in water** while conductivity,
+  salinity and TDS were correct. A raw dump through the new debug route
+  (`/api/v1/soil/registers`, 0.13.3) showed the firmware reading exactly the
+  registers the manual describes, and the probe returning 0 in them. The
+  cause: the node was powered from the XIAO's USB cable with no battery, so
+  the only source on the system node was the XIAO's small charger, which cannot
+  supply the MT3608 and probe. The probe's controller answered, but its
+  moisture/temperature sensor and pH electrode did not start. With the battery
+  in: moisture 77.6 %, temperature 25.7 C, pH 4.8; fully submerged, moisture
+  100.0 %, temperature 25.7 C, EC 97 uS/cm, pH 4.5.
+- **pH 4.5 was the container, not the probe.** The same tap water in a clean
+  container read pH 6.8 (settling from 7.4), EC 41 uS/cm, 23.8 C and 100 %.
+  Residue had made the water acidic and more conductive, and the probe measured
+  it correctly. In air: moisture 0 %, EC 0, temperature real (unlike the
+  starved probe's 0.0), pH noise.
+- N/P/K follow conductivity (1/2/7 at 41 uS/cm) and are estimates, not
+  measurements.
+
+### Deployment and reachability
+
+- 0.13.0 was installed over the air through the hub in about 25 s. A
+  follow-up install stayed `pending` for more than six minutes: an owned
+  sensor on battery advertises only at its reports, so the hub had no window
+  to deliver it. The install was cancelled.
+- Deployments were then restricted to `flush.sh` over USB-C. Later the same
+  day, with development builds always reachable, over-the-air installs were
+  allowed again; `AGENTS.md` and `docs/firmware.md` describe both paths. `OPP_ALWAYS_REACHABLE` keeps
+  development builds advertising continuously. The development lifecycle
+  never deep sleeps; deep sleep exists only in the production lifecycle.
+- The first USB attempts failed because the cable was charge-only: the board
+  booted and reported `usb_connected: false`, and macOS listed no Espressif
+  device. A data cable fixed it.
+- 0.13.2, 0.13.3 and 0.13.4 were flashed by `flush.sh`, each with all four
+  regions hash-verified, and booted reporting their versions over serial and
+  `/status`.
+- The Maintenance page's soil-probe row still said "Not implemented" and its
+  switch saved a setting nothing read. 0.13.4 wires it like the SHT45 switch;
+  verified on the device: off logged "Soil probe sampling disabled" and
+  cleared the reading within a second, on resumed sampling immediately.
+
+### Battery monitor (0.14.0-0.14.1)
+
+- The SHT45 driver used to create and delete the I2C bus itself, so switching
+  it off would have removed the INA219's bus too. A shared, reference-counted
+  bus now serves both on D1/D3.
+- The INA219 is read every second with 128-sample averaging. Current is shunt
+  voltage over shunt resistance (0.1 ohm assumed), positive into the pack.
+  The charge level starts from a resting Li-ion voltage curve, counts charge in
+  and out, and is pinned to 100 % at the end of a charge. It survives resets.
+- First reading on the device: 4.16 V, +259 mA, "charging", with the C3 on
+  USB, so the XIAO's own charger charges the pack through the INA219. This
+  confirms the sign of the wiring.
+- **0.14.0 declared the pack full 41 s after boot.** Its rule (4.15 V, current
+  below C/20 = 250 mA) was met by the XIAO charger's normal current. 0.14.1
+  requires 4.18 V below C/20 held for a minute, and discards the retained
+  gauge from older firmware. It then read 96.4 % (estimate), +247 mA, 0.7 h to
+  full.
+- The shunt value (0.1 ohm) and capacity (5000 mAh) are assumptions until
+  checked against the parts.
+
+### Probe power switch (0.15.0)
+
+- None of the modules on hand can switch the probe: the RS485 board's 12V
+  terminal is an input to its regulator, its 5V OUT is USB power only, and a
+  disabled MT3608 still passes battery voltage to the probe. An AO3400
+  N-MOSFET now switches the MT3608's ground from D10 (GPIO10), with a
+  gate pull-down so the probe starts off.
+- Verified: the dashboard switch drives GPIO10; continuity between battery -
+  and MT3608 OUT- follows it; the probe answers 2.1 s after power-on.
+- **The probe costs 28.5 mA** on battery (30 s averages: on -98.0 and -98.1
+  mA, off -69.5 mA). The remaining 69.5 mA is the always-awake development
+  firmware: Wi-Fi, continuous BLE advertising, SHT45 and INA219.
+- With USB connected the INA219 showed no change at all: the charger holds the
+  node at 4.2 V and feeds the loads itself. Loads are measured on battery.
+- First pH after power-on is wrong (3.3, then 5.6 at +10 s, versus 6.0-6.8
+  after long operation); moisture, temperature and EC are right at once.
+
+### Not validated
+
+- 100 consecutive probe reads without a retry, now that the battery is in.
+- Soil readings in real soil against a reference; pH against a buffer.
+- The production path's soil read and per-reading probe power cycle, and how
+  long pH needs after power-on to be trustworthy.
+- The battery monitor on battery alone (discharging and time to empty), a
+  charge through the IP2312, a completed charge pinning the level to 100 %,
+  and the shunt and capacity values against the actual parts.

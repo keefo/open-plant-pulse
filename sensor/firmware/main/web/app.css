@@ -155,7 +155,7 @@ h2 { font-size: 19px; }
 .metric small { display: block; margin-top: 6px; color: var(--muted); }
 .metric small.device-mac { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-.device-configuration, .overview-sensor { margin-top: 36px; }
+.chip-overview, .overview-sensor { margin-top: 36px; }
 .configuration-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .overview-sensor[hidden] { display: none; }
 .overview-sensor-status { display: flex; align-items: center; gap: 10px; }

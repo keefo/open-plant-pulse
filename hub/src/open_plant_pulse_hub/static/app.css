@@ -228,6 +228,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .raw-report-status { padding: 2px 6px; border-radius: 3px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
 .raw-report-status[data-status="duplicate"] { color: #796019; background: #f6edcf; }
 .raw-report-status[data-status="rejected"] { color: #9a3f29; background: #f7e5df; }
+.raw-report-status[data-status="conflict"] { color: #8a2f5c; background: #f5e1eb; }
 .raw-report-empty { color: var(--muted); text-align: center !important; }
 .chemistry-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .chemistry-gauge { min-height: 172px; padding: 17px; background: white; border: 1px solid var(--line); border-radius: 6px; display: grid; align-content: space-between; gap: 13px; }

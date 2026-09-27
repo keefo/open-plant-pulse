@@ -38,6 +38,30 @@
           <span class="updated" id="last-updated">Waiting for device</span>
         </div>
 
+        <section class="device-configuration" aria-labelledby="device-configuration-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Hub</p>
+              <h2 id="device-configuration-title">Hub configuration</h2>
+            </div>
+            <span class="state" id="device-config-state">Not configured</span>
+          </div>
+          <div class="metric-grid configuration-grid">
+            <article class="metric">
+              <span class="metric-label">Plant name</span>
+              <strong id="configured-plant-name">Not assigned</strong>
+            </article>
+            <article class="metric">
+              <span class="metric-label">Room</span>
+              <strong id="configured-room">Not assigned</strong>
+            </article>
+            <article class="metric">
+              <span class="metric-label">Reporting interval</span>
+              <strong id="configured-reporting-interval">Firmware default</strong>
+            </article>
+          </div>
+        </section>
+
         <section class="chip-overview" aria-labelledby="chip-overview-title">
           <div class="section-heading">
             <div>
@@ -89,31 +113,7 @@
           </div>
         </section>
 
-        <section class="device-configuration" aria-labelledby="device-configuration-title">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Hub</p>
-              <h2 id="device-configuration-title">Hub configuration</h2>
-            </div>
-            <span class="state" id="device-config-state">Not configured</span>
-          </div>
-          <div class="metric-grid configuration-grid">
-            <article class="metric">
-              <span class="metric-label">Plant name</span>
-              <strong id="configured-plant-name">Not assigned</strong>
-            </article>
-            <article class="metric">
-              <span class="metric-label">Room</span>
-              <strong id="configured-room">Not assigned</strong>
-            </article>
-            <article class="metric">
-              <span class="metric-label">Reporting interval</span>
-              <strong id="configured-reporting-interval">Firmware default</strong>
-            </article>
-          </div>
-        </section>
-
-        <section class="overview-sensor" id="overview-sht45" aria-labelledby="overview-sht45-title" hidden>
+        <section class="overview-sensor" id="overview-sht45" aria-labelledby="overview-sht45-title">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Ambient sensor</p>
@@ -121,7 +121,12 @@
             </div>
             <div class="overview-sensor-status">
               <span class="updated" id="overview-sht45-age">Latest sample</span>
-              <span class="state available">Online</span>
+              <span class="state available" id="overview-sht45-state">Online</span>
+              <label class="sensor-toggle">
+                <input id="sht45-enabled" type="checkbox" role="switch" disabled>
+                <span class="toggle-track" aria-hidden="true"></span>
+                <span>Enabled</span>
+              </label>
             </div>
           </div>
           <div class="ambient-grid">
@@ -139,6 +144,101 @@
               <span class="metric-label">Absolute humidity</span>
               <strong id="overview-absolute-humidity">--</strong>
               <small>Derived from temperature and RH</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="overview-sensor" id="overview-soil" aria-labelledby="overview-soil-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Soil probe</p>
+              <h2 id="overview-soil-title">NPKPHCTH-S</h2>
+            </div>
+            <div class="overview-sensor-status">
+              <span class="updated" id="overview-soil-age">Latest sample</span>
+              <span class="state available" id="overview-soil-state">Online</span>
+              <label class="sensor-toggle">
+                <input id="soil-probe-enabled" type="checkbox" role="switch" disabled>
+                <span class="toggle-track" aria-hidden="true"></span>
+                <span>Enabled</span>
+              </label>
+            </div>
+          </div>
+          <div class="ambient-grid">
+            <article class="ambient-metric">
+              <span class="metric-label">Moisture</span>
+              <strong id="overview-soil-moisture">--</strong>
+              <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Soil temperature</span>
+              <strong id="overview-soil-temperature">--</strong>
+              <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Conductivity</span>
+              <strong id="overview-soil-conductivity">--</strong>
+              <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">pH</span>
+              <strong id="overview-soil-ph">--</strong>
+              <small>Trend only; not sent to the hub</small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Nitrogen (N)</span>
+              <strong id="overview-soil-nitrogen">--</strong>
+              <small>Trend only; not sent to the hub</small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Phosphorus (P)</span>
+              <strong id="overview-soil-phosphorus">--</strong>
+              <small>Trend only; not sent to the hub</small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Potassium (K)</span>
+              <strong id="overview-soil-potassium">--</strong>
+              <small>Trend only; not sent to the hub</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="overview-sensor" id="overview-battery" aria-labelledby="overview-battery-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Battery</p>
+              <h2 id="overview-battery-title">INA219</h2>
+            </div>
+            <div class="overview-sensor-status">
+              <span class="updated" id="overview-battery-age">Latest sample</span>
+              <span class="state unavailable" id="overview-battery-state">Unavailable</span>
+            </div>
+          </div>
+          <div class="ambient-grid">
+            <article class="ambient-metric">
+              <span class="metric-label">Charge</span>
+              <strong id="overview-battery-percent">--</strong>
+              <small id="overview-battery-percent-note"></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Voltage</span>
+              <strong id="overview-battery-voltage">--</strong>
+              <small id="overview-battery-voltage-note"></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Current</span>
+              <strong id="overview-battery-current">--</strong>
+              <small id="overview-battery-current-note"></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label">Power</span>
+              <strong id="overview-battery-power">--</strong>
+              <small></small>
+            </article>
+            <article class="ambient-metric">
+              <span class="metric-label" id="overview-battery-time-label">Time left</span>
+              <strong id="overview-battery-time">--</strong>
+              <small id="overview-battery-time-note"></small>
             </article>
           </div>
         </section>
@@ -162,39 +262,6 @@
             <h1 id="maintenance-title">Maintenance</h1>
           </div>
         </div>
-        <section class="sensors-panel" aria-labelledby="sensors-title">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Acquisition hardware</p>
-              <h2 id="sensors-title">Sensors</h2>
-            </div>
-          </div>
-          <div class="sensor-list">
-            <article class="sensor-row">
-              <div><span class="sensor-name">SHT45</span><small>Air temperature and humidity</small></div>
-              <div class="sensor-controls">
-                <span class="state unavailable" id="sht45-state">Unavailable</span>
-                <label class="sensor-toggle">
-                  <input id="sht45-enabled" type="checkbox" role="switch" disabled>
-                  <span class="toggle-track" aria-hidden="true"></span>
-                  <span>Enabled</span>
-                </label>
-              </div>
-            </article>
-            <article class="sensor-row">
-              <div><span class="sensor-name">NPKPHCTH-S</span><small>RS-485 soil probe</small></div>
-              <div class="sensor-controls">
-                <span class="state unavailable" id="soil-probe-state">Not implemented</span>
-                <label class="sensor-toggle">
-                  <input id="soil-probe-enabled" type="checkbox" role="switch" disabled>
-                  <span class="toggle-track" aria-hidden="true"></span>
-                  <span>Enabled</span>
-                </label>
-              </div>
-            </article>
-          </div>
-          <p class="empty-note" id="sensor-config-state" aria-live="polite">Loading sensor settings</p>
-        </section>
         <section class="settings-panel" aria-labelledby="appearance-title">
           <div class="section-heading">
             <h2 id="appearance-title">Interface settings</h2>

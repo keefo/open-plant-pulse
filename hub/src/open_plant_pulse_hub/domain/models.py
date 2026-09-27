@@ -5,8 +5,13 @@ from typing import Optional
 @dataclass(frozen=True)
 class SensorReading:
     sensor_id: str
-    sequence: int
-    observed_at: str
+    # The sensor's own number for this report. Null only for readings stored
+    # before contract v3, which had no report IDs.
+    report_id: Optional[int]
+    # When the sensor took the measurements, from its clock. Null when the sensor
+    # did not know the time; when it was received is recorded separately and is
+    # never put here in its place.
+    observed_at: Optional[str]
     soil_temperature_c: Optional[float]
     moisture_percent: Optional[float]
     conductivity_us_cm: Optional[int]
@@ -16,6 +21,30 @@ class SensorReading:
     nitrogen_mg_kg: Optional[int] = None
     phosphorus_mg_kg: Optional[int] = None
     potassium_mg_kg: Optional[int] = None
+    battery_percent: Optional[int] = None
+    battery_voltage_v: Optional[float] = None
     soil_source_status: str = "available"
     air_source_status: str = "available"
+    contract_version: int = 0
+
+
+@dataclass(frozen=True)
+class ReportSupplement:
+    """The part of a report that travels in its supplementary packet.
+
+    It belongs to the reading with the same sensor and report ID, and may arrive
+    before or after that reading's main packet.
+    """
+
+    sensor_id: str
+    report_id: int
+    battery_percent: Optional[int] = None
+    battery_voltage_v: Optional[float] = None
+    soil_ph: Optional[float] = None
+    nitrogen_mg_kg: Optional[int] = None
+    phosphorus_mg_kg: Optional[int] = None
+    potassium_mg_kg: Optional[int] = None
+    # Set on the report a person forced from the sensor's console, which the hub
+    # acknowledges once it has stored it.
+    force_report: bool = False
     contract_version: int = 0

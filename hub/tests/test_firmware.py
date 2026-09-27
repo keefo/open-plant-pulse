@@ -135,12 +135,12 @@ class LibraryTests(unittest.TestCase):
         sensor_id = "sensor-aabbccddeeff"
         self.store.record_beacon(
             sensor_id=sensor_id,
-            packet_id=1,
             received_at="2026-09-25T10:00:00Z",
             observed_identifier="test",
             source_adapter="test",
             rssi=-40,
-            service_data=b"\x40\x00\x01",
+            service_data=b"\x40",
+            contract_version=3,
         )
         self.store.manage_sensor(sensor_id, "Fern", "Office", "monstera", 40, 1500, 1200)
         stored = self.library.add(build_image())
@@ -277,12 +277,12 @@ class HttpTests(unittest.TestCase):
         sensor_id = "sensor-aabbccddeeff"
         self.store.record_beacon(
             sensor_id=sensor_id,
-            packet_id=1,
             received_at="2026-09-25T10:00:00Z",
             observed_identifier="test",
             source_adapter="test",
             rssi=-40,
-            service_data=b"\x40\x00\x01",
+            service_data=b"\x40",
+            contract_version=3,
         )
         self.store.manage_sensor(sensor_id, "Fern", "Office", "monstera", 40, 1500, 1200)
         return sensor_id
@@ -419,12 +419,12 @@ class StoreStateTests(unittest.TestCase):
         self.sensor_id = "sensor-aabbccddeeff"
         self.store.record_beacon(
             sensor_id=self.sensor_id,
-            packet_id=1,
             received_at="2026-09-25T10:00:00Z",
             observed_identifier="test",
             source_adapter="test",
             rssi=-40,
-            service_data=b"\x40\x00\x01",
+            service_data=b"\x40",
+            contract_version=3,
         )
         self.store.manage_sensor(self.sensor_id, "Fern", "Office", "monstera", 40, 1500, 1200)
         self.image = self.library.add(build_image(version="0.12.0"))

@@ -29,14 +29,16 @@
 #include "force_report.h"
 #include "lwip/ip4_addr.h"
 #include "power_source.h"
+#include "battery_monitor.h"
 #include "sht45_monitor.h"
+#include "soil_probe.h"
 #include "web_ui_config.h"
 
 #define LOG_RING_SIZE (16 * 1024)
 #define LOG_LINE_SIZE 512
 #define RESTART_REQUEST_SIZE 64
 #define RESTART_DELAY_US (750 * 1000)
-#define STATUS_JSON_MAX 3072
+#define STATUS_JSON_MAX 4096
 
 static const char *TAG = "web_ui";
 static char log_ring[LOG_RING_SIZE];
@@ -339,6 +341,81 @@ static esp_err_t status_handler(httpd_req_t *request)
         strlcpy(air_sample_age, "null", sizeof(air_sample_age));
     }
 
+    /* All seven probe values are shown here, including pH and N/P/K, which
+     * the BTHome report does not carry. */
+    opp_soil_probe_sample_record_t soil_sample;
+    int64_t soil_sample_age_ms;
+    const bool soil_sample_valid = opp_soil_probe_monitor_get_latest(
+        &soil_sample, &soil_sample_age_ms);
+    const esp_err_t soil_error = opp_soil_probe_monitor_last_error();
+    char soil_json[512];
+    if (soil_sample_valid) {
+        const opp_soil_probe_reading_t *soil = &soil_sample.values;
+        snprintf(soil_json, sizeof(soil_json),
+                 "\"soil_probe_enabled\":%s,\"soil_probe_powered\":%s,"
+                 "\"soil_available\":true,"
+                 "\"soil_moisture_percent\":%.1f,\"soil_temperature_c\":%.1f,"
+                 "\"soil_conductivity_us_cm\":%u,\"soil_ph\":%.1f,"
+                 "\"soil_nitrogen_mg_kg\":%u,\"soil_phosphorus_mg_kg\":%u,"
+                 "\"soil_potassium_mg_kg\":%u,\"soil_sample_age_ms\":%lld,"
+                 "\"soil_sample_sequence\":%llu,\"soil_probe_error\":\"\"",
+                 opp_soil_probe_monitor_is_enabled() ? "true" : "false",
+                 opp_soil_probe_is_powered() ? "true" : "false",
+                 soil->moisture_tenths_percent / 10.0,
+                 soil->temperature_tenths_celsius / 10.0,
+                 soil->conductivity_us_cm, soil->ph_tenths / 10.0,
+                 soil->nitrogen_mg_kg, soil->phosphorus_mg_kg, soil->potassium_mg_kg,
+                 (long long)soil_sample_age_ms,
+                 (unsigned long long)soil_sample.sequence);
+    } else {
+        snprintf(soil_json, sizeof(soil_json),
+                 "\"soil_probe_enabled\":%s,\"soil_probe_powered\":%s,"
+                 "\"soil_available\":false,"
+                 "\"soil_moisture_percent\":null,\"soil_temperature_c\":null,"
+                 "\"soil_conductivity_us_cm\":null,\"soil_ph\":null,"
+                 "\"soil_nitrogen_mg_kg\":null,\"soil_phosphorus_mg_kg\":null,"
+                 "\"soil_potassium_mg_kg\":null,\"soil_sample_age_ms\":null,"
+                 "\"soil_sample_sequence\":null,\"soil_probe_error\":\"%s\"",
+                 opp_soil_probe_monitor_is_running() && opp_soil_probe_monitor_is_enabled()
+                     ? "true" : "false",
+                 opp_soil_probe_is_powered() ? "true" : "false",
+                 soil_error == ESP_OK ? "" : esp_err_to_name(soil_error));
+    }
+
+    opp_battery_status_t battery;
+    int64_t battery_age_ms;
+    const bool battery_valid = opp_battery_monitor_get(&battery, &battery_age_ms);
+    const esp_err_t battery_error = opp_battery_monitor_last_error();
+    char battery_json[512];
+    if (battery_valid) {
+        char hours_to_empty[16] = "null";
+        char hours_to_full[16] = "null";
+        if (battery.hours_to_empty_valid) {
+            snprintf(hours_to_empty, sizeof(hours_to_empty), "%.1f", battery.hours_to_empty);
+        }
+        if (battery.hours_to_full_valid) {
+            snprintf(hours_to_full, sizeof(hours_to_full), "%.1f", battery.hours_to_full);
+        }
+        snprintf(battery_json, sizeof(battery_json),
+                 "\"battery_available\":true,\"battery_voltage_v\":%.3f,"
+                 "\"battery_current_ma\":%.1f,\"battery_average_current_ma\":%.1f,"
+                 "\"battery_power_mw\":%.0f,\"battery_state\":\"%s\","
+                 "\"battery_percent\":%.1f,\"battery_voltage_percent\":%.1f,"
+                 "\"battery_calibrated\":%s,\"battery_hours_to_empty\":%s,"
+                 "\"battery_hours_to_full\":%s,\"battery_overflow\":%s,"
+                 "\"battery_sample_age_ms\":%lld,\"battery_error\":\"\"",
+                 battery.millivolts / 1000.0, battery.current_ma,
+                 battery.average_current_ma, battery.power_mw,
+                 opp_battery_flow_name(battery.flow), battery.percent,
+                 battery.voltage_percent, battery.calibrated ? "true" : "false",
+                 hours_to_empty, hours_to_full, battery.overflow ? "true" : "false",
+                 (long long)battery_age_ms);
+    } else {
+        snprintf(battery_json, sizeof(battery_json),
+                 "\"battery_available\":false,\"battery_error\":\"%s\"",
+                 battery_error == ESP_OK ? "" : esp_err_to_name(battery_error));
+    }
+
     opp_clock_status_t clock_status;
     opp_clock_get_status(&clock_status);
     /* Shown only while no hub owns this sensor. The code proves physical
@@ -424,12 +501,12 @@ static esp_err_t status_handler(httpd_req_t *request)
     if (!json_escape(device_config.room, escaped_room, sizeof(escaped_room))) {
         strlcpy(escaped_room, "", sizeof(escaped_room));
     }
-    char force_report_packet_id[5];
-    if (force_report.packet_id_valid) {
-        snprintf(force_report_packet_id, sizeof(force_report_packet_id), "%u",
-                 force_report.packet_id);
+    char force_report_report_id[12];
+    if (force_report.report_id_valid) {
+        snprintf(force_report_report_id, sizeof(force_report_report_id), "%lu",
+                 (unsigned long)force_report.report_id);
     } else {
-        strlcpy(force_report_packet_id, "null", sizeof(force_report_packet_id));
+        strlcpy(force_report_report_id, "null", sizeof(force_report_report_id));
     }
     char *status = malloc(STATUS_JSON_MAX);
     if (status == NULL) {
@@ -449,12 +526,13 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"air_humidity_percent\":%s,\"air_sample_age_ms\":%s,"
              "\"air_sample_sequence\":%s,\"air_sample_monotonic_ms\":%s,"
              "\"air_sample_unix_ms\":%s,\"air_sample_time_utc\":%s,"
+             "%s,%s,"
              "\"onboarding_state\":\"%s\",\"pairing_code\":\"%s\","
              "\"wifi_failure\":\"%s\","
              "\"device_config_revision\":%lu,\"plant_name\":\"%s\",\"room\":\"%s\","
              "\"reporting_interval_seconds\":%lu,"
              "\"force_report_state\":\"%s\",\"force_report_error\":\"%s\","
-             "\"force_report_request_id\":%lu,\"force_report_packet_id\":%s,"
+             "\"force_report_request_id\":%lu,\"force_report_report_id\":%s,"
              "\"force_report_requested_at_ms\":%lld,"
              "\"force_report_completed_at_ms\":%lld,"
              "\"force_report_acknowledged_at_ms\":%lld}",
@@ -471,6 +549,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              air_sample_valid ? "true" : "false", air_temperature,
              air_humidity, air_sample_age, sample_sequence, sample_monotonic,
              sample_unix_time, sample_time_utc,
+             soil_json, battery_json,
              opp_device_identity_is_onboarded() ? "onboarded" : "onboarding",
              pairing_code,
              station_failure,
@@ -480,7 +559,7 @@ static esp_err_t status_handler(httpd_req_t *request)
              opp_force_report_state_name(force_report.state),
              opp_force_report_failure_name(force_report.failure),
              (unsigned long)force_report.request_id,
-             force_report_packet_id,
+             force_report_report_id,
              (long long)force_report.requested_at_ms,
              (long long)force_report.report_completed_at_ms,
              (long long)force_report.acknowledged_at_ms);
@@ -562,6 +641,7 @@ static esp_err_t config_put_handler(httpd_req_t *request)
                                    validation_error);
     }
     opp_sht45_monitor_set_enabled(web_ui_config_sht45_enabled());
+    opp_soil_probe_monitor_set_enabled(web_ui_config_soil_probe_enabled());
     ESP_LOGI(TAG, "UI configuration updated");
     return config_get_handler(request);
 }
@@ -573,8 +653,72 @@ static esp_err_t config_reset_handler(httpd_req_t *request)
                                    "Could not reset configuration");
     }
     opp_sht45_monitor_set_enabled(web_ui_config_sht45_enabled());
+    opp_soil_probe_monitor_set_enabled(web_ui_config_soil_probe_enabled());
     ESP_LOGI(TAG, "UI configuration reset to defaults");
     return config_get_handler(request);
+}
+
+static bool query_number(const char *query, const char *key, unsigned long maximum,
+                         unsigned long *value)
+{
+    char text[12];
+    if (httpd_query_key_value(query, key, text, sizeof(text)) != ESP_OK) {
+        return true; /* absent: keep the default */
+    }
+    char *end;
+    const unsigned long parsed = strtoul(text, &end, 0);
+    if (end == text || *end != '\0' || parsed > maximum) {
+        return false;
+    }
+    *value = parsed;
+    return true;
+}
+
+/* Debug: GET /api/v1/soil/registers?function=3&start=0x0000&count=8
+ *
+ * Reads raw registers from the soil probe so a register map can be checked
+ * against the probe actually connected, rather than against its manual. */
+static esp_err_t soil_registers_handler(httpd_req_t *request)
+{
+    unsigned long function = 3;
+    unsigned long start = 0;
+    unsigned long count = 8;
+    char query[64] = "";
+    httpd_req_get_url_query_str(request, query, sizeof(query));
+    if (!query_number(query, "function", 4, &function) ||
+        (function != 3 && function != 4) ||
+        !query_number(query, "start", 0xffff, &start) ||
+        !query_number(query, "count", OPP_MODBUS_MAX_READ_REGISTERS, &count) || count == 0) {
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "function must be 3 or 4, start 0-0xffff, count 1-32");
+    }
+
+    uint16_t values[OPP_MODBUS_MAX_READ_REGISTERS];
+    esp_err_t error = opp_soil_probe_read_registers((uint8_t)function, (uint16_t)start,
+                                                    (uint16_t)count, values);
+    if (error != ESP_OK) {
+        const char *status = error == ESP_ERR_NOT_SUPPORTED ? "422 Unprocessable Entity"
+                             : error == ESP_ERR_TIMEOUT   ? "504 Gateway Timeout"
+                                                          : "502 Bad Gateway";
+        httpd_resp_set_status(request, status);
+        httpd_resp_set_type(request, "application/json");
+        char body[96];
+        const int length = snprintf(body, sizeof(body), "{\"error\":\"%s\"}",
+                                    esp_err_to_name(error));
+        return httpd_resp_send(request, body, length);
+    }
+
+    char body[48 + 8 * OPP_MODBUS_MAX_READ_REGISTERS];
+    int length = snprintf(body, sizeof(body), "{\"function\":%lu,\"start\":%lu,\"values\":[",
+                          function, start);
+    for (unsigned long index = 0; index < count; ++index) {
+        length += snprintf(body + length, sizeof(body) - (size_t)length, "%s%u",
+                           index == 0 ? "" : ",", values[index]);
+    }
+    length += snprintf(body + length, sizeof(body) - (size_t)length, "]}");
+    httpd_resp_set_type(request, "application/json");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_send(request, body, length);
 }
 
 static esp_err_t force_report_handler(httpd_req_t *request)
@@ -607,7 +751,7 @@ static esp_err_t start_http_server(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 14;
     config.stack_size = 6144;
     ESP_RETURN_ON_ERROR(httpd_start(&http_server, &config), TAG,
                         "Failed to start HTTP server");
@@ -624,6 +768,7 @@ static esp_err_t start_http_server(void)
         {.uri = "/api/v1/config/ui/reset", .method = HTTP_POST, .handler = config_reset_handler},
         {.uri = "/api/v1/reports/force", .method = HTTP_POST, .handler = force_report_handler},
         {.uri = "/api/v1/restart", .method = HTTP_POST, .handler = restart_handler},
+        {.uri = "/api/v1/soil/registers", .method = HTTP_GET, .handler = soil_registers_handler},
     };
     for (size_t index = 0; index < sizeof(routes) / sizeof(routes[0]); index++) {
         esp_err_t error = httpd_register_uri_handler(http_server, &routes[index]);

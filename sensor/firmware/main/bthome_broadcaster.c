@@ -6,6 +6,7 @@
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "bthome_payload.h"
 #include "device_config_protocol.h"
 #include "device_config_store.h"
 #include "device_identity.h"
@@ -23,7 +24,12 @@
 #include "nimble/nimble_port_freertos.h"
 
 #define BTHOME_UUID 0xfcd2
-#define MAX_SERVICE_DATA_SIZE 22
+/* UUID plus the largest contract-v3 packet: with Flags and the service-data
+ * header this is exactly the 31-byte legacy advertisement. */
+#define MAX_SERVICE_DATA_SIZE (2 + OPP_BTHOME_SERVICE_DATA_MAX_SIZE)
+/* How long each of a report's two packets is on air before the other one
+ * replaces it: two advertising events each at the usual 250 ms interval. */
+#define PACKET_ALTERNATION_MS 500
 #define MAX_LOCAL_NAME_SIZE 20
 #define SHUTDOWN_GRACE_MS 2000
 /* A person has to read a code off a label and type it. The bounded advertising
@@ -42,8 +48,9 @@ static const ble_uuid128_t device_config_characteristic_uuid = BLE_UUID128_INIT(
 static const char *TAG = "bthome_adv";
 static SemaphoreHandle_t advertisement_done;
 static uint8_t own_address_type;
-static uint8_t service_data_buffer[MAX_SERVICE_DATA_SIZE];
-static size_t service_data_buffer_size;
+static uint8_t service_data_buffer[2][MAX_SERVICE_DATA_SIZE];
+static size_t service_data_buffer_size[2];
+static size_t packet_count;
 static char local_name_buffer[MAX_LOCAL_NAME_SIZE];
 static uint32_t advertisement_window_ms;
 static uint32_t advertisement_interval_ms;
@@ -298,6 +305,48 @@ static int gap_event(struct ble_gap_event *event, void *context)
     return 0;
 }
 
+static int set_advertised_packet(size_t index)
+{
+    struct ble_hs_adv_fields fields = {0};
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.svc_data_uuid16 = service_data_buffer[index];
+    fields.svc_data_uuid16_len = service_data_buffer_size[index];
+    return ble_gap_adv_set_fields(&fields);
+}
+
+/* Wait for the advertising window to end, swapping between a report's two
+ * packets meanwhile. Legacy advertising takes new data while it runs, so both
+ * reach a scanner within one window without restarting anything. */
+static bool wait_for_window(uint32_t window_ms)
+{
+    if (packet_count < 2) {
+        return xSemaphoreTake(advertisement_done,
+                              pdMS_TO_TICKS(window_ms + SHUTDOWN_GRACE_MS)) == pdTRUE;
+    }
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(window_ms + SHUTDOWN_GRACE_MS);
+    size_t shown = 0;
+    while (true) {
+        const int32_t remaining = (int32_t)(deadline - xTaskGetTickCount());
+        if (remaining <= 0) {
+            return false;
+        }
+        TickType_t wait = pdMS_TO_TICKS(PACKET_ALTERNATION_MS);
+        if ((int32_t)wait > remaining) {
+            wait = (TickType_t)remaining;
+        }
+        if (xSemaphoreTake(advertisement_done, wait) == pdTRUE) {
+            return true;
+        }
+        if (ble_gap_adv_active()) {
+            shown = 1 - shown;
+            const int error = set_advertised_packet(shown);
+            if (error != 0) {
+                ESP_LOGW(TAG, "Could not switch advertised packet; rc=%d", error);
+            }
+        }
+    }
+}
+
 static void on_reset(int reason)
 {
     ESP_LOGE(TAG, "NimBLE host reset; reason=%d", reason);
@@ -312,12 +361,8 @@ static void on_sync(void)
         start_result = ble_hs_id_infer_auto(0, &own_address_type);
     }
 
-    struct ble_hs_adv_fields fields = {0};
     if (start_result == 0) {
-        fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-        fields.svc_data_uuid16 = service_data_buffer;
-        fields.svc_data_uuid16_len = service_data_buffer_size;
-        start_result = ble_gap_adv_set_fields(&fields);
+        start_result = set_advertised_packet(0);
     }
 
     struct ble_hs_adv_fields response = {0};
@@ -357,21 +402,30 @@ static void host_task(void *context)
 esp_err_t opp_bthome_broadcast(const char *local_name,
                                const uint8_t *service_data,
                                size_t service_data_size,
+                               const uint8_t *second_service_data,
+                               size_t second_service_data_size,
                                uint32_t window_ms,
                                uint32_t interval_ms)
 {
     if (local_name == NULL || service_data == NULL || service_data_size == 0 ||
         service_data_size + 2 > MAX_SERVICE_DATA_SIZE ||
+        (second_service_data == NULL) != (second_service_data_size == 0) ||
+        second_service_data_size + 2 > MAX_SERVICE_DATA_SIZE ||
         strlen(local_name) >= MAX_LOCAL_NAME_SIZE || window_ms == 0 || interval_ms == 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
     local_name_buffer[0] = '\0';
     strlcpy(local_name_buffer, local_name, sizeof(local_name_buffer));
-    service_data_buffer[0] = (uint8_t)BTHOME_UUID;
-    service_data_buffer[1] = (uint8_t)(BTHOME_UUID >> 8U);
-    memcpy(service_data_buffer + 2, service_data, service_data_size);
-    service_data_buffer_size = service_data_size + 2;
+    const uint8_t *packets[2] = {service_data, second_service_data};
+    const size_t sizes[2] = {service_data_size, second_service_data_size};
+    packet_count = second_service_data == NULL ? 1 : 2;
+    for (size_t index = 0; index < packet_count; ++index) {
+        service_data_buffer[index][0] = (uint8_t)BTHOME_UUID;
+        service_data_buffer[index][1] = (uint8_t)(BTHOME_UUID >> 8U);
+        memcpy(service_data_buffer[index] + 2, packets[index], sizes[index]);
+        service_data_buffer_size[index] = sizes[index] + 2;
+    }
     advertisement_window_ms = window_ms;
     advertisement_interval_ms = interval_ms;
     start_result = 0;
@@ -418,9 +472,7 @@ esp_err_t opp_bthome_broadcast(const char *local_name,
         ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
         ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
         nimble_port_freertos_init(host_task);
-        bool window_expired = xSemaphoreTake(
-                                  advertisement_done,
-                                  pdMS_TO_TICKS(window_ms + SHUTDOWN_GRACE_MS)) != pdTRUE;
+        bool window_expired = !wait_for_window(window_ms);
         if (window_expired && connection_handle != BLE_HS_CONN_HANDLE_NONE) {
             /* Someone is connected, so the window has done its job: it found a
              * hub. Wait for them to finish rather than hanging up on them. */

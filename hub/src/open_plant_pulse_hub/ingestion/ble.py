@@ -11,7 +11,12 @@ from typing import Any, Callable
 from open_plant_pulse_hub.application.ingestion import AdvertisementIngestionService
 
 from .advertisement import Advertisement
-from .bthome import BTHOME_SERVICE_UUID, has_force_report_event
+from .bthome import (
+    BTHOME_SERVICE_UUID,
+    decode_service_data,
+    is_beacon,
+    sensor_id_from_local_name,
+)
 from .device_configuration import DeviceConfigurationSynchronizer
 
 LOGGER = logging.getLogger(__name__)
@@ -111,7 +116,7 @@ class BleakSubscriber:
         self._last_configuration_time: dict[str, float] = {}
         self._last_attempted_revision: dict[str, int] = {}
         self._last_status_time: dict[str, float] = {}
-        self._last_force_report_attempt: dict[str, bytes] = {}
+        self._last_force_report_attempt: dict[str, int] = {}
         self._last_attempted_update: dict[str, int] = {}
         self._last_update_time: dict[str, float] = {}
 
@@ -179,22 +184,24 @@ class BleakSubscriber:
                         self._configuration_synchronizer is not None
                         and advertisement.local_name is not None
                     ):
-                        from .bthome import sensor_id_from_local_name
-
                         sensor_id = sensor_id_from_local_name(advertisement.local_name)
-                        forced = has_force_report_event(advertisement.service_data)
-                        if not forced:
-                            self._last_force_report_attempt.pop(sensor_id, None)
-                        force_report_due = (
-                            forced
-                            and self._last_force_report_attempt.get(sensor_id)
-                            != advertisement.service_data
+                        # A forced report is acknowledged once both of its
+                        # packets are stored, which is whichever arrives second,
+                        # and only once: its two packets go on being advertised
+                        # alternately, and each one must not connect again.
+                        forced_report_id = self._forced_report_id(
+                            sensor_id, advertisement.service_data
                         )
-                        # Rate limit by time, not by payload bytes. Every
-                        # advertisement carries a new packet ID, so comparing
-                        # bytes never matches and every single advertisement
-                        # triggered an attempt. An unclaimed sensor announces
-                        # itself every three seconds, and each attempt asks the
+                        force_report_due = (
+                            forced_report_id is not None
+                            and self._last_force_report_attempt.get(sensor_id)
+                            != forced_report_id
+                        )
+                        # Rate limit by time, not by payload bytes. Payloads
+                        # change from one report to the next, so comparing bytes
+                        # let nearly every report trigger an attempt. An
+                        # unclaimed sensor announces itself every three
+                        # seconds, and each attempt asks the
                         # operating system to pair, which made a popup storm out
                         # of a retry that was invisible at a slower cadence.
                         # A sensor that has been forgotten is told so the next
@@ -286,9 +293,7 @@ class BleakSubscriber:
                             continue
                         if force_report_due or configuration_due:
                             if force_report_due:
-                                self._last_force_report_attempt[sensor_id] = (
-                                    advertisement.service_data
-                                )
+                                self._last_force_report_attempt[sensor_id] = forced_report_id
                             if configuration_due:
                                 self._last_attempted_revision[sensor_id] = revision
                                 self._last_configuration_time[sensor_id] = now
@@ -296,12 +301,29 @@ class BleakSubscriber:
                                 sensor_id, advertisement.observed_identifier
                                 if advertisement.connection_target is None
                                 else advertisement.connection_target,
-                                advertisement.service_data[2] if force_report_due else None,
+                                forced_report_id if force_report_due else None,
                             )
             except Exception:
                 LOGGER.exception("failed to persist BTHome advertisement")
             finally:
                 queue.task_done()
+
+    def _forced_report_id(self, sensor_id: str, service_data: bytes) -> int | None:
+        """Return the report ID when this packet completes a stored forced report."""
+        if is_beacon(service_data):
+            return None
+        try:
+            report_id = decode_service_data(service_data, sensor_id).report_id
+        except ValueError:
+            return None
+        stored_forced_report = getattr(self._ingestion, "stored_forced_report", None)
+        if (
+            report_id is None
+            or stored_forced_report is None
+            or not stored_forced_report(sensor_id, report_id)
+        ):
+            return None
+        return report_id
 
     async def _sleep_until_stopped(self, delay: float) -> None:
         elapsed = 0.0

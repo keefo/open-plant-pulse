@@ -1,5 +1,10 @@
 # XIAO ESP32-C3 and SHT45 first sensor node
 
+> The assembled node has since moved the SHT45 to D1/GPIO3 (SDA) and D3/GPIO5
+> (SCL), shared with the INA219, because the RS485 board uses D4/D5. The D4/D5
+> pins below describe the original bench bring-up. See
+> [the hardware pin map](../sensor/hardware/README.md#pin-map).
+
 This guide builds the first physical Open Plant Pulse data path:
 
 ```text

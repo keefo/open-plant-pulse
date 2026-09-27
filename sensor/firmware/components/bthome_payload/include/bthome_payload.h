@@ -4,38 +4,55 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "sensor_protocol.h"
-
-#define OPP_BTHOME_SERVICE_DATA_SIZE 10
-#define OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE 20
+/* Contract v3 (protocol/README.md). The largest packet, the main one with
+ * every object, is 24 bytes, which fills a 31-byte legacy advertisement once
+ * the Flags element and service-data header are added. */
+#define OPP_BTHOME_SERVICE_DATA_MAX_SIZE 24
 #define OPP_BTHOME_LOCAL_NAME_SIZE 20
+#define OPP_BTHOME_SOIL_EXTRAS_LAYOUT_VERSION 1
 
+/* One report: everything measured together, under one report ID. */
 typedef struct {
-    uint8_t packet_id;
-    bool button_event;
+    uint32_t report_id;
+    bool timestamp_valid;
+    uint32_t timestamp_unix_s;
+
     bool soil_available;
-    opp_sensor_reading_t soil;
+    int16_t soil_temperature_tenths_celsius;
+    uint16_t soil_moisture_tenths_percent;
+    uint16_t conductivity_us_cm;
+
     bool air_available;
     int16_t air_temperature_tenths_celsius;
     uint16_t air_humidity_hundredths_percent;
-} opp_bthome_sample_t;
 
-size_t opp_bthome_encode_service_data(const opp_sensor_reading_t *reading,
-                                      uint8_t output[OPP_BTHOME_SERVICE_DATA_SIZE]);
+    bool battery_available;
+    uint8_t battery_percent;
+    uint16_t battery_millivolts;
 
-/* Encode an onboarding beacon: device info and a packet ID, no measurements.
- *
- * An unclaimed sensor advertises this when it has no reading to send, so that a
- * sensor whose probe is absent or broken can still be found and adopted. Without
- * it such a device is invisible, which is the one moment it most needs to be
- * reachable. Only an unbonded sensor sends it. */
-size_t opp_bthome_encode_v2_beacon(
-    uint8_t packet_id,
-    uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE]);
+    bool soil_extras_available;
+    uint16_t ph_tenths;
+    uint16_t nitrogen_mg_kg;
+    uint16_t phosphorus_mg_kg;
+    uint16_t potassium_mg_kg;
 
-size_t opp_bthome_encode_v2_service_data(
-    const opp_bthome_sample_t *sample,
-    uint8_t output[OPP_BTHOME_V2_SERVICE_DATA_MAX_SIZE]);
+    /* A report somebody asked for from the sensor's console. */
+    bool forced;
+} opp_bthome_report_t;
+
+/* The core measurements. Returns 0 when the report has neither soil nor air,
+ * or a value out of range: such a report cannot be sent, only a beacon. */
+size_t opp_bthome_encode_main(const opp_bthome_report_t *report,
+                              uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
+
+/* Battery, pH and N/P/K, and the forced-report marker. Returns 0 when the
+ * report has none of them, in which case only the main packet is sent. */
+size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
+                                       uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
+
+/* Presence without a report: device info and nothing else. A sensor with
+ * nothing to measure still has to be findable and adoptable. */
+size_t opp_bthome_encode_beacon(uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
 
 bool opp_bthome_format_local_name(uint64_t device_id,
                                   char output[OPP_BTHOME_LOCAL_NAME_SIZE]);

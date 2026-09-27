@@ -27,8 +27,8 @@ typedef struct {
     opp_force_report_state_t state;
     opp_force_report_failure_t failure;
     uint32_t request_id;
-    bool packet_id_valid;
-    uint8_t packet_id;
+    bool report_id_valid;
+    uint32_t report_id;
     int64_t requested_at_ms;
     int64_t report_completed_at_ms;
     int64_t acknowledged_at_ms;
@@ -37,7 +37,7 @@ typedef struct {
 esp_err_t opp_force_report_init(void);
 esp_err_t opp_force_report_request(uint32_t *request_id);
 bool opp_force_report_wait(TickType_t timeout_ticks, uint32_t *request_id);
-void opp_force_report_started(uint32_t request_id, uint8_t packet_id);
+void opp_force_report_started(uint32_t request_id, uint32_t report_id);
 void opp_force_report_failed(uint32_t request_id, opp_force_report_failure_t failure);
 void opp_force_report_finished(uint32_t request_id, esp_err_t broadcast_result);
 void opp_force_report_get_status(opp_force_report_status_t *status);

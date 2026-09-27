@@ -5,7 +5,6 @@ const connectionLabel = document.getElementById('connection-label');
 const logConsole = document.getElementById('log-console');
 const configForm = document.getElementById('ui-config-form');
 const configState = document.getElementById('config-state');
-const sensorConfigState = document.getElementById('sensor-config-state');
 const sht45Enabled = document.getElementById('sht45-enabled');
 const soilProbeEnabled = document.getElementById('soil-probe-enabled');
 const restartButton = document.getElementById('restart-device');
@@ -92,9 +91,7 @@ function applyUiConfig(config) {
   sht45Enabled.disabled = false;
   soilProbeEnabled.checked = config.sensors.soil_probe.enabled;
   soilProbeEnabled.disabled = false;
-  const soilProbeState = document.getElementById('soil-probe-state');
-  soilProbeState.className = `state ${soilProbeEnabled.checked ? 'unavailable' : 'disabled'}`;
-  soilProbeState.textContent = soilProbeEnabled.checked ? 'Not implemented' : 'Disabled';
+  renderSoil(latestStatus);
   setStatusRefreshInterval(config.polling.status_refresh_interval_ms);
   if (latestStatus) {
     renderClock(latestStatus);
@@ -103,10 +100,8 @@ function applyUiConfig(config) {
 }
 
 function showConfigState(message, state = '') {
-  [configState, sensorConfigState].forEach((element) => {
-    element.className = element === configState ? `config-state ${state}`.trim() : `empty-note ${state}`.trim();
-    element.textContent = message;
-  });
+  configState.className = `config-state ${state}`.trim();
+  configState.textContent = message;
 }
 
 function renderConfigForm() {
@@ -355,8 +350,8 @@ function renderForceReport(status) {
   const request = Number.isInteger(status?.force_report_request_id) && status.force_report_request_id > 0
     ? `Request ${status.force_report_request_id}`
     : 'Report';
-  const packet = Number.isInteger(status?.force_report_packet_id)
-    ? ` · packet ${status.force_report_packet_id}`
+  const packet = Number.isInteger(status?.force_report_report_id)
+    ? ` · report ${status.force_report_report_id}`
     : '';
   forceReportButton.disabled = state === 'queued' || state === 'reporting';
   if (state === 'queued') {
@@ -441,14 +436,22 @@ function renderSht45(status) {
   const available = enabled && Boolean(status?.sht45_available)
     && Number.isFinite(status.air_temperature_c)
     && Number.isFinite(status.air_humidity_percent);
-  const overviewSection = document.getElementById('overview-sht45');
-  const sensorState = document.getElementById('sht45-state');
+  const stateClass = `state ${!enabled ? 'disabled' : (available ? 'available' : 'unavailable')}`;
+  const stateText = !enabled ? 'Disabled' : (available ? 'Online' : 'Unavailable');
+  // The section stays put when the sensor drops out, so a missed sample
+  // reads as "Unavailable" rather than as the whole sensor vanishing.
+  const sensorState = document.getElementById('overview-sht45-state');
+  sensorState.className = stateClass;
+  sensorState.textContent = stateText;
 
-  overviewSection.hidden = !available;
-  sensorState.className = `state ${!enabled ? 'disabled' : (available ? 'available' : 'unavailable')}`;
-  sensorState.textContent = !enabled ? 'Disabled' : (available ? 'Online' : 'Unavailable');
-
-  if (!available) return;
+  if (!available) {
+    for (const id of ['overview-air-temperature', 'overview-air-humidity',
+      'overview-absolute-humidity']) {
+      document.getElementById(id).textContent = '--';
+    }
+    document.getElementById('overview-sht45-age').textContent = 'No current sample';
+    return;
+  }
 
   document.getElementById('overview-air-temperature').textContent =
     `${status.air_temperature_c.toFixed(2)} C`;
@@ -464,6 +467,103 @@ function renderSht45(status) {
     Number.isFinite(status.air_sample_age_ms)
       ? `Sampled ${Math.max(0, Math.floor(status.air_sample_age_ms / 1000))}s ago`
       : 'Latest sample';
+}
+
+function renderSoil(status) {
+  // The switch decides as soon as it moves; the device's own report catches up
+  // on the next status poll.
+  const enabled = uiConfig?.sensors?.soil_probe?.enabled ?? Boolean(status?.soil_probe_enabled);
+  const available = enabled && Boolean(status?.soil_available);
+  const state = document.getElementById('overview-soil-state');
+  state.className = `state ${!enabled ? 'disabled' : (available ? 'available' : 'unavailable')}`;
+  state.textContent = !enabled ? 'Disabled' : (available ? 'Online' : 'Unavailable');
+  const ids = ['overview-soil-moisture', 'overview-soil-temperature',
+    'overview-soil-conductivity', 'overview-soil-ph', 'overview-soil-nitrogen',
+    'overview-soil-phosphorus', 'overview-soil-potassium'];
+  if (!available) {
+    for (const id of ids) document.getElementById(id).textContent = '--';
+    document.getElementById('overview-soil-age').textContent =
+      !enabled ? (status?.soil_probe_powered === false ? 'Probe powered off' : 'Sampling switched off')
+        : (status?.soil_probe_error ? `Last read failed: ${status.soil_probe_error}` : 'No current sample');
+    return;
+  }
+
+  const values = [
+    ['overview-soil-moisture', `${status.soil_moisture_percent.toFixed(1)}%`],
+    ['overview-soil-temperature', `${status.soil_temperature_c.toFixed(1)} C`],
+    ['overview-soil-conductivity', `${status.soil_conductivity_us_cm} µS/cm`],
+    ['overview-soil-ph', status.soil_ph.toFixed(1)],
+    ['overview-soil-nitrogen', `${status.soil_nitrogen_mg_kg} mg/kg`],
+    ['overview-soil-phosphorus', `${status.soil_phosphorus_mg_kg} mg/kg`],
+    ['overview-soil-potassium', `${status.soil_potassium_mg_kg} mg/kg`],
+  ];
+  for (const [id, text] of values) document.getElementById(id).textContent = text;
+  document.getElementById('overview-soil-age').textContent =
+    Number.isFinite(status.soil_sample_age_ms)
+      ? `Sampled ${Math.max(0, Math.floor(status.soil_sample_age_ms / 1000))}s ago`
+      : 'Latest sample';
+}
+
+function formatHours(hours) {
+  if (!Number.isFinite(hours)) return '--';
+  if (hours < 1) return `${Math.round(hours * 60)} min`;
+  if (hours < 48) return `${hours.toFixed(1)} h`;
+  return `${(hours / 24).toFixed(1)} days`;
+}
+
+function renderBattery(status) {
+  const available = Boolean(status?.battery_available);
+  const stateText = available
+    ? status.battery_state.charAt(0).toUpperCase() + status.battery_state.slice(1)
+    : 'Unavailable';
+  const state = document.getElementById('overview-battery-state');
+  state.className = `state ${available ? 'available' : 'unavailable'}`;
+  state.textContent = stateText;
+  const text = (id, value) => { document.getElementById(id).textContent = value; };
+  if (!available) {
+    for (const id of ['overview-battery-percent', 'overview-battery-voltage',
+      'overview-battery-current', 'overview-battery-power', 'overview-battery-time']) {
+      text(id, '--');
+    }
+    for (const id of ['overview-battery-percent-note', 'overview-battery-voltage-note',
+      'overview-battery-current-note', 'overview-battery-time-note']) {
+      text(id, '');
+    }
+    text('overview-battery-time-label', 'Time left');
+    text('overview-battery-age', status?.battery_error
+      ? `Last read failed: ${status.battery_error}` : 'No current sample');
+    return;
+  }
+
+  text('overview-battery-percent', `${status.battery_percent.toFixed(0)}%`);
+  // Until a full charge has pinned it, the level began as a voltage guess.
+  text('overview-battery-percent-note', status.battery_calibrated
+    ? 'Counted since last full charge'
+    : 'Estimate; exact after a full charge');
+  text('overview-battery-voltage', `${status.battery_voltage_v.toFixed(3)} V`);
+  text('overview-battery-voltage-note',
+    `Voltage alone suggests ${status.battery_voltage_percent.toFixed(0)}%`);
+  const current = status.battery_current_ma;
+  text('overview-battery-current', `${current > 0 ? '+' : ''}${current.toFixed(1)} mA`);
+  text('overview-battery-current-note', status.battery_overflow
+    ? 'Over the shunt range'
+    : `5 min average ${status.battery_average_current_ma.toFixed(1)} mA`);
+  text('overview-battery-power', `${Math.abs(status.battery_power_mw).toFixed(0)} mW`);
+  if (Number.isFinite(status.battery_hours_to_empty)) {
+    text('overview-battery-time-label', 'Until empty');
+    text('overview-battery-time', formatHours(status.battery_hours_to_empty));
+    text('overview-battery-time-note', 'At the last 5 minutes\' draw');
+  } else if (Number.isFinite(status.battery_hours_to_full)) {
+    text('overview-battery-time-label', 'Until full');
+    text('overview-battery-time', formatHours(status.battery_hours_to_full));
+    text('overview-battery-time-note', 'Optimistic near the end');
+  } else {
+    text('overview-battery-time-label', 'Time left');
+    text('overview-battery-time', '--');
+    text('overview-battery-time-note', 'Neither charging nor discharging');
+  }
+  text('overview-battery-age',
+    `Sampled ${Math.max(0, Math.floor(status.battery_sample_age_ms / 1000))}s ago`);
 }
 
 function renderDeviceConfiguration(status) {
@@ -618,6 +718,8 @@ async function refreshStatus() {
     renderClock(status);
     renderDeviceConfiguration(status);
     renderSht45(status);
+    renderSoil(status);
+    renderBattery(status);
     renderForceReport(status);
     document.getElementById('last-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
   } catch (error) {
@@ -628,6 +730,8 @@ async function refreshStatus() {
     document.getElementById('power-detail').textContent = 'Device unreachable';
     document.getElementById('last-updated').textContent = 'Update failed';
     renderSht45(null);
+    renderSoil(null);
+    renderBattery(null);
   }
 }
 

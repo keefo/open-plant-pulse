@@ -1,5 +1,5 @@
 from collections import deque
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -10,7 +10,7 @@ from statistics import median
 from threading import Condition
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
-from open_plant_pulse_hub.domain import SensorReading
+from open_plant_pulse_hub.domain import ReportSupplement, SensorReading
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
 from open_plant_pulse_hub.domain.plant_profiles import load_plant_profiles
 
@@ -18,6 +18,28 @@ from .migrations import migrate_database
 
 
 RECEIVE_DIAGNOSTIC_LIMIT = 1000
+# Everything a stored reading is rebuilt from, in the order _deserialize_row
+# expects.
+READING_COLUMNS = """
+    sensor_id, report_id, observed_at, soil_temperature_c,
+    moisture_percent, conductivity_us_cm, air_temperature_c,
+    air_humidity_percent, soil_ph, nitrogen_mg_kg,
+    phosphorus_mg_kg, potassium_mg_kg, received_at,
+    soil_source_status, air_source_status, contract_version,
+    battery_percent, battery_voltage_v
+"""
+# What a main packet says about its report. The same report ID with the same
+# values is the sensor repeating itself; with different values it is a conflict.
+MAIN_CONTENT_COLUMNS = """
+    observed_at, soil_temperature_c, moisture_percent, conductivity_us_cm,
+    air_temperature_c, air_humidity_percent, soil_source_status, air_source_status
+"""
+# The same for a supplementary packet. The first six are also the reading's
+# columns, in this order.
+SUPPLEMENT_CONTENT_COLUMNS = """
+    battery_percent, battery_voltage_v, soil_ph, nitrogen_mg_kg,
+    phosphorus_mg_kg, potassium_mg_kg, force_report
+"""
 RAW_REPORT_LOG_LIMIT = 50
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 MIN_REPORTING_INTERVAL_MINUTES = 5
@@ -112,7 +134,8 @@ class ReadingStore:
         observed_datetime = self._observation_datetime(reading.observed_at, received_datetime)
         with self._condition:
             self._ensure_sensor(
-                reading,
+                reading.sensor_id,
+                reading.contract_version,
                 received_at,
                 transport="direct",
                 identity_kind="legacy",
@@ -136,173 +159,244 @@ class ReadingStore:
         source_adapter: str,
         rssi: Optional[int],
         service_data: bytes,
-    ) -> bool:
-        """Persist one decoded BLE advertisement and reading atomically."""
+    ) -> str:
+        """Persist one decoded main packet and, for a new report, its reading.
+
+        The report key is the sensor and its report ID. A report already stored
+        with the same measurements is the sensor advertising it again and stores
+        nothing; one stored with different measurements is a conflict, which is
+        logged and never overwrites what is there. A supplement that arrived
+        first is joined onto the reading as it is stored.
+        """
         received_datetime = self._observation_datetime(received_at, datetime.now(timezone.utc))
-        payload_sha256 = hashlib.sha256(service_data).hexdigest()
         with self._condition:
             with self._database:
                 self._ensure_sensor(
-                    reading,
+                    reading.sensor_id,
+                    reading.contract_version,
                     received_at,
                     transport="bthome",
                     identity_kind="device-local-name",
                     rssi=rssi,
                     commit=False,
                 )
-                previous = self._database.execute(
-                    """
-                    SELECT packet_id
-                    FROM advertisements
-                    WHERE sensor_id = ? AND decode_status = 'accepted'
-                    ORDER BY advertisement_id DESC
-                    LIMIT 1
+                stored = self._database.execute(
+                    f"""
+                    SELECT {MAIN_CONTENT_COLUMNS}
+                    FROM sensor_readings
+                    WHERE sensor_id = ? AND report_id = ?
                     """,
-                    (reading.sensor_id,),
+                    (reading.sensor_id, reading.report_id),
                 ).fetchone()
-                captured = self._database.execute(
-                    """
-                    SELECT 1
-                    FROM advertisements
-                    WHERE sensor_id = ? AND packet_id = ? AND received_at = ?
-                      AND payload_sha256 = ?
-                    LIMIT 1
-                    """,
-                    (
-                        reading.sensor_id,
-                        reading.sequence,
-                        received_at,
-                        payload_sha256,
-                    ),
-                ).fetchone()
-                duplicate = captured is not None or (
-                    previous is not None and previous[0] == reading.sequence
+                status = self._report_status(stored, self._main_content(reading))
+                advertisement_id = self._log_advertisement(
+                    reading.sensor_id,
+                    reading.report_id,
+                    "main",
+                    status,
+                    received_at,
+                    observed_identifier,
+                    source_adapter,
+                    rssi,
+                    reading.contract_version,
+                    service_data,
                 )
-                cursor = self._database.execute(
-                    """
-                    INSERT INTO advertisements (
-                        sensor_id, packet_id, received_at, transport, source_adapter,
-                        observed_identifier, rssi, contract_version, payload_sha256,
-                        decode_status, service_data
-                    ) VALUES (?, ?, ?, 'bthome', ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        reading.sensor_id,
-                        reading.sequence,
-                        received_at,
-                        source_adapter[:64],
-                        observed_identifier[:240],
-                        rssi,
-                        reading.contract_version,
-                        payload_sha256,
-                        "duplicate" if duplicate else "accepted",
-                        service_data,
-                    ),
-                )
-                advertisement_id = int(cursor.lastrowid)
-                stored = False
-                if not duplicate:
-                    reading_cursor = self._insert_reading(
-                        reading,
-                        received_at,
-                        advertisement_id,
-                    )
-                    stored = reading_cursor.rowcount > 0
-                    if not stored:
-                        self._database.execute(
-                            """
-                            UPDATE advertisements
-                            SET decode_status = 'duplicate'
-                            WHERE advertisement_id = ?
-                            """,
-                            (advertisement_id,),
-                        )
+                if status == "accepted":
+                    supplement = self._database.execute(
+                        f"""
+                        SELECT {SUPPLEMENT_CONTENT_COLUMNS}
+                        FROM report_supplements
+                        WHERE sensor_id = ? AND report_id = ?
+                        """,
+                        (reading.sensor_id, reading.report_id),
+                    ).fetchone()
+                    if supplement is not None:
+                        reading = self._with_supplement(reading, supplement)
+                    self._insert_reading(reading, received_at, advertisement_id)
                 self._trim_receive_diagnostics()
-            if duplicate or not stored:
-                return False
+            if status != "accepted":
+                return status
 
             self._history.append((reading, received_at))
             refill_below = self._sensor_refill_below.get(
                 reading.sensor_id,
                 self._default_refill_below,
             )
-            for event in self._event_detector.detect(reading, received_datetime, refill_below):
+            observed_datetime = self._observation_datetime(reading.observed_at, received_datetime)
+            for event in self._event_detector.detect(reading, observed_datetime, refill_below):
                 self._save_event(event)
             self._condition.notify_all()
-            return True
+            return status
 
-    def record_beacon(
+    def add_supplement(
         self,
-        sensor_id: str,
-        packet_id: int,
+        supplement: ReportSupplement,
         received_at: str,
         observed_identifier: str,
         source_adapter: str,
         rssi: Optional[int],
         service_data: bytes,
     ) -> str:
-        """Record that an unclaimed sensor announced itself, without a reading.
+        """Persist one decoded supplementary packet and attach it to its reading.
 
-        A beacon says a sensor exists and is in range, which is all an unadopted
-        sensor with no working probe can honestly say. It creates the inbox entry
-        so the sensor can be onboarded, and stores no measurement, so history
-        never contains rows that only look like readings.
+        The supplement is kept whether or not the main packet has arrived; a
+        reading stored later picks it up. Duplicates and conflicts are judged
+        against the stored supplement exactly as main packets are against the
+        stored reading.
         """
-        payload_sha256 = hashlib.sha256(service_data).hexdigest()
-        with self._condition, self._database:
-            beacon = SensorReading(
-                sensor_id=sensor_id,
-                sequence=packet_id,
-                observed_at=received_at,
-                soil_temperature_c=None,
-                moisture_percent=None,
-                conductivity_us_cm=None,
-                soil_source_status="unavailable",
-                air_source_status="unavailable",
-                contract_version=2,
+        content = self._supplement_content(supplement)
+        attached: Optional[Tuple[SensorReading, str]] = None
+        with self._condition:
+            with self._database:
+                self._ensure_sensor(
+                    supplement.sensor_id,
+                    supplement.contract_version,
+                    received_at,
+                    transport="bthome",
+                    identity_kind="device-local-name",
+                    rssi=rssi,
+                    commit=False,
+                )
+                stored = self._database.execute(
+                    f"""
+                    SELECT {SUPPLEMENT_CONTENT_COLUMNS}
+                    FROM report_supplements
+                    WHERE sensor_id = ? AND report_id = ?
+                    """,
+                    (supplement.sensor_id, supplement.report_id),
+                ).fetchone()
+                status = self._report_status(stored, content)
+                self._log_advertisement(
+                    supplement.sensor_id,
+                    supplement.report_id,
+                    "supplementary",
+                    status,
+                    received_at,
+                    observed_identifier,
+                    source_adapter,
+                    rssi,
+                    supplement.contract_version,
+                    service_data,
+                )
+                if status == "accepted":
+                    self._database.execute(
+                        f"""
+                        INSERT INTO report_supplements (
+                            sensor_id, report_id, received_at, {SUPPLEMENT_CONTENT_COLUMNS}
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (supplement.sensor_id, supplement.report_id, received_at, *content),
+                    )
+                    self._database.execute(
+                        """
+                        UPDATE sensor_readings
+                        SET battery_percent = ?, battery_voltage_v = ?, soil_ph = ?,
+                            nitrogen_mg_kg = ?, phosphorus_mg_kg = ?, potassium_mg_kg = ?
+                        WHERE sensor_id = ? AND report_id = ?
+                        """,
+                        (*content[:6], supplement.sensor_id, supplement.report_id),
+                    )
+                    row = self._database.execute(
+                        f"""
+                        SELECT {READING_COLUMNS}
+                        FROM sensor_readings
+                        WHERE sensor_id = ? AND report_id = ?
+                        """,
+                        (supplement.sensor_id, supplement.report_id),
+                    ).fetchone()
+                    if row is not None:
+                        item = self._deserialize_row(row)
+                        attached = (item["reading"], item["received_at"])
+                self._trim_receive_diagnostics()
+            if attached is None:
+                return status
+
+            reading, reading_received_at = attached
+            self._history = deque(
+                (
+                    (reading, cached_received_at)
+                    if cached.sensor_id == reading.sensor_id
+                    and cached.report_id == reading.report_id
+                    else (cached, cached_received_at)
+                    for cached, cached_received_at in self._history
+                ),
+                maxlen=self._history_size,
             )
+            # Nutrients travel in the supplement, so a rise in them can only be
+            # seen once it has joined its reading.
+            observed_datetime = self._observation_datetime(
+                reading.observed_at,
+                self._observation_datetime(reading_received_at, datetime.now(timezone.utc)),
+            )
+            for event in self._event_detector.amend(reading, observed_datetime):
+                self._save_event(event)
+            self._condition.notify_all()
+            return status
+
+    def stored_forced_report(self, sensor_id: str, report_id: int) -> bool:
+        """Return whether a report a person forced is stored, both of its packets.
+
+        The sensor is told its forced report arrived only once it has.
+        """
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT 1
+                FROM report_supplements
+                JOIN sensor_readings
+                  ON sensor_readings.sensor_id = report_supplements.sensor_id
+                 AND sensor_readings.report_id = report_supplements.report_id
+                WHERE report_supplements.sensor_id = ?
+                  AND report_supplements.report_id = ?
+                  AND report_supplements.force_report = 1
+                """,
+                (sensor_id, report_id),
+            ).fetchone()
+        return row is not None
+
+    def record_beacon(
+        self,
+        sensor_id: str,
+        received_at: str,
+        observed_identifier: str,
+        source_adapter: str,
+        rssi: Optional[int],
+        service_data: bytes,
+        contract_version: int,
+    ) -> str:
+        """Record that a sensor announced itself, without a reading.
+
+        A beacon says a sensor exists and is in range, which is all a sensor
+        with no report to send can honestly say. It creates the inbox entry so
+        the sensor can be onboarded, and stores no measurement, so history never
+        contains rows that only look like readings.
+        """
+        with self._condition, self._database:
             self._ensure_sensor(
-                beacon,
+                sensor_id,
+                contract_version,
                 received_at,
                 transport="bthome",
                 identity_kind="device-local-name",
                 rssi=rssi,
                 commit=False,
             )
-            # One advertising burst is seen many times, each callback carrying its
-            # own timestamp, so identity cannot include the time. A beacon repeats
-            # the previous packet ID only when it is the same burst.
-            previous = self._database.execute(
-                """
-                SELECT packet_id FROM advertisements
-                WHERE sensor_id = ? AND decode_status = 'accepted'
-                ORDER BY advertisement_id DESC LIMIT 1
-                """,
-                (sensor_id,),
-            ).fetchone()
-            duplicate = previous is not None and previous[0] == packet_id
-            self._database.execute(
-                """
-                INSERT INTO advertisements (
-                    sensor_id, packet_id, received_at, transport, source_adapter,
-                    observed_identifier, rssi, contract_version, payload_sha256,
-                    decode_status, service_data
-                ) VALUES (?, ?, ?, 'bthome', ?, ?, ?, 2, ?, ?, ?)
-                """,
-                (
-                    sensor_id,
-                    packet_id,
-                    received_at,
-                    source_adapter[:64],
-                    observed_identifier[:240],
-                    rssi,
-                    payload_sha256,
-                    "duplicate" if duplicate else "accepted",
-                    service_data,
-                ),
+            # A beacon carries nothing to tell one from the next, so each one is
+            # simply presence, recorded as heard.
+            self._log_advertisement(
+                sensor_id,
+                None,
+                "beacon",
+                "accepted",
+                received_at,
+                observed_identifier,
+                source_adapter,
+                rssi,
+                contract_version,
+                service_data,
             )
             self._trim_receive_diagnostics()
-        return "duplicate" if duplicate else "accepted"
+        return "accepted"
 
     def record_rejected_advertisement(
         self,
@@ -348,7 +442,7 @@ class ReadingStore:
         with self._condition:
             rows = self._database.execute(
                 """
-                SELECT advertisement_id, received_at, packet_id, decode_status,
+                SELECT advertisement_id, received_at, report_id, packet_kind, decode_status,
                        rssi, source_adapter, observed_identifier, contract_version,
                        service_data, payload_sha256, decode_error
                 FROM advertisements
@@ -362,15 +456,16 @@ class ReadingStore:
             {
                 "advertisement_id": row[0],
                 "received_at": row[1],
-                "packet_id": row[2],
-                "decode_status": row[3],
-                "rssi": row[4],
-                "source_adapter": row[5],
-                "observed_identifier": row[6],
-                "contract_version": row[7],
-                "service_data_hex": bytes(row[8]).hex() if row[8] is not None else None,
-                "payload_sha256": row[9],
-                "decode_error": row[10],
+                "report_id": row[2],
+                "packet_kind": row[3],
+                "decode_status": row[4],
+                "rssi": row[5],
+                "source_adapter": row[6],
+                "observed_identifier": row[7],
+                "contract_version": row[8],
+                "service_data_hex": bytes(row[9]).hex() if row[9] is not None else None,
+                "payload_sha256": row[10],
+                "decode_error": row[11],
             }
             for row in rows
         ]
@@ -1009,6 +1104,9 @@ class ReadingStore:
                 (sensor_id,),
             )
             self._database.execute("DELETE FROM sensor_readings WHERE sensor_id = ?", (sensor_id,))
+            self._database.execute(
+                "DELETE FROM report_supplements WHERE sensor_id = ?", (sensor_id,)
+            )
             self._database.execute("DELETE FROM care_events WHERE sensor_id = ?", (sensor_id,))
             self._database.execute("DELETE FROM advertisements WHERE sensor_id = ?", (sensor_id,))
             self._database.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
@@ -1285,8 +1383,16 @@ class ReadingStore:
                         (replacement_sensor_id, sensor_id),
                     )
                     if merge_history:
+                        # Report IDs belong to the sensor that numbered them.
+                        # Carried across, they would collide with the numbers
+                        # the replacement is yet to send and make its genuine
+                        # reports look like repeats, so merged readings leave
+                        # theirs behind.
                         self._database.execute(
-                            "UPDATE sensor_readings SET sensor_id = ? WHERE sensor_id = ?",
+                            """
+                            UPDATE sensor_readings SET sensor_id = ?, report_id = NULL
+                            WHERE sensor_id = ?
+                            """,
                             (replacement_sensor_id, sensor_id),
                         )
                         self._database.execute(
@@ -1311,6 +1417,7 @@ class ReadingStore:
                                 **{
                                     **asdict(reading),
                                     "sensor_id": replacement_sensor_id,
+                                    "report_id": None,
                                 }
                             ),
                             received_at,
@@ -1348,12 +1455,8 @@ class ReadingStore:
         with self._condition:
             if sensor_id is not None:
                 row = self._database.execute(
-                    """
-                    SELECT sensor_id, sequence, observed_at, soil_temperature_c,
-                           moisture_percent, conductivity_us_cm, air_temperature_c,
-                           air_humidity_percent, soil_ph, nitrogen_mg_kg,
-                           phosphorus_mg_kg, potassium_mg_kg, received_at,
-                           soil_source_status, air_source_status, contract_version
+                    f"""
+                    SELECT {READING_COLUMNS}
                     FROM sensor_readings
                     WHERE sensor_id = ?
                     ORDER BY reading_id DESC
@@ -1370,12 +1473,8 @@ class ReadingStore:
         with self._condition:
             if sensor_id is not None:
                 rows = self._database.execute(
-                    """
-                    SELECT sensor_id, sequence, observed_at, soil_temperature_c,
-                           moisture_percent, conductivity_us_cm, air_temperature_c,
-                           air_humidity_percent, soil_ph, nitrogen_mg_kg,
-                           phosphorus_mg_kg, potassium_mg_kg, received_at,
-                           soil_source_status, air_source_status, contract_version
+                    f"""
+                    SELECT {READING_COLUMNS}
                     FROM sensor_readings
                     WHERE sensor_id = ?
                     ORDER BY reading_id DESC
@@ -1396,7 +1495,12 @@ class ReadingStore:
         end_at: str,
         max_points: int = 600,
     ) -> List[Dict[str, Any]]:
-        """Return evenly sampled sensor history for an inclusive observation-time range."""
+        """Return evenly sampled sensor history for an inclusive observation-time range.
+
+        A reading whose sensor did not know the time is placed by when it was
+        received, which is the best the hub knows, without claiming that as the
+        time it was taken.
+        """
         safe_limit = max(2, min(max_points, 1000))
         parameters = (sensor_id, start_at, end_at)
         with self._condition:
@@ -1406,8 +1510,8 @@ class ReadingStore:
                     SELECT COUNT(*)
                     FROM sensor_readings
                     WHERE sensor_id = ?
-                      AND julianday(observed_at) >= julianday(?)
-                      AND julianday(observed_at) <= julianday(?)
+                      AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
+                      AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
                     """,
                     parameters,
                 ).fetchone()[0]
@@ -1415,22 +1519,16 @@ class ReadingStore:
             if total == 0:
                 return []
 
-            columns = """
-                sensor_id, sequence, observed_at, soil_temperature_c,
-                moisture_percent, conductivity_us_cm, air_temperature_c,
-                air_humidity_percent, soil_ph, nitrogen_mg_kg,
-                phosphorus_mg_kg, potassium_mg_kg, received_at,
-                soil_source_status, air_source_status, contract_version
-            """
+            columns = READING_COLUMNS
             if total <= safe_limit:
                 rows = self._database.execute(
                     f"""
                     SELECT {columns}
                     FROM sensor_readings
                     WHERE sensor_id = ?
-                      AND julianday(observed_at) >= julianday(?)
-                      AND julianday(observed_at) <= julianday(?)
-                    ORDER BY julianday(observed_at), reading_id
+                      AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
+                      AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
+                    ORDER BY julianday(COALESCE(observed_at, received_at)), reading_id
                     """,
                     parameters,
                 ).fetchall()
@@ -1441,12 +1539,12 @@ class ReadingStore:
                     WITH ranged AS (
                         SELECT {columns},
                                ROW_NUMBER() OVER (
-                                   ORDER BY julianday(observed_at), reading_id
+                                   ORDER BY julianday(COALESCE(observed_at, received_at)), reading_id
                                ) AS sample_number
                         FROM sensor_readings
                         WHERE sensor_id = ?
-                          AND julianday(observed_at) >= julianday(?)
-                          AND julianday(observed_at) <= julianday(?)
+                          AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
+                          AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
                     )
                     SELECT {columns}
                     FROM ranged
@@ -1530,19 +1628,24 @@ class ReadingStore:
             ).fetchall()
             moisture_rows = self._database.execute(
                 """
-                WITH ranked AS (
-                    SELECT substr(observed_at, 1, 10) AS date,
+                WITH dated AS (
+                    SELECT reading_id, moisture_percent,
+                           COALESCE(observed_at, received_at) AS reading_at
+                    FROM sensor_readings
+                    WHERE sensor_id = ? AND moisture_percent IS NOT NULL
+                ),
+                ranked AS (
+                    SELECT substr(reading_at, 1, 10) AS date,
                            moisture_percent,
                            MIN(moisture_percent) OVER (
-                               PARTITION BY substr(observed_at, 1, 10)
+                               PARTITION BY substr(reading_at, 1, 10)
                            ) AS minimum_moisture,
                            ROW_NUMBER() OVER (
-                               PARTITION BY substr(observed_at, 1, 10)
-                               ORDER BY observed_at DESC, reading_id DESC
+                               PARTITION BY substr(reading_at, 1, 10)
+                               ORDER BY reading_at DESC, reading_id DESC
                            ) AS recency
-                    FROM sensor_readings
-                    WHERE sensor_id = ? AND observed_at >= ? AND observed_at < ?
-                      AND moisture_percent IS NOT NULL
+                    FROM dated
+                    WHERE reading_at >= ? AND reading_at < ?
                 )
                 SELECT date, minimum_moisture, moisture_percent
                 FROM ranked
@@ -1555,7 +1658,11 @@ class ReadingStore:
                 ),
             ).fetchall()
             latest_row = self._database.execute(
-                "SELECT MAX(observed_at) FROM sensor_readings WHERE sensor_id = ?",
+                """
+                SELECT MAX(COALESCE(observed_at, received_at))
+                FROM sensor_readings
+                WHERE sensor_id = ?
+                """,
                 (sensor_id,),
             ).fetchone()
 
@@ -1647,7 +1754,8 @@ class ReadingStore:
         with self._condition:
             reading_range = self._database.execute(
                 """
-                SELECT MIN(observed_at), MAX(observed_at)
+                SELECT MIN(COALESCE(observed_at, received_at)),
+                       MAX(COALESCE(observed_at, received_at))
                 FROM sensor_readings
                 WHERE sensor_id = ?
                 """,
@@ -1739,17 +1847,18 @@ class ReadingStore:
         return self._database.execute(
             """
             INSERT OR IGNORE INTO sensor_readings (
-                advertisement_id, sensor_id, sequence, observed_at, received_at,
+                advertisement_id, sensor_id, report_id, observed_at, received_at,
                 soil_temperature_c, moisture_percent, conductivity_us_cm,
                 air_temperature_c, air_humidity_percent, soil_ph,
                 nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg,
+                battery_percent, battery_voltage_v,
                 soil_source_status, air_source_status, contract_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 advertisement_id,
                 reading.sensor_id,
-                reading.sequence,
+                reading.report_id,
                 reading.observed_at,
                 received_at,
                 reading.soil_temperature_c,
@@ -1761,6 +1870,8 @@ class ReadingStore:
                 reading.nitrogen_mg_kg,
                 reading.phosphorus_mg_kg,
                 reading.potassium_mg_kg,
+                reading.battery_percent,
+                reading.battery_voltage_v,
                 reading.soil_source_status,
                 reading.air_source_status,
                 reading.contract_version,
@@ -1769,7 +1880,8 @@ class ReadingStore:
 
     def _ensure_sensor(
         self,
-        reading: SensorReading,
+        sensor_id: str,
+        contract_version: int,
         received_at: str,
         transport: str,
         identity_kind: str,
@@ -1789,28 +1901,32 @@ class ReadingStore:
                 contract_version = excluded.contract_version
             """,
             (
-                reading.sensor_id,
+                sensor_id,
                 identity_kind,
-                reading.sensor_id,
+                sensor_id,
                 received_at,
                 received_at,
                 rssi,
                 transport,
-                reading.contract_version,
+                contract_version,
             ),
         )
         if commit:
             self._database.commit()
 
     def _trim_receive_diagnostics(self) -> None:
+        # Only an accepted main packet has a reading pointing at it. Everything
+        # else is diagnostics, beacons and supplements included: a supplement's
+        # values are kept in report_supplements, not in its packet.
         self._database.execute(
             """
             DELETE FROM advertisements
-            WHERE decode_status != 'accepted'
+            WHERE (decode_status != 'accepted' OR packet_kind IN ('supplementary', 'beacon'))
               AND advertisement_id NOT IN (
                   SELECT advertisement_id
                   FROM advertisements
                   WHERE decode_status != 'accepted'
+                     OR packet_kind IN ('supplementary', 'beacon')
                   ORDER BY advertisement_id DESC
                   LIMIT ?
               )
@@ -1820,12 +1936,8 @@ class ReadingStore:
 
     def _restore_history(self, history_size: int) -> None:
         rows = self._database.execute(
-            """
-            SELECT sensor_id, sequence, observed_at, soil_temperature_c,
-                   moisture_percent, conductivity_us_cm, air_temperature_c,
-                   air_humidity_percent, soil_ph, nitrogen_mg_kg,
-                   phosphorus_mg_kg, potassium_mg_kg, received_at,
-                   soil_source_status, air_source_status, contract_version
+            f"""
+            SELECT {READING_COLUMNS}
             FROM sensor_readings
             ORDER BY reading_id DESC
             LIMIT ?
@@ -1953,7 +2065,7 @@ class ReadingStore:
         return {
             "reading": SensorReading(
                 sensor_id=row[0],
-                sequence=row[1],
+                report_id=row[1],
                 observed_at=row[2],
                 soil_temperature_c=row[3],
                 moisture_percent=row[4],
@@ -1964,6 +2076,8 @@ class ReadingStore:
                 nitrogen_mg_kg=row[9],
                 phosphorus_mg_kg=row[10],
                 potassium_mg_kg=row[11],
+                battery_percent=row[16],
+                battery_voltage_v=row[17],
                 soil_source_status=row[13],
                 air_source_status=row[14],
                 contract_version=row[15],
@@ -1971,8 +2085,93 @@ class ReadingStore:
             "received_at": row[12],
         }
 
+    def _log_advertisement(
+        self,
+        sensor_id: str,
+        report_id: Optional[int],
+        packet_kind: str,
+        decode_status: str,
+        received_at: str,
+        observed_identifier: str,
+        source_adapter: str,
+        rssi: Optional[int],
+        contract_version: int,
+        service_data: bytes,
+    ) -> int:
+        cursor = self._database.execute(
+            """
+            INSERT INTO advertisements (
+                sensor_id, report_id, packet_kind, received_at, transport,
+                source_adapter, observed_identifier, rssi, contract_version,
+                payload_sha256, decode_status, decode_error, service_data
+            ) VALUES (?, ?, ?, ?, 'bthome', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sensor_id,
+                report_id,
+                packet_kind,
+                received_at,
+                source_adapter[:64],
+                observed_identifier[:240],
+                rssi,
+                contract_version,
+                hashlib.sha256(service_data).hexdigest(),
+                decode_status,
+                (
+                    f"report {report_id} is already stored with different content"
+                    if decode_status == "conflict"
+                    else None
+                ),
+                service_data,
+            ),
+        )
+        return int(cursor.lastrowid)
+
     @staticmethod
-    def _observation_datetime(observed_at: str, fallback: datetime) -> datetime:
+    def _report_status(stored: Optional[Tuple[Any, ...]], content: Tuple[Any, ...]) -> str:
+        if stored is None:
+            return "accepted"
+        return "duplicate" if tuple(stored) == content else "conflict"
+
+    @staticmethod
+    def _main_content(reading: SensorReading) -> Tuple[Any, ...]:
+        return (
+            reading.observed_at,
+            reading.soil_temperature_c,
+            reading.moisture_percent,
+            reading.conductivity_us_cm,
+            reading.air_temperature_c,
+            reading.air_humidity_percent,
+            reading.soil_source_status,
+            reading.air_source_status,
+        )
+
+    @staticmethod
+    def _supplement_content(supplement: ReportSupplement) -> Tuple[Any, ...]:
+        return (
+            supplement.battery_percent,
+            supplement.battery_voltage_v,
+            supplement.soil_ph,
+            supplement.nitrogen_mg_kg,
+            supplement.phosphorus_mg_kg,
+            supplement.potassium_mg_kg,
+            int(supplement.force_report),
+        )
+
+    @staticmethod
+    def _with_supplement(reading: SensorReading, supplement: Tuple[Any, ...]) -> SensorReading:
+        return replace(
+            reading,
+            battery_percent=supplement[0],
+            battery_voltage_v=supplement[1],
+            soil_ph=supplement[2],
+            nitrogen_mg_kg=supplement[3],
+            phosphorus_mg_kg=supplement[4],
+            potassium_mg_kg=supplement[5],
+        )
+
+    @staticmethod
+    def _observation_datetime(observed_at: Optional[str], fallback: datetime) -> datetime:
         if not observed_at:
             return fallback
         try:
