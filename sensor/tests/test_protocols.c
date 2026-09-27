@@ -329,12 +329,21 @@ static void test_bthome_v3_fixture(void)
     assert_encodes(opp_bthome_encode_main, &report,
                    "40022e092e2c2f643ed2040000451001500037b86a562900");
     assert_encodes(opp_bthome_encode_supplementary, &report,
-                   "4001600c40103ed204000054080144010002000700");
+                   "4001600c401016003ed204000054080144010002000700");
 
     report.report_id = 1235;
     report.battery_available = false;
     report.soil_extras_available = false;
     assert_encodes(opp_bthome_encode_supplementary, &report, "403ed3040000");
+
+    /* Charging, with no soil extras: fixture "supplementary_charging". */
+    report = fixture_report();
+    report.report_id = 1236;
+    report.battery_percent = 91;
+    report.battery_millivolts = 4116;
+    report.battery_charging = true;
+    report.soil_extras_available = false;
+    assert_encodes(opp_bthome_encode_supplementary, &report, "40015b0c141016013ed4040000");
 
     report = fixture_report();
     report.report_id = 1235;
@@ -353,7 +362,7 @@ static void test_bthome_v3_rules(void)
 
     /* The largest packets still fit a legacy advertisement. */
     assert(opp_bthome_encode_main(&report, payload) == OPP_BTHOME_SERVICE_DATA_MAX_SIZE);
-    assert(opp_bthome_encode_supplementary(&report, payload) == 21);
+    assert(opp_bthome_encode_supplementary(&report, payload) == 23);
 
     /* Percentages round to the nearest whole point. */
     report = fixture_report();
@@ -529,14 +538,14 @@ static void test_report_queue_page_fixture(void)
 
     const opp_queued_report_t first = queued_hex(
         1234, "40022e092e2c2f643ed2040000451001500037b86a562900",
-        "4001600c40103ed204000054080144010002000700");
+        "4001600c401016003ed204000054080144010002000700");
     const opp_queued_report_t second = queued_hex(1235, "402e2c3ed3040000451001",
                                                   "403ed3040000");
     assert(opp_report_queue_push(&queue, &first));
     assert(opp_report_queue_push(&queue, &second));
     const size_t size = from_hex(
-        "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900154001600c40103ed2"
-        "04000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
+        "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900174001600c401016003e"
+        "d204000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
         expected);
     assert(opp_report_queue_page(&queue, page) == size);
     assert(memcmp(page, expected, size) == 0);

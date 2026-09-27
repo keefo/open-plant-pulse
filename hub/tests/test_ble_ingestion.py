@@ -31,7 +31,7 @@ FIXTURE_PATH = (
 
 SENSOR_ID = "sensor-aabbccddeeff"
 MAIN_1235 = "402e2c3ed3040000451001"
-SUPPLEMENTARY_1235 = "4001600c40103ed304000054080144010002000700"
+SUPPLEMENTARY_1235 = "4001600c401016003ed304000054080144010002000700"
 MAIN_1236 = "402e2c3ed4040000451001"
 SUPPLEMENTARY_1236 = "403ed4040000"
 
@@ -83,6 +83,7 @@ class AdvertisementReplayTests(unittest.TestCase):
             self.assertEqual(joined["moisture_percent"], 32.0)
             self.assertEqual(joined["battery_percent"], 87)
             self.assertEqual(joined["battery_voltage_v"], 3.912)
+            self.assertIs(joined["battery_charging"], False)
             self.assertEqual(joined["soil_ph"], 6.5)
             self.assertEqual(
                 [joined["nitrogen_mg_kg"], joined["phosphorus_mg_kg"], joined["potassium_mg_kg"]],
@@ -101,6 +102,8 @@ class AdvertisementReplayTests(unittest.TestCase):
             supplement_first = history[2]["reading"]
             self.assertEqual(supplement_first["report_id"], 7)
             self.assertEqual(supplement_first["battery_percent"], 64)
+            self.assertIs(supplement_first["battery_charging"], True)
+            self.assertIsNone(history[1]["reading"]["battery_charging"])
             self.assertIsNone(supplement_first["soil_ph"])
 
             with sqlite3.connect(database_path) as database:
@@ -184,6 +187,7 @@ class ReportJoinTests(unittest.TestCase):
         self.assertEqual(reading["air_temperature_c"], 27.2)
         self.assertEqual(reading["battery_percent"], 96)
         self.assertEqual(reading["battery_voltage_v"], 4.16)
+        self.assertIs(reading["battery_charging"], False)
         self.assertEqual(reading["soil_ph"], 6.8)
         self.assertEqual(
             [reading["nitrogen_mg_kg"], reading["phosphorus_mg_kg"], reading["potassium_mg_kg"]],
@@ -314,7 +318,7 @@ class ReportJoinTests(unittest.TestCase):
         )
         self.assertEqual(
             self.ingestion.ingest(
-                advertisement("40015f0c40103ed304000054080144010002000700")
+                advertisement("40015f0c401016003ed304000054080144010002000700")
             ),
             "conflict",
         )
@@ -327,11 +331,40 @@ class ReportJoinTests(unittest.TestCase):
             [item["packet_kind"] for item in conflicts], ["supplementary", "main"]
         )
 
+    def test_a_charging_report_joins_its_reading_as_charging(self) -> None:
+        self.ingestion.ingest(advertisement(main_hex(1236)))
+        self.assertEqual(
+            self.ingestion.ingest(advertisement("40015b0c141016013ed4040000")), "accepted"
+        )
+        for latest in (self.store.latest(SENSOR_ID), self.store.latest()):
+            reading = latest["reading"]
+            self.assertEqual(reading["report_id"], 1236)
+            self.assertEqual(reading["battery_percent"], 91)
+            self.assertEqual(reading["battery_voltage_v"], 4.116)
+            self.assertIs(reading["battery_charging"], True)
+        with self.store._condition:
+            stored = self.store._database.execute(
+                "SELECT battery_charging FROM sensor_readings "
+                "UNION ALL SELECT battery_charging FROM report_supplements"
+            ).fetchall()
+        self.assertEqual(stored, [(1,), (1,)])
+
+    def test_a_supplement_differing_only_in_charging_is_a_conflict(self) -> None:
+        for service_data_hex in (MAIN_1235, SUPPLEMENTARY_1235):
+            self.ingestion.ingest(advertisement(service_data_hex))
+        self.assertEqual(
+            self.ingestion.ingest(
+                advertisement("4001600c401016013ed304000054080144010002000700")
+            ),
+            "conflict",
+        )
+        self.assert_joined()
+
     def test_a_conflicting_supplement_held_before_its_main_is_not_attached(self) -> None:
         self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235))
         self.assertEqual(
             self.ingestion.ingest(
-                advertisement("40015f0c40103ed304000054080144010002000700")
+                advertisement("40015f0c401016003ed304000054080144010002000700")
             ),
             "conflict",
         )
@@ -857,7 +890,7 @@ class MigrationTests(unittest.TestCase):
                 # A supplement kept from before still judges repeats and joins
                 # the main packet that completes its report.
                 self.assertEqual(
-                    ingestion.ingest(advertisement(SUPPLEMENTARY_1235)), "duplicate"
+                    ingestion.ingest(advertisement(SUPPLEMENTARY_1236)), "duplicate"
                 )
                 self.assertEqual(ingestion.ingest(advertisement(MAIN_1236)), "accepted")
                 self.assertTrue(ingestion.report_is_acknowledgeable(SENSOR_ID, 1236))
@@ -866,7 +899,10 @@ class MigrationTests(unittest.TestCase):
                 store.close()
 
             with sqlite3.connect(database_path) as database:
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 18)
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
                 self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
                 supplement_columns = [
                     row[1] for row in database.execute("PRAGMA table_info(report_supplements)")
@@ -904,12 +940,151 @@ class MigrationTests(unittest.TestCase):
                     ).fetchone()
                 )
 
+    def test_migrates_version_18_battery_to_an_unknown_charging_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = str(Path(directory) / "hub.sqlite3")
+            with sqlite3.connect(database_path) as database:
+                database.execute("PRAGMA foreign_keys=ON")
+                for version in range(1, 19):
+                    database.executescript(MIGRATIONS[version])
+                database.execute("PRAGMA user_version=18")
+                database.execute(
+                    """
+                    INSERT INTO sensors (
+                        sensor_id, identity_kind, identity_value, enrollment_status,
+                        display_name, first_seen_at, last_seen_at, transport,
+                        contract_version
+                    ) VALUES (?, 'device-local-name', ?, 'enrolled', 'Fern',
+                              '2026-09-26T21:00:00Z', '2026-09-26T21:20:00Z',
+                              'bthome', 3)
+                    """,
+                    (SENSOR_ID, SENSOR_ID),
+                )
+                database.execute(
+                    """
+                    INSERT INTO advertisements (
+                        advertisement_id, sensor_id, report_id, packet_kind, received_at,
+                        transport, source_adapter, observed_identifier, rssi,
+                        contract_version, payload_sha256, decode_status, service_data
+                    ) VALUES (1, ?, 1235, 'main', '2026-09-26T21:20:05Z', 'bthome',
+                              'bleak', 'platform-a', -48, 3, 'hash', 'accepted', ?)
+                    """,
+                    (SENSOR_ID, bytes.fromhex(MAIN_1235)),
+                )
+                database.executemany(
+                    """
+                    INSERT INTO sensor_readings (
+                        reading_id, advertisement_id, sensor_id, report_id, received_at,
+                        air_temperature_c, air_humidity_percent, battery_percent,
+                        battery_voltage_v, soil_ph, nitrogen_mg_kg, phosphorus_mg_kg,
+                        potassium_mg_kg, soil_source_status, air_source_status,
+                        contract_version, acknowledged_at
+                    ) VALUES (?, ?, ?, ?, '2026-09-26T21:20:05Z', 27.2, 44.0, ?, ?,
+                              ?, ?, ?, ?, 'unavailable', 'available', ?, ?)
+                    """,
+                    [
+                        (1, 1, SENSOR_ID, 1235, 96, 4.16, 6.8, 1, 2, 7, 3,
+                         "2026-09-26T21:20:30Z"),
+                        # From before contract v3: no report, no battery.
+                        (2, None, SENSOR_ID, None, None, None, None, None, None, None, 0,
+                         None),
+                    ],
+                )
+                database.executemany(
+                    """
+                    INSERT INTO report_supplements (
+                        sensor_id, report_id, received_at, battery_percent,
+                        battery_voltage_v, soil_ph, nitrogen_mg_kg, phosphorus_mg_kg,
+                        potassium_mg_kg
+                    ) VALUES (?, ?, '2026-09-26T21:20:06Z', ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (SENSOR_ID, 1235, 96, 4.16, 6.8, 1, 2, 7),
+                        # Held before its main packet arrived.
+                        (SENSOR_ID, 1236, None, None, None, None, None, None),
+                    ],
+                )
+                readings_before = database.execute(
+                    "SELECT * FROM sensor_readings ORDER BY reading_id"
+                ).fetchall()
+                supplements_before = database.execute(
+                    "SELECT * FROM report_supplements ORDER BY report_id"
+                ).fetchall()
+
+            store = ReadingStore(database_path=database_path)
+            try:
+                # What the sensor never said stays unknown, not "not charging".
+                reading = store.latest(SENSOR_ID)["reading"]
+                self.assertEqual(
+                    (reading["report_id"], reading["battery_percent"],
+                     reading["battery_voltage_v"], reading["battery_charging"]),
+                    (1235, 96, 4.16, None),
+                )
+                self.assertEqual(
+                    [item["reading"]["battery_charging"] for item in store.history(SENSOR_ID)],
+                    [None, None],
+                )
+                ingestion = AdvertisementIngestionService(store)
+                self.assertTrue(ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
+                # A supplement kept from before still judges repeats and joins.
+                self.assertEqual(
+                    ingestion.ingest(advertisement(SUPPLEMENTARY_1236)), "duplicate"
+                )
+                self.assertEqual(ingestion.ingest(advertisement(MAIN_1236)), "accepted")
+                self.assertIsNone(store.latest(SENSOR_ID)["reading"]["battery_charging"])
+                # New reports carry it.
+                for service_data_hex in (main_hex(1237), "40015b0c141016013ed5040000"):
+                    self.assertEqual(ingestion.ingest(advertisement(service_data_hex)), "accepted")
+                self.assertIs(store.latest(SENSOR_ID)["reading"]["battery_charging"], True)
+            finally:
+                store.close()
+
+            with sqlite3.connect(database_path) as database:
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
+                self.assertEqual(DATABASE_SCHEMA_VERSION, 19)
+                self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
+                # Every row that was there is still there, unchanged, with the
+                # new column appended as null.
+                self.assertEqual(
+                    database.execute(
+                        "SELECT * FROM sensor_readings WHERE reading_id <= 2 "
+                        "ORDER BY reading_id"
+                    ).fetchall(),
+                    [row + (None,) for row in readings_before],
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT * FROM report_supplements WHERE report_id <= 1236 "
+                        "ORDER BY report_id"
+                    ).fetchall(),
+                    [row + (None,) for row in supplements_before],
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT report_id, battery_charging FROM report_supplements "
+                        "WHERE report_id = 1237"
+                    ).fetchall(),
+                    [(1237, 1)],
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    database.execute(
+                        "UPDATE sensor_readings SET battery_charging = 2 WHERE reading_id = 1"
+                    )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    database.execute(
+                        "UPDATE report_supplements SET battery_charging = 2 "
+                        "WHERE report_id = 1235"
+                    )
+
 
 class DetectionCallbackTests(unittest.TestCase):
     """Packets that arrive before the sensor's name must not be lost."""
 
     MAIN = bytes.fromhex("40022e092e2c2f643ed2040000451001500037b86a562900")
-    SUPPLEMENTARY = bytes.fromhex("4001600c40103ed204000054080144010002000700")
+    SUPPLEMENTARY = bytes.fromhex("4001600c401016003ed204000054080144010002000700")
 
     def _callback(self):
         queue = asyncio.Queue()

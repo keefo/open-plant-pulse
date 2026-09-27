@@ -29,6 +29,8 @@ typedef struct {
     bool battery_available;
     uint8_t battery_percent;
     uint16_t battery_millivolts;
+    /* Current into the pack: the IP2312 or the XIAO's USB charger at work. */
+    bool battery_charging;
 
     bool soil_extras_available;
     uint16_t ph_tenths;

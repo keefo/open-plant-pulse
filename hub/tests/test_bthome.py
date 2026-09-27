@@ -10,9 +10,12 @@ from open_plant_pulse_hub.ingestion.bthome import (
 )
 
 FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3.json"
+REPLAY_FIXTURE_PATH = (
+    Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
+)
 SENSOR_ID = "sensor-aabbccddeeff"
 MAIN_HEX = "40022e092e2c2f643ed2040000451001500037b86a562900"
-SUPPLEMENTARY_HEX = "4001600c40103ed204000054080144010002000700"
+SUPPLEMENTARY_HEX = "4001600c401016003ed204000054080144010002000700"
 
 
 def decode(service_data_hex: str):
@@ -52,6 +55,39 @@ class BTHomeFixtureTests(unittest.TestCase):
                 for field, value in expected.items():
                     self.assertEqual(getattr(decoded, field), value, field)
 
+    def test_every_supplementary_packet_says_whether_it_is_charging(self) -> None:
+        charging = {
+            packet["name"]: packet["expected"]["battery_charging"]
+            for packet in self.fixture["packets"]
+            if packet["expected"]["kind"] == "supplementary"
+        }
+        self.assertEqual(
+            charging,
+            {
+                "supplementary": False,
+                "supplementary_report_id_only": None,
+                "supplementary_charging": True,
+            },
+        )
+
+    def test_decodes_every_replay_packet_as_its_expectation_says(self) -> None:
+        replay = json.loads(REPLAY_FIXTURE_PATH.read_text(encoding="utf-8"))
+        kinds = {"main": SensorReading, "supplementary": ReportSupplement}
+        checked = 0
+        for event in replay["events"]:
+            if "expected" not in event:
+                continue
+            with self.subTest(event["id"]):
+                expected = dict(event["expected"])
+                decoded = decode_service_data(
+                    bytes.fromhex(event["service_data_hex"]), expected.pop("sensor_id")
+                )
+                self.assertIsInstance(decoded, kinds[expected.pop("kind")])
+                for field, value in expected.items():
+                    self.assertEqual(getattr(decoded, field), value, field)
+                checked += 1
+        self.assertEqual(checked, 8)
+
 
 class BTHomeDecoderTests(unittest.TestCase):
     def test_a_report_id_alone_is_a_supplementary_packet(self) -> None:
@@ -61,6 +97,7 @@ class BTHomeDecoderTests(unittest.TestCase):
         self.assertIsInstance(supplement, ReportSupplement)
         self.assertEqual(supplement.report_id, 1235)
         self.assertIsNone(supplement.battery_percent)
+        self.assertIsNone(supplement.battery_charging)
         self.assertIsNone(supplement.soil_ph)
 
     def test_a_timestamp_is_optional_and_never_invented(self) -> None:
@@ -69,15 +106,17 @@ class BTHomeDecoderTests(unittest.TestCase):
         self.assertEqual(reading.report_id, 1235)
 
     def test_decodes_supplementary_packets_with_one_group_each(self) -> None:
-        battery_only = decode("4001600c40103e01000000")
+        battery_only = decode("4001600c401016013e01000000")
         self.assertEqual(battery_only.battery_percent, 96)
         self.assertEqual(battery_only.battery_voltage_v, 4.16)
+        self.assertIs(battery_only.battery_charging, True)
         self.assertIsNone(battery_only.soil_ph)
         extras_only = decode("403e0100000054080100ffff00000100")
         self.assertEqual(extras_only.soil_ph, 0.0)
         self.assertEqual(extras_only.nitrogen_mg_kg, 65535)
         self.assertEqual(extras_only.phosphorus_mg_kg, 0)
         self.assertEqual(extras_only.potassium_mg_kg, 1)
+        self.assertIsNone(extras_only.battery_charging)
 
     def test_rejects_malformed_packets(self) -> None:
         cases = {
@@ -96,14 +135,25 @@ class BTHomeDecoderTests(unittest.TestCase):
             "moisture above 100": "40022e092e2c2f653ed2040000451001500037b86a562900",
             "humidity above 100": "402e653ed3040000451001",
             "zero timestamp": "402e2c3ed304000045100150" + "00000000",
-            "mixed main and supplementary": "4001600c40102e2c3ed3040000451001",
-            "battery without voltage": "4001603ed3040000",
-            "voltage without battery": "400c40103ed3040000",
-            "battery above 100": "4001650c40103ed3040000",
+            "mixed main and supplementary": "4001600c401016002e2c3ed3040000451001",
+            "charging in a main packet": "40022e0916002e2c2f643ed2040000451001",
+            "battery without voltage": "40016016003ed3040000",
+            "voltage without battery": "400c401016003ed3040000",
+            "battery above 100": "4001650c401016003ed3040000",
+            # Charging belongs to the battery group: all three or none.
+            "battery without charging": "4001600c40103ed3040000",
+            "battery without charging, with extras": "4001600c40103ed304000054080144010002000700",
+            "charging alone": "4016003ed3040000",
+            "charging without voltage": "40016016013ed3040000",
+            "charging without level": "400c401016013ed3040000",
+            "charging value 2": "4001600c401016023ed3040000",
+            "charging value 255": "4001600c401016ff3ed3040000",
+            "charging after the report ID": "4001600c40103ed30400001600",
+            "truncated charging": "4001600c401016",
             # Forced reports are ordinary reports now; the button event that
             # marked one is no longer part of the contract.
             "button event": "403a013ed3040000",
-            "button event with battery": "4001600c40103a013ed304000054080144010002000700",
+            "button event with battery": "4001600c401016003a013ed304000054080144010002000700",
             "main and report ID with a button event": "402e2c3a013ed3040000451001",
             "extras with the wrong length": "403ed30400005407014401000200",
             "extras of an unknown layout": "403ed304000054080244010002000700",

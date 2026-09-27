@@ -394,6 +394,43 @@ class BulkDrainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.writes(), ["20", "2103000000", "22"])
         self.assertEqual(self.acknowledged(), [1, 2, 3])
 
+    async def test_drained_fixture_reports_keep_whether_the_battery_was_charging(self) -> None:
+        packets = {
+            packet["name"]: bytes.fromhex(packet["service_data_hex"])
+            for packet in json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["packets"]
+        }
+        self.sensor.queue = [
+            (1234, packets["main"], packets["supplementary"]),
+            (1235, packets["main_air_only_no_timestamp"], packets["supplementary_report_id_only"]),
+            (1236, bytes.fromhex(main_hex(1236)), packets["supplementary_charging"]),
+        ]
+
+        result = await self.drain()
+
+        self.assertEqual(result.outcome, "drained")
+        self.assertEqual(result.stored_packets, 6)
+        self.assertEqual(self.acknowledged(), [1234, 1235, 1236])
+        self.assertEqual(
+            [
+                (item["reading"]["report_id"], item["reading"]["battery_charging"])
+                for item in self.store.history(self.sensor_id)
+            ],
+            [(1234, False), (1235, None), (1236, True)],
+        )
+        latest = self.store.latest(self.sensor_id)["reading"]
+        self.assertEqual(
+            (latest["battery_percent"], latest["battery_voltage_v"], latest["battery_charging"]),
+            (91, 4.116, True),
+        )
+        self.assertEqual(
+            self.rows(
+                "SELECT report_id, battery_charging FROM report_supplements "
+                "WHERE sensor_id = ? ORDER BY report_id",
+                self.sensor_id,
+            ),
+            [(1234, 0), (1235, None), (1236, 1)],
+        )
+
     async def test_an_empty_queue_ends_at_once(self) -> None:
         result = await self.drain()
         self.assertEqual((result.outcome, result.pages), ("drained", 1))

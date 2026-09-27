@@ -20,7 +20,7 @@
     },
     {
       "name": "supplementary",
-      "service_data_hex": "4001600c40103ed204000054080144010002000700",
+      "service_data_hex": "4001600c401016003ed204000054080144010002000700",
       "expected": {
         "kind": "supplementary",
         "report_id": 1234,
@@ -29,7 +29,8 @@
         "soil_ph": 6.8,
         "nitrogen_mg_kg": 1,
         "phosphorus_mg_kg": 2,
-        "potassium_mg_kg": 7
+        "potassium_mg_kg": 7,
+        "battery_charging": false
       }
     },
     {
@@ -40,6 +41,22 @@
         "report_id": 1235,
         "battery_percent": null,
         "battery_voltage_v": null,
+        "soil_ph": null,
+        "nitrogen_mg_kg": null,
+        "phosphorus_mg_kg": null,
+        "potassium_mg_kg": null,
+        "battery_charging": null
+      }
+    },
+    {
+      "name": "supplementary_charging",
+      "service_data_hex": "40015b0c141016013ed4040000",
+      "expected": {
+        "kind": "supplementary",
+        "report_id": 1236,
+        "battery_percent": 91,
+        "battery_voltage_v": 4.116,
+        "battery_charging": true,
         "soil_ph": null,
         "nitrogen_mg_kg": null,
         "phosphorus_mg_kg": null,
@@ -72,7 +89,7 @@
   ],
   "bulk_drain": {
     "drain_request_hex": "20",
-    "page_hex": "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900154001600c40103ed204000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
+    "page_hex": "2002d20400001840022e092e2c2f643ed2040000451001500037b86a562900174001600c401016003ed204000054080144010002000700d30400000b402e2c3ed304000045100106403ed3040000",
     "page_reports": [
       1234,
       1235

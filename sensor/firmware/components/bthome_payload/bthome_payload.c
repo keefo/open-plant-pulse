@@ -89,6 +89,7 @@ size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
     if (report->battery_available) {
         append_u8(output, &offset, 0x01, report->battery_percent);
         append_u16(output, &offset, 0x0C, report->battery_millivolts);
+        append_u8(output, &offset, 0x16, report->battery_charging ? 1U : 0U);
     }
     append_u32(output, &offset, 0x3E, report->report_id);
     if (report->soil_extras_available) {

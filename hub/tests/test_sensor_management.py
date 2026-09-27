@@ -370,7 +370,20 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertEqual(reading["observed_at"], "2026-09-13T12:00:03Z")
         self.assertEqual(reading["battery_percent"], 64)
         self.assertEqual(reading["battery_voltage_v"], 3.701)
+        self.assertIs(reading["battery_charging"], True)
         self.assertIsNone(reading["soil_ph"])
+
+        # Charging travels with the battery everywhere a reading is served:
+        # false and unknown are different answers, and both survive JSON.
+        with self.request("/api/sensors/sensor-001122334455") as response:
+            self.assertIs(json.load(response)["latest"]["reading"]["battery_charging"], True)
+        query = urlencode({"sensor_id": "sensor-aabbccddeeff"})
+        with self.request("/api/readings/history?" + query) as response:
+            history = json.load(response)["items"]
+        self.assertEqual(
+            [(item["reading"]["report_id"], item["reading"]["battery_charging"]) for item in history],
+            [(42, False), (43, None)],
+        )
 
         page = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "index.html").read_text()
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()

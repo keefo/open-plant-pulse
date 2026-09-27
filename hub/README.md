@@ -84,7 +84,8 @@ destructive deletion, and pending/applied/retrying state for plant name, room, a
 reporting interval. The requested hub interval remains editable while a separate
 read-only field shows the interval last confirmed from firmware and used for hub
 freshness calculations.
-Each sensor detail page shows battery level and voltage and soil pH, nitrogen,
+Each sensor detail page shows battery level and voltage, with a lightning bolt over
+the battery while it is charging, and soil pH, nitrogen,
 phosphorus, and potassium when the sensor reports them, and includes a temporary,
 newest-first raw BTHome report log for debugging, capped at the latest 50 reports,
 listing each packet's report ID and kind.

@@ -46,13 +46,16 @@ the local name travels in the scan response.
 | --- | --- | --- | --- | --- |
 | 1 | Battery | `0x01` | unsigned 8-bit; 1 % | Battery |
 | 2 | Battery voltage | `0x0C` | unsigned 16-bit; factor 0.001 V | Battery |
-| 3 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
-| 4 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
+| 3 | Battery charging | `0x16` | unsigned 8-bit; `0` not charging, `1` charging | Battery |
+| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
+| 5 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
 
-Battery is `0x01` and `0x0C` together or neither. Every report sends a
+Battery is `0x01`, `0x0C` and `0x16` together or none of them. Charging means
+current into the pack above the monitor's idle threshold (15 mA), from whatever
+source: the IP2312 or the XIAO's own USB charger. Every report sends a
 supplementary packet, even when it carries only the report ID: that is how the
 hub knows a report is complete, rather than guessing whether a second packet
-was lost or never existed. At most 21 bytes.
+was lost or never existed. At most 23 bytes.
 
 BTHome defines no pH or nutrient objects, so they travel in one raw object that
 only the hub decodes (Home Assistant shows battery natively and ignores it):
@@ -66,8 +69,8 @@ only the hub decodes (Home Assistant shows battery natively and ignores it):
 | 6 | 2 | Potassium, mg/kg |
 
 A packet is main if it carries any of `0x02`, `0x2E`, `0x2F`, `0x45`, `0x50` or
-`0x56`, and supplementary otherwise: `0x01`, `0x0C` and `0x54`, or the report
-ID alone. A packet mixing the two sets, missing the report ID, or carrying any
+`0x56`, and supplementary otherwise: `0x01`, `0x0C`, `0x16` and `0x54`, or the
+report ID alone. A packet mixing the two sets, missing the report ID, or carrying any
 other object is malformed.
 
 ### Beacon

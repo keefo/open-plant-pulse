@@ -15,6 +15,7 @@ OBJECT_FORMATS: Dict[int, Tuple[int, bool]] = {
     0x01: (1, False),
     0x02: (2, True),
     0x0C: (2, False),
+    0x16: (1, False),
     0x2E: (1, False),
     0x2F: (1, False),
     0x3E: (4, False),
@@ -29,7 +30,7 @@ SOIL_EXTRAS_LAYOUT_VERSION = 1
 MAIN_OBJECTS = frozenset({0x02, 0x2E, 0x2F, 0x45, 0x50, 0x56})
 SOIL_OBJECTS = frozenset({0x02, 0x2F, 0x56})
 AIR_OBJECTS = frozenset({0x2E, 0x45})
-BATTERY_OBJECTS = frozenset({0x01, 0x0C})
+BATTERY_OBJECTS = frozenset({0x01, 0x0C, 0x16})
 # The sensor only sends a timestamp its clock can vouch for, inside this window.
 # Anything outside it is not a time the sensor would have sent.
 EARLIEST_TIMESTAMP = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
@@ -159,10 +160,12 @@ def _supplement(
 ) -> ReportSupplement:
     present = set(values)
     if present & BATTERY_OBJECTS not in (set(), BATTERY_OBJECTS):
-        raise ValueError("battery must carry both level and voltage or neither")
+        raise ValueError("battery must carry level, voltage and charging together or none")
     has_battery = BATTERY_OBJECTS <= present
     if has_battery and not 0 <= values[0x01] <= 100:
         raise ValueError("battery level must be between 0 and 100 percent")
+    if has_battery and values[0x16] not in (0, 1):
+        raise ValueError("battery charging must be 0 or 1")
     soil_ph = nitrogen = phosphorus = potassium = None
     if soil_extras:
         if soil_extras[0] != SOIL_EXTRAS_LAYOUT_VERSION:
@@ -179,6 +182,7 @@ def _supplement(
         report_id=report_id,
         battery_percent=values[0x01] if has_battery else None,
         battery_voltage_v=round(values[0x0C] * 0.001, 3) if has_battery else None,
+        battery_charging=values[0x16] == 1 if has_battery else None,
         soil_ph=soil_ph,
         nitrogen_mg_kg=nitrogen,
         phosphorus_mg_kg=phosphorus,

@@ -109,6 +109,7 @@ static void set_battery(opp_bthome_report_t *report)
     report->battery_percent = (uint8_t)percent;
     report->battery_millivolts =
         battery.millivolts > UINT16_MAX ? UINT16_MAX : (uint16_t)battery.millivolts;
+    report->battery_charging = battery.flow == OPP_BATTERY_CHARGING;
 }
 #endif
 

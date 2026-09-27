@@ -96,6 +96,12 @@ h2 { font-size: 24px; }
 .battery-glyph::after { content: ""; position: absolute; top: 50%; right: -4px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: currentColor; transform: translateY(-50%); }
 .battery-fill { position: absolute; top: 1px; bottom: 1px; left: 1px; width: calc((100% - 2px) * var(--charge, 0) / 100); border-radius: 1.5px; background: var(--battery-level); }
 .battery[data-level="unknown"] .battery-glyph { opacity: 0.5; }
+/* Charging: a bolt in the panel colour over the middle, outlined in the text
+   colour so that it reads over the fill and over the empty part alike. The
+   outline is a ring of hard drop shadows on the wrapper, since the clip that
+   cuts the bolt shape would clip a shadow drawn on the bolt itself. */
+.battery-bolt { position: absolute; top: -1px; left: 50%; width: 7px; height: 10px; transform: translateX(-50%); filter: drop-shadow(0.75px 0 0 currentColor) drop-shadow(-0.75px 0 0 currentColor) drop-shadow(0 0.75px 0 currentColor) drop-shadow(0 -0.75px 0 currentColor); }
+.battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--panel); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
 .battery-voltage::before { content: "\00b7"; margin-right: 5px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 5px #d9a32722; }
 .status-dot.live { background: var(--leaf); box-shadow: 0 0 0 5px #19734c22; }

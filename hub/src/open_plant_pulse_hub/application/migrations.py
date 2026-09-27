@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 18
+DATABASE_SCHEMA_VERSION = 19
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -562,6 +562,17 @@ MIGRATIONS: Dict[int, str] = {
            every time a report is complete or repeated. */
         CREATE INDEX advertisements_conflicts_by_report
         ON advertisements(sensor_id, report_id) WHERE decode_status = 'conflict';
+    """,
+    19: """
+        /* The supplementary packet's battery group now says whether the pack
+           is charging. Null wherever the sensor did not say, which is every
+           report stored before this migration. Both places a supplement's
+           battery is kept get it, so that a repeated packet is still told
+           from a conflict. */
+        ALTER TABLE report_supplements ADD COLUMN battery_charging INTEGER
+            CHECK (battery_charging IS NULL OR battery_charging IN (0, 1));
+        ALTER TABLE sensor_readings ADD COLUMN battery_charging INTEGER
+            CHECK (battery_charging IS NULL OR battery_charging IN (0, 1));
     """,
 }
 

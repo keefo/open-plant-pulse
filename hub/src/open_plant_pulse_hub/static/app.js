@@ -762,16 +762,20 @@ function renderDrainageAssessment(profile) {
  * A phone-style battery: an outline with a terminal nub, filled in proportion
  * to the charge, then the percentage and, when reported, the voltage. The fill
  * turns amber at 20 % and red at 10 %; an unknown level is an empty outline.
+ * While charging, a bolt sits over the middle, as on a phone. Not charging and
+ * not said look the same: no bolt.
  */
 function renderBattery(element, reading) {
   const percent = reading.battery_percent;
   const known = percent != null;
+  const charging = known && reading.battery_charging === true;
   const voltage = known && reading.battery_voltage_v != null
     ? `${Number(reading.battery_voltage_v).toFixed(2)} V`
     : null;
   element.dataset.level = !known ? "unknown" : percent <= 10 ? "critical" : percent <= 20 ? "low" : "normal";
   element.style.setProperty("--charge", known ? String(Math.min(100, Math.max(0, percent))) : "0");
-  const label = known ? `Battery ${percent}%${voltage ? `, ${voltage}` : ""}` : "Battery not reported";
+  const details = [`${percent}%`, charging ? "charging" : null, voltage].filter(Boolean);
+  const label = known ? `Battery ${details.join(", ")}` : "Battery not reported";
   element.setAttribute("aria-label", label);
   element.title = label;
 
@@ -781,6 +785,11 @@ function renderBattery(element, reading) {
   const fill = document.createElement("span");
   fill.className = "battery-fill";
   glyph.append(fill);
+  if (charging) {
+    const bolt = document.createElement("span");
+    bolt.className = "battery-bolt";
+    glyph.append(bolt);
+  }
   const text = document.createElement("span");
   text.className = "battery-percent";
   text.textContent = known ? `${percent}%` : "\u2014";

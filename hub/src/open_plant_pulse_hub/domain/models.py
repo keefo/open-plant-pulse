@@ -23,6 +23,9 @@ class SensorReading:
     potassium_mg_kg: Optional[int] = None
     battery_percent: Optional[int] = None
     battery_voltage_v: Optional[float] = None
+    # Whether current was flowing into the pack. Null when the report carried no
+    # battery, and for every reading stored before the sensor said.
+    battery_charging: Optional[bool] = None
     soil_source_status: str = "available"
     air_source_status: str = "available"
     contract_version: int = 0
@@ -40,6 +43,7 @@ class ReportSupplement:
     report_id: int
     battery_percent: Optional[int] = None
     battery_voltage_v: Optional[float] = None
+    battery_charging: Optional[bool] = None
     soil_ph: Optional[float] = None
     nitrogen_mg_kg: Optional[int] = None
     phosphorus_mg_kg: Optional[int] = None

@@ -282,8 +282,9 @@ offers an enrollment window or an allowlist policy.
 Contract v3 is defined in [`protocol/README.md`](../protocol/README.md). A report is
 keyed by `(sensor identity, report ID)`, where the report ID is a 32-bit count the
 sensor never repeats. A report travels as a main packet (soil and air measurements,
-optional acquisition timestamp) and a supplementary packet (battery, soil pH and
-nitrogen/phosphorus/potassium when reported, or the report ID alone). The two may
+optional acquisition timestamp) and a supplementary packet (battery level, voltage
+and whether it is charging, soil pH and nitrogen/phosphorus/potassium when
+reported, or the report ID alone). The two may
 arrive in either order, and the report is complete when both are stored. A reading
 is stored, and appears in latest values, history, and care events, when its main
 packet arrives. A supplementary packet is kept in `report_supplements` whichever
@@ -345,7 +346,9 @@ needs at least:
 - advertisement ID, sensor ID, and report ID, unique per sensor (null only for
   readings stored before contract v3);
 - acquisition time, null when the sensor did not know it, and receipt time;
-- available measurements in canonical units, including battery level and voltage;
+- available measurements in canonical units, including battery level, voltage and
+  `battery_charging` (true or false; null when the report carried no battery and
+  for every reading stored before schema version 19);
 - explicit source status for partial samples; and
 - no fabricated values for unavailable sources.
 

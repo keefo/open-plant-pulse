@@ -10,6 +10,13 @@
 
 #define DELIVERY_NAMESPACE "rqueue"
 #define COUNTERS_KEY "counters"
+#define FORMAT_KEY "format"
+/* The encoding of the packets held in the queue. Raise it whenever the
+ * contract changes what a packet carries: queued reports of an older format
+ * are discarded at boot, since the hub no longer accepts them and one that can
+ * never be acknowledged would block the queue for good. 2 added battery
+ * charging (0x16) to the supplementary packet. */
+#define QUEUE_FORMAT 2U
 
 static const char *TAG = "delivery";
 static StaticSemaphore_t lock_storage;
@@ -93,6 +100,24 @@ static bool save_entry(void *context, uint32_t slot, const opp_queued_report_t *
     return saved;
 }
 
+static void discard_older_format(void)
+{
+    nvs_handle_t handle;
+    if (!with_handle(NVS_READWRITE, &handle)) {
+        return;
+    }
+    uint8_t format = 0;
+    if (nvs_get_u8(handle, FORMAT_KEY, &format) != ESP_OK || format != QUEUE_FORMAT) {
+        const uint32_t discarded = opp_report_queue_depth(&queue);
+        if (opp_report_queue_clear(&queue) && nvs_set_u8(handle, FORMAT_KEY, QUEUE_FORMAT) == ESP_OK &&
+            nvs_commit(handle) == ESP_OK && discarded > 0) {
+            ESP_LOGW(TAG, "Discarded %lu queued report(s) of format %u; this firmware sends format %u",
+                     (unsigned long)discarded, format, QUEUE_FORMAT);
+        }
+    }
+    nvs_close(handle);
+}
+
 esp_err_t opp_delivery_init(void)
 {
     if (lock == NULL) {
@@ -106,6 +131,9 @@ esp_err_t opp_delivery_init(void)
     };
     xSemaphoreTake(lock, portMAX_DELAY);
     opened = opp_report_queue_open(&queue, &storage, CONFIG_OPP_REPORT_QUEUE_CAPACITY);
+    if (opened) {
+        discard_older_format();
+    }
     const uint32_t depth = opp_report_queue_depth(&queue);
     xSemaphoreGive(lock);
     if (!opened) {

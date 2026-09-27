@@ -26,7 +26,7 @@ READING_COLUMNS = """
     air_humidity_percent, soil_ph, nitrogen_mg_kg,
     phosphorus_mg_kg, potassium_mg_kg, received_at,
     soil_source_status, air_source_status, contract_version,
-    battery_percent, battery_voltage_v
+    battery_percent, battery_voltage_v, battery_charging
 """
 # What a main packet says about its report. The same report ID with the same
 # values is the sensor repeating itself; with different values it is a conflict.
@@ -38,7 +38,7 @@ MAIN_CONTENT_COLUMNS = """
 # this order.
 SUPPLEMENT_CONTENT_COLUMNS = """
     battery_percent, battery_voltage_v, soil_ph, nitrogen_mg_kg,
-    phosphorus_mg_kg, potassium_mg_kg
+    phosphorus_mg_kg, potassium_mg_kg, battery_charging
 """
 RAW_REPORT_LOG_LIMIT = 50
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
@@ -92,6 +92,15 @@ WIFI_FAILURES = (
     "no_address",
     "unsupported_band",
 )
+
+
+def _charging_column(charging: Optional[bool]) -> Optional[int]:
+    # SQLite has no boolean; charging is stored as 0 or 1, null when not said.
+    return None if charging is None else int(charging)
+
+
+def _charging_value(column: Optional[int]) -> Optional[bool]:
+    return None if column is None else bool(column)
 
 
 class ReadingStore:
@@ -283,7 +292,7 @@ class ReadingStore:
                         f"""
                         INSERT INTO report_supplements (
                             sensor_id, report_id, received_at, {SUPPLEMENT_CONTENT_COLUMNS}
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (supplement.sensor_id, supplement.report_id, received_at, *content),
                     )
@@ -291,7 +300,8 @@ class ReadingStore:
                         """
                         UPDATE sensor_readings
                         SET battery_percent = ?, battery_voltage_v = ?, soil_ph = ?,
-                            nitrogen_mg_kg = ?, phosphorus_mg_kg = ?, potassium_mg_kg = ?
+                            nitrogen_mg_kg = ?, phosphorus_mg_kg = ?, potassium_mg_kg = ?,
+                            battery_charging = ?
                         WHERE sensor_id = ? AND report_id = ?
                         """,
                         (*content, supplement.sensor_id, supplement.report_id),
@@ -1934,9 +1944,9 @@ class ReadingStore:
                 soil_temperature_c, moisture_percent, conductivity_us_cm,
                 air_temperature_c, air_humidity_percent, soil_ph,
                 nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg,
-                battery_percent, battery_voltage_v,
+                battery_percent, battery_voltage_v, battery_charging,
                 soil_source_status, air_source_status, contract_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 advertisement_id,
@@ -1955,6 +1965,7 @@ class ReadingStore:
                 reading.potassium_mg_kg,
                 reading.battery_percent,
                 reading.battery_voltage_v,
+                _charging_column(reading.battery_charging),
                 reading.soil_source_status,
                 reading.air_source_status,
                 reading.contract_version,
@@ -2161,6 +2172,7 @@ class ReadingStore:
                 potassium_mg_kg=row[11],
                 battery_percent=row[16],
                 battery_voltage_v=row[17],
+                battery_charging=_charging_value(row[18]),
                 soil_source_status=row[13],
                 air_source_status=row[14],
                 contract_version=row[15],
@@ -2238,6 +2250,7 @@ class ReadingStore:
             supplement.nitrogen_mg_kg,
             supplement.phosphorus_mg_kg,
             supplement.potassium_mg_kg,
+            _charging_column(supplement.battery_charging),
         )
 
     @staticmethod
@@ -2250,6 +2263,7 @@ class ReadingStore:
             nitrogen_mg_kg=supplement[3],
             phosphorus_mg_kg=supplement[4],
             potassium_mg_kg=supplement[5],
+            battery_charging=_charging_value(supplement[6]),
         )
 
     @staticmethod

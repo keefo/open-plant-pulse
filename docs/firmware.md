@@ -458,8 +458,10 @@ Firmware sends [contract v3](../protocol/README.md#bthome-contract-version-3).
 Each report takes the next report ID, gathers the latest SHT45 sample, soil
 sample (with pH and N/P/K), battery level and voltage, and the acquisition time
 when the clock is trusted, and becomes two packets: a main packet with the core
-measurements (24 bytes at most) and a supplementary one with battery, pH and
-N/P/K, sent even when it carries only the report ID. The broadcaster swaps
+measurements (24 bytes at most) and a supplementary one with battery level,
+voltage and charging state, pH and N/P/K, sent even when it carries only the
+report ID. Charging is current into the pack above the battery monitor's idle
+threshold (15 mA). The broadcaster swaps
 between the two every 500 ms within one advertising window, since legacy
 advertising accepts new data while it runs. With no SHT45 or soil sample the
 sensor sends a beacon, the single byte `0x40`.
@@ -480,7 +482,10 @@ and shows the hub its newest data within a second or two. Firmware 0.18.0:
   `counters` blob with head and tail, one blob per slot) before it is first
   advertised. `OPP_REPORT_QUEUE_CAPACITY` (default 32) bounds it; a full queue
   makes no new reports and never overwrites one. A sensor no hub owns does not
-  queue, and a release by the hub clears it.
+  queue, and a release by the hub clears it. The queue records the format of the
+  packets it holds (NVS key `format`); firmware that sends a different format
+  discards queued reports of the old one at boot, because the hub would refuse
+  them and they would block the queue.
 - **Freshness.** The sensor advertises its newest report, so what the hub
   receives over the air is current whatever is still queued. With the queue
   empty it sends beacons.
