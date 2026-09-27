@@ -44,7 +44,4 @@ class ReportSupplement:
     nitrogen_mg_kg: Optional[int] = None
     phosphorus_mg_kg: Optional[int] = None
     potassium_mg_kg: Optional[int] = None
-    # Set on the report a person forced from the sensor's console, which the hub
-    # acknowledges once it has stored it.
-    force_report: bool = False
     contract_version: int = 0

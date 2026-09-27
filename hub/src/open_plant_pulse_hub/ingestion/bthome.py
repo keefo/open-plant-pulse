@@ -17,7 +17,6 @@ OBJECT_FORMATS: Dict[int, Tuple[int, bool]] = {
     0x0C: (2, False),
     0x2E: (1, False),
     0x2F: (1, False),
-    0x3A: (1, False),
     0x3E: (4, False),
     0x45: (2, True),
     0x50: (4, False),
@@ -28,7 +27,6 @@ SOIL_EXTRAS_OBJECT = 0x54
 SOIL_EXTRAS_LENGTH = 8
 SOIL_EXTRAS_LAYOUT_VERSION = 1
 MAIN_OBJECTS = frozenset({0x02, 0x2E, 0x2F, 0x45, 0x50, 0x56})
-SUPPLEMENTARY_OBJECTS = frozenset({0x01, 0x0C, 0x3A, SOIL_EXTRAS_OBJECT})
 SOIL_OBJECTS = frozenset({0x02, 0x2F, 0x56})
 AIR_OBJECTS = frozenset({0x2E, 0x45})
 BATTERY_OBJECTS = frozenset({0x01, 0x0C})
@@ -107,15 +105,14 @@ def decode_service_data(
     if report_id == 0:
         raise ValueError("report ID 0 is never used")
     present = set(values)
-    is_main = bool(present & MAIN_OBJECTS)
-    is_supplementary = bool(present & SUPPLEMENTARY_OBJECTS)
-    if is_main and is_supplementary:
-        raise ValueError("a packet cannot mix main and supplementary objects")
-    if is_main:
-        return _main_reading(values, sensor_id, report_id)
-    if is_supplementary:
+    # Every object is either main, supplementary or the report ID, so a packet
+    # with no main object is supplementary, the report ID alone included: the
+    # sensor sends one with every report so that the hub knows it is complete.
+    if not present & MAIN_OBJECTS:
         return _supplement(values, soil_extras, sensor_id, report_id)
-    raise ValueError("a report ID alone is neither a main nor a supplementary packet")
+    if present - MAIN_OBJECTS - {REPORT_ID_OBJECT}:
+        raise ValueError("a packet cannot mix main and supplementary objects")
+    return _main_reading(values, sensor_id, report_id)
 
 
 def _main_reading(values: Dict[int, int], sensor_id: str, report_id: int) -> SensorReading:
@@ -166,8 +163,6 @@ def _supplement(
     has_battery = BATTERY_OBJECTS <= present
     if has_battery and not 0 <= values[0x01] <= 100:
         raise ValueError("battery level must be between 0 and 100 percent")
-    if 0x3A in values and values[0x3A] != 1:
-        raise ValueError("button event must be a press")
     soil_ph = nitrogen = phosphorus = potassium = None
     if soil_extras:
         if soil_extras[0] != SOIL_EXTRAS_LAYOUT_VERSION:
@@ -188,6 +183,5 @@ def _supplement(
         nitrogen_mg_kg=nitrogen,
         phosphorus_mg_kg=phosphorus,
         potassium_mg_kg=potassium,
-        force_report=0x3A in values,
         contract_version=CONTRACT_VERSION,
     )

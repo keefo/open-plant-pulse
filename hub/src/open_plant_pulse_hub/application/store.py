@@ -34,11 +34,11 @@ MAIN_CONTENT_COLUMNS = """
     observed_at, soil_temperature_c, moisture_percent, conductivity_us_cm,
     air_temperature_c, air_humidity_percent, soil_source_status, air_source_status
 """
-# The same for a supplementary packet. The first six are also the reading's
-# columns, in this order.
+# The same for a supplementary packet. These are also the reading's columns, in
+# this order.
 SUPPLEMENT_CONTENT_COLUMNS = """
     battery_percent, battery_voltage_v, soil_ph, nitrogen_mg_kg,
-    phosphorus_mg_kg, potassium_mg_kg, force_report
+    phosphorus_mg_kg, potassium_mg_kg
 """
 RAW_REPORT_LOG_LIMIT = 50
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
@@ -283,7 +283,7 @@ class ReadingStore:
                         f"""
                         INSERT INTO report_supplements (
                             sensor_id, report_id, received_at, {SUPPLEMENT_CONTENT_COLUMNS}
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (supplement.sensor_id, supplement.report_id, received_at, *content),
                     )
@@ -294,7 +294,7 @@ class ReadingStore:
                             nitrogen_mg_kg = ?, phosphorus_mg_kg = ?, potassium_mg_kg = ?
                         WHERE sensor_id = ? AND report_id = ?
                         """,
-                        (*content[:6], supplement.sensor_id, supplement.report_id),
+                        (*content, supplement.sensor_id, supplement.report_id),
                     )
                     row = self._database.execute(
                         f"""
@@ -333,26 +333,53 @@ class ReadingStore:
             self._condition.notify_all()
             return status
 
-    def stored_forced_report(self, sensor_id: str, report_id: int) -> bool:
-        """Return whether a report a person forced is stored, both of its packets.
+    def report_is_acknowledgeable(self, sensor_id: str, report_id: int) -> bool:
+        """Return whether the sensor may be told this report is safely stored.
 
-        The sensor is told its forced report arrived only once it has.
+        That is when both of its packets are stored and nothing conflicting has
+        been heard for it, and only for a sensor this hub owns: the
+        acknowledgement travels over the bonded link, which an unclaimed sensor
+        does not have. An acknowledged report is removed from the sensor's queue
+        for good, so any doubt about what was stored means no.
         """
         with self._condition:
             row = self._database.execute(
                 """
                 SELECT 1
-                FROM report_supplements
-                JOIN sensor_readings
-                  ON sensor_readings.sensor_id = report_supplements.sensor_id
-                 AND sensor_readings.report_id = report_supplements.report_id
-                WHERE report_supplements.sensor_id = ?
-                  AND report_supplements.report_id = ?
-                  AND report_supplements.force_report = 1
+                FROM sensor_readings
+                JOIN report_supplements
+                  ON report_supplements.sensor_id = sensor_readings.sensor_id
+                 AND report_supplements.report_id = sensor_readings.report_id
+                JOIN sensors ON sensors.sensor_id = sensor_readings.sensor_id
+                WHERE sensor_readings.sensor_id = ?
+                  AND sensor_readings.report_id = ?
+                  AND sensors.enrollment_status = 'enrolled'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM advertisements
+                      WHERE advertisements.sensor_id = sensor_readings.sensor_id
+                        AND advertisements.report_id = sensor_readings.report_id
+                        AND advertisements.decode_status = 'conflict'
+                  )
                 """,
                 (sensor_id, report_id),
             ).fetchone()
         return row is not None
+
+    def mark_report_acknowledged(self, sensor_id: str, report_id: int) -> None:
+        """Record that the sensor was told this report is stored.
+
+        Kept as the latest acknowledgement: a sensor that is acknowledged again
+        missed the earlier one, so the latest is the one it acted on.
+        """
+        acknowledged_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensor_readings SET acknowledged_at = ?
+                WHERE sensor_id = ? AND report_id = ?
+                """,
+                (acknowledged_at, sensor_id, report_id),
+            )
 
     def record_beacon(
         self,
@@ -2155,7 +2182,6 @@ class ReadingStore:
             supplement.nitrogen_mg_kg,
             supplement.phosphorus_mg_kg,
             supplement.potassium_mg_kg,
-            int(supplement.force_report),
         )
 
     @staticmethod

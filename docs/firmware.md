@@ -93,6 +93,7 @@ development values, not proof of a sensor's register map:
 | `OPP_SHT45_SCL_GPIO` | 5 | I2C clock pin shared by SHT45 and INA219 (XIAO D3) |
 | `OPP_SHT45_SAMPLE_INTERVAL_SECONDS` | 5 | Awake development sampling interval |
 | `OPP_SENSOR_MODBUS_ADDRESS` | 1 | Probe RTU slave address |
+| `OPP_REPORT_QUEUE_CAPACITY` | 32 | Reports kept until the hub acknowledges them |
 | `OPP_BATTERY_MONITOR_ENABLED` | enabled | Read pack voltage and current from the INA219 |
 | `OPP_INA219_ADDRESS` | 64 (`0x40`) | INA219 I2C address |
 | `OPP_INA219_SHUNT_MILLIOHMS` | 100 | Shunt resistance; read the module's marking (`R100` is 100) |
@@ -306,16 +307,11 @@ The Maintenance **Report now** control is available only in the always-awake Wi-
 diagnostics runtime. It queues a fresh BLE report immediately, without changing or
 resetting the configured periodic deadline. The page tracks the request ID and
 report ID through queued, reporting, acknowledged, unacknowledged, and failed
-states. A successful result means the Hub durably accepted that exact report and
-wrote the matching acknowledgment token (version 2, carrying the report ID) back
-during the same BLE window.
-
-The request uses the standard BTHome button-press event and the connected-BLE
-acknowledgment characteristic documented in [`protocol/README.md`](../protocol/README.md).
-If there is no current SHT45 sample, advertising fails, the Hub is stopped, or the
-token does not match, the dashboard shows failure rather than inferring delivery.
-Production deep-sleep firmware intentionally has no web button and does not wait
-for acknowledgments.
+states. A forced report is an ordinary report: on a sensor that belongs to a hub
+it joins the delivery queue and shows acknowledged when the hub's
+acknowledgement names it, however long that takes. A sensor no hub owns cannot
+be acknowledged, so its forced report ends unacknowledged after its window. A
+full queue fails the request rather than dropping an earlier report.
 
 The service currently has no encryption, authentication, or physical-presence
 gate. It is suitable only for prototype validation on a trusted bench.
@@ -353,8 +349,9 @@ included), out-of-range probe values, both register-reading functions
 (`0x03`/`0x04`),
 the contract-v3 main, supplementary and beacon packets byte for byte against
 `protocol/fixtures/bthome-v3.json`, partial source omission, rounding and range
-limits, the forced-report acknowledgement token, and stable local-name
-formatting.
+limits, the acknowledgement token, the delivery queue's order, capacity,
+acknowledgement rules and restart behaviour against an in-memory store, and
+stable local-name formatting.
 
 ## Implementation status
 
@@ -456,16 +453,38 @@ Overview shows them in a Battery section.
 
 ### BTHome reports
 
-Firmware 0.16.0 sends [contract v3](../protocol/README.md#bthome-contract-version-3).
+Firmware sends [contract v3](../protocol/README.md#bthome-contract-version-3).
 Each report takes the next report ID, gathers the latest SHT45 sample, soil
 sample (with pH and N/P/K), battery level and voltage, and the acquisition time
-when the clock is trusted, and becomes up to two packets: a main packet with
-the core measurements (24 bytes at most) and a supplementary one with battery,
-pH, N/P/K and the forced-report marker. The broadcaster swaps between the two
-every 500 ms within one advertising window, since legacy advertising accepts
-new data while it runs. Reachability windows repeat the last pair unchanged,
-which the hub recognises by its report ID and stores nothing from. With no SHT45
-or soil sample the sensor sends a beacon, the single byte `0x40`.
+when the clock is trusted, and becomes two packets: a main packet with the core
+measurements (24 bytes at most) and a supplementary one with battery, pH and
+N/P/K, sent even when it carries only the report ID. The broadcaster swaps
+between the two every 500 ms within one advertising window, since legacy
+advertising accepts new data while it runs. With no SHT45 or soil sample the
+sensor sends a beacon, the single byte `0x40`.
+
+### Durable delivery
+
+From firmware 0.17.0 a sensor that belongs to a hub keeps every report until
+the hub acknowledges it (see
+[durable delivery](../protocol/README.md#durable-delivery-and-acknowledgement)).
+A new report is written to a queue in NVS (namespace `rqueue`: a `counters` blob
+holding the head and tail, and one blob per slot) before it is first
+advertised. The sensor advertises only the oldest unacknowledged report, in
+every window, scheduled or reachability, and that repetition is the retry. The
+hub writes the five-byte acknowledgement once it has stored both packets; the
+sensor saves the new head before the next window, so the next report goes on air
+within seconds. With the queue empty it sends beacons rather than repeat an
+acknowledged report, which would only make the hub connect to acknowledge it
+again.
+
+`OPP_REPORT_QUEUE_CAPACITY` (default 32, at most 64) bounds the queue, about 16
+hours at a 30-minute interval. A full queue makes no new reports and says so on
+the console's Hub section ("Waiting for hub") and in `/status`
+(`report_queue_depth`, `report_queue_capacity`); it never overwrites one. A
+sensor no hub owns does not queue, and a release by the hub clears the queue.
+Throughput is one report per acknowledgement, a few seconds each, so a
+reporting interval of seconds can outpace it; a minute or more cannot.
 
 Report IDs are reserved in blocks of 100 in NVS (namespace `report`, key
 `limit`) and kept in retained memory across deep sleep, so flash is written

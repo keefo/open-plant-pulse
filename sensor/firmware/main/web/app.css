@@ -309,3 +309,13 @@ select { width: min(260px, 100%); padding: 0 34px 0 10px; background: var(--surf
   .maintenance-row { align-items: flex-start; padding-block: 10px; }
   .maintenance-action { flex-direction: column; align-items: flex-end; gap: 5px; }
 }
+
+/* iOS-style battery glyph on the Battery section. */
+.battery-reading { display: inline-flex; align-items: center; gap: 9px; }
+.battery-glyph { position: relative; display: inline-block; box-sizing: border-box; width: 1.75em; height: 0.9em; margin-right: 3px; padding: 2px; border: 1.5px solid var(--muted); border-radius: 0.26em; vertical-align: middle; }
+.battery-glyph::after { content: ""; position: absolute; top: 50%; right: -4.5px; width: 2.5px; height: 0.34em; transform: translateY(-50%); border-radius: 0 2px 2px 0; background: var(--muted); }
+.battery-fill { display: block; height: 100%; min-width: 2px; border-radius: 0.12em; background: var(--green); }
+.battery-glyph.low .battery-fill { background: var(--amber); }
+.battery-glyph.critical .battery-fill { background: var(--red); }
+.battery-glyph.unknown .battery-fill { min-width: 0; }
+.battery-glyph.charging::before { content: ""; position: absolute; inset: 0; margin: auto; width: 0.42em; height: 0.62em; background: var(--text); clip-path: polygon(55% 0, 10% 58%, 45% 58%, 35% 100%, 90% 40%, 55% 40%); }

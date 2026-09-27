@@ -46,14 +46,13 @@ the local name travels in the scan response.
 | --- | --- | --- | --- | --- |
 | 1 | Battery | `0x01` | unsigned 8-bit; 1 % | Battery |
 | 2 | Battery voltage | `0x0C` | unsigned 16-bit; factor 0.001 V | Battery |
-| 3 | Button event | `0x3A` | unsigned 8-bit; `0x01` press | Forced report |
-| 4 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
-| 5 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
+| 3 | Report ID (`count`) | `0x3E` | unsigned 32-bit | Required |
+| 4 | Soil extras (`raw`) | `0x54` | length byte `0x08`, then the layout below | Soil extras |
 
-Battery is `0x01` and `0x0C` together or neither. `0x3A` appears only in the
-report a user forced from the sensor's console. At least one group besides the
-report ID is present; a report with nothing for the supplementary packet sends
-only the main one. At most 23 bytes.
+Battery is `0x01` and `0x0C` together or neither. Every report sends a
+supplementary packet, even when it carries only the report ID: that is how the
+hub knows a report is complete, rather than guessing whether a second packet
+was lost or never existed. At most 21 bytes.
 
 BTHome defines no pH or nutrient objects, so they travel in one raw object that
 only the hub decodes (Home Assistant shows battery natively and ignores it):
@@ -67,9 +66,9 @@ only the hub decodes (Home Assistant shows battery natively and ignores it):
 | 6 | 2 | Potassium, mg/kg |
 
 A packet is main if it carries any of `0x02`, `0x2E`, `0x2F`, `0x45`, `0x50` or
-`0x56`, and supplementary if it carries any of `0x01`, `0x0C`, `0x3A` or `0x54`.
-A packet mixing the two sets, missing the report ID, or carrying any other
-object is malformed.
+`0x56`, and supplementary otherwise: `0x01`, `0x0C` and `0x54`, or the report
+ID alone. A packet mixing the two sets, missing the report ID, or carrying any
+other object is malformed.
 
 ### Beacon
 
@@ -94,7 +93,8 @@ continues from the end of the reserved block. `0` is never used.
 The hub's key for a report is `(sensor identity, report ID)`. Main and
 supplementary packets of one report may arrive in either order and are joined
 into one reading; a reading appears once its main packet is stored, with
-supplementary values attached whenever they arrive. Receiving a packet whose
+supplementary values attached whenever they arrive. A report is complete when
+both are stored. Receiving a packet whose
 content matches what is already stored for its key is a duplicate and stores
 nothing; this is how repeated advertising of one report is absorbed. The same
 key with different content for the same packet kind is a conflict: it is
@@ -138,36 +138,43 @@ report. The Hub stores `observed_at` as null for such a report while retaining
 `received_at`; this requires a v3 storage migration because the v2 column is not
 nullable.
 
-### Durable delivery and acknowledgement (step 2, not implemented)
+### Durable delivery and acknowledgement
 
-Contract v3 is being introduced in two steps. The telemetry above is step 1.
-Durable delivery below is step 2; until it lands, a report the hub misses is
-lost, and repeated advertising is the only protection.
+A report is kept until the hub confirms it has stored it. This replaced
+one-way delivery, in which a report the hub missed was lost.
 
-The sensor persists each complete report before its first advertisement and keeps
-it until acknowledged. It advertises the oldest unacknowledged report first and
-retries the identical report with bounded exponential backoff and jitter. Queue
-capacity exhaustion must stop new sampling and raise a local diagnostic rather
-than silently overwrite an unacknowledged report.
+**Sensor.** Once the sensor belongs to a hub, each new report is written to a
+queue in flash before it is first advertised, and stays there until
+acknowledged. The sensor advertises only the oldest unacknowledged report, both
+packets alternately, in every advertising window, and the repetition is the
+retry: there are no separate timers. A deep-sleeping sensor retries at each
+wake. When the queue is full, the sensor makes no new reports and says so on its
+console, rather than overwriting an unacknowledged one. An unclaimed sensor has
+no hub that could acknowledge anything, so it does not queue: it advertises its
+latest report without keeping it. A release by the hub clears the queue.
 
-The Hub's durable uniqueness key is `(sensor identity, enrollment, report ID)`. It
-commits the report and reception metadata before acknowledging it. Receiving the
-same key and identical immutable content is a successful duplicate and must produce
-the same acknowledgement; receiving the same key with different content is a
-conflict and must not be acknowledged.
+**Hub.** The hub acknowledges a report once both of its packets are stored. It
+also acknowledges again when a sensor keeps advertising a report it already
+holds complete and identical, because that means an earlier acknowledgement was
+lost. A report in conflict is never acknowledged.
 
-Connected-BLE report acknowledgement version 3 is a five-byte token on the existing
-read/write characteristic (version 2 is the forced-report acknowledgement):
+**Acknowledgement version 3** is a five-byte token written to the existing
+read/write characteristic `7f510002-1b15-4c28-9a4a-8d0f4f505000` over the
+bonded, encrypted link:
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Acknowledgement protocol version, `3` |
+| 0 | 1 | Protocol version, `3` |
 | 1 | 4 | Report ID, unsigned little-endian |
 
-Only an exact acknowledgement for a durably stored report removes that report from
-the sensor queue. A duplicate, delayed, mismatched, or out-of-order token must not
-remove another report. Sensor deletion and queue-head advancement must be durable
-before the next report is advertised.
+A token naming the oldest queued report removes it. A token naming a report no
+longer queued (an older one, acknowledged before) is accepted and changes
+nothing, so a repeated acknowledgement is harmless. Any other token is refused
+and removes nothing. Removing the report is durable before the next one is
+advertised.
+
+A report forced from the sensor's console is an ordinary report: it joins the
+queue, and the console shows it acknowledged when this token names it.
 
 ## Change policy
 
@@ -215,40 +222,6 @@ is applied. Plant profile, thresholds, archival state, and history stay hub-owne
 This prototype characteristic is unencrypted and unauthenticated. Nearby clients
 can observe or overwrite configuration. Pairing, authorization, recovery, and
 measured connection-window energy are required before production deployment.
-
-## Connected-BLE forced-report acknowledgement version 2
-
-The always-awake diagnostics firmware can request an immediate report from its
-console, bypassing the current reporting interval without changing the next
-scheduled deadline. That report's supplementary packet carries the button event
-`0x3A` with press `0x01`. The hub first durably ingests the report, then
-connects to the existing service and uses its read/write characteristic
-`7f510002-1b15-4c28-9a4a-8d0f4f505000` to acknowledge the exact request.
-Payload version and length distinguish the token from device configuration.
-
-The characteristic value is a canonical nine-byte token:
-
-| Offset | Size | Field |
-| --- | --- | --- |
-| 0 | 1 | Protocol version, `2` |
-| 1 | 4 | Non-zero force-report request ID, unsigned little-endian |
-| 5 | 4 | Report ID of the forced report, unsigned little-endian |
-
-While a request awaits acknowledgment, firmware returns the token instead of
-device configuration when the characteristic is read. It waits for the report's
-advertising window and 60 seconds after it: the hub acknowledges only once it
-has stored both packets of the report, and connecting and encrypting then
-routinely takes longer than the three-second window. The hub verifies that its
-report ID matches the report it stored with the button event, and writes the
-identical token back. Only that exact write marks the request acknowledged;
-subsequent reads return device configuration normally. A missing or mismatched
-acknowledgment, or one after the 60-second grace period, is not reported as
-success. Repeated callbacks for one
-advertisement burst do not trigger repeated hub connections.
-
-This acknowledgment is limited to user-initiated reports in the always-awake
-diagnostics runtime. Scheduled and production telemetry remain one-way until
-durable delivery (step 2) lands.
 
 ## Connected-BLE Wi-Fi credentials version 3
 

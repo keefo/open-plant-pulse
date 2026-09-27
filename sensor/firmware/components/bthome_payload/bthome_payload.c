@@ -79,7 +79,6 @@ size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
                                        uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE])
 {
     if (report == NULL || output == NULL || report->report_id == 0 ||
-        (!report->battery_available && !report->soil_extras_available && !report->forced) ||
         (report->battery_available && report->battery_percent > 100U) ||
         (report->soil_extras_available && report->ph_tenths > 140U)) {
         return 0;
@@ -90,9 +89,6 @@ size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
     if (report->battery_available) {
         append_u8(output, &offset, 0x01, report->battery_percent);
         append_u16(output, &offset, 0x0C, report->battery_millivolts);
-    }
-    if (report->forced) {
-        append_u8(output, &offset, 0x3A, 0x01);
     }
     append_u32(output, &offset, 0x3E, report->report_id);
     if (report->soil_extras_available) {

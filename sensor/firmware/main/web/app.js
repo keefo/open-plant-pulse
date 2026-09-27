@@ -511,6 +511,28 @@ function formatHours(hours) {
   return `${(hours / 24).toFixed(1)} days`;
 }
 
+// An iOS-style battery: outline, terminal nub, a fill for the charge, a bolt
+// while charging, and the percentage beside it.
+function renderBatteryGlyph(percent, charging) {
+  const known = Number.isFinite(percent);
+  const level = known ? Math.max(0, Math.min(100, percent)) : 0;
+  const glyph = document.createElement('span');
+  glyph.className = `battery-glyph${!known ? ' unknown' : level <= 10 ? ' critical'
+    : level <= 20 ? ' low' : ''}${charging ? ' charging' : ''}`;
+  glyph.setAttribute('aria-hidden', 'true');
+  const fill = document.createElement('span');
+  fill.className = 'battery-fill';
+  fill.style.width = `${level}%`;
+  glyph.appendChild(fill);
+  const label = document.createElement('span');
+  label.textContent = known ? `${level.toFixed(0)}%` : '--';
+  const holder = document.getElementById('overview-battery-percent');
+  holder.className = 'battery-reading';
+  holder.setAttribute('aria-label', known
+    ? `Battery ${level.toFixed(0)} percent${charging ? ', charging' : ''}` : 'Battery unknown');
+  holder.replaceChildren(glyph, label);
+}
+
 function renderBattery(status) {
   const available = Boolean(status?.battery_available);
   const stateText = available
@@ -521,7 +543,8 @@ function renderBattery(status) {
   state.textContent = stateText;
   const text = (id, value) => { document.getElementById(id).textContent = value; };
   if (!available) {
-    for (const id of ['overview-battery-percent', 'overview-battery-voltage',
+    renderBatteryGlyph(null, false);
+    for (const id of ['overview-battery-voltage',
       'overview-battery-current', 'overview-battery-power', 'overview-battery-time']) {
       text(id, '--');
     }
@@ -535,7 +558,7 @@ function renderBattery(status) {
     return;
   }
 
-  text('overview-battery-percent', `${status.battery_percent.toFixed(0)}%`);
+  renderBatteryGlyph(status.battery_percent, status.battery_state === 'charging');
   // Until a full charge has pinned it, the level began as a voltage guess.
   text('overview-battery-percent-note', status.battery_calibrated
     ? 'Counted since last full charge'
@@ -582,6 +605,15 @@ function renderDeviceConfiguration(status) {
     : `${intervalSeconds / 60} minute${intervalSeconds === 60 ? '' : 's'}`;
   document.getElementById('configured-reporting-interval').textContent =
     interval;
+  // Reports stay on the sensor until the hub acknowledges them; a full queue
+  // means the sensor has stopped making new ones.
+  const depth = status.report_queue_depth;
+  const capacity = status.report_queue_capacity;
+  const queue = document.getElementById('report-queue');
+  queue.textContent = Number.isInteger(depth) ? `${depth} of ${capacity} reports` : '--';
+  document.getElementById('report-queue-note').textContent = !Number.isInteger(depth) ? ''
+    : depth >= capacity ? 'Full: no new reports until the hub catches up'
+      : depth === 0 ? 'Everything acknowledged' : 'Kept until the hub acknowledges';
 }
 
 function timezoneName(timezone) {

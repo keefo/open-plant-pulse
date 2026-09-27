@@ -10,28 +10,6 @@ static portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 static opp_force_report_status_t report_status;
 static uint32_t next_request_id;
 
-/* How long after its advertising window a forced report can still be
- * acknowledged. A contract-v3 report is two packets, and the hub acknowledges
- * only once it has stored both, then needs a few seconds to connect and
- * encrypt: that routinely lands after the three-second window. */
-#define ACK_GRACE_MS 60000
-
-static int64_t monotonic_ms(void);
-
-/* The token is offered while the report is on air and for the grace period
- * after it. Caller holds status_lock. */
-static bool awaiting_ack(void)
-{
-    if (report_status.request_id == 0 || !report_status.report_id_valid) {
-        return false;
-    }
-    if (report_status.state == OPP_FORCE_REPORT_REPORTING) {
-        return true;
-    }
-    return report_status.state == OPP_FORCE_REPORT_UNACKNOWLEDGED &&
-           monotonic_ms() - report_status.report_completed_at_ms < ACK_GRACE_MS;
-}
-
 static int64_t monotonic_ms(void)
 {
     return esp_timer_get_time() / 1000;
@@ -111,12 +89,15 @@ void opp_force_report_failed(uint32_t request_id, opp_force_report_failure_t fai
     portEXIT_CRITICAL(&status_lock);
 }
 
-void opp_force_report_finished(uint32_t request_id, esp_err_t broadcast_result)
+void opp_force_report_finished(uint32_t request_id, esp_err_t broadcast_result, bool queued)
 {
     portENTER_CRITICAL(&status_lock);
     if (report_status.request_id == request_id) {
         report_status.report_completed_at_ms = monotonic_ms();
-        if (report_status.state != OPP_FORCE_REPORT_ACKNOWLEDGED) {
+        /* A queued report stays on air until the hub acknowledges it, so its
+         * first window ending decides nothing. Without a queue (a sensor no
+         * hub owns yet) the window was its only chance. */
+        if (!queued && report_status.state == OPP_FORCE_REPORT_REPORTING) {
             report_status.state = broadcast_result == ESP_OK
                                       ? OPP_FORCE_REPORT_UNACKNOWLEDGED
                                       : OPP_FORCE_REPORT_FAILED;
@@ -138,41 +119,15 @@ void opp_force_report_get_status(opp_force_report_status_t *status)
     portEXIT_CRITICAL(&status_lock);
 }
 
-bool opp_force_report_get_ack(opp_report_ack_t *ack)
+void opp_force_report_delivered(uint32_t report_id)
 {
-    if (ack == NULL) {
-        return false;
-    }
-    bool available = false;
     portENTER_CRITICAL(&status_lock);
-    if (awaiting_ack()) {
-        ack->request_id = report_status.request_id;
-        ack->report_id = report_status.report_id;
-        available = true;
-    }
-    portEXIT_CRITICAL(&status_lock);
-    return available;
-}
-
-esp_err_t opp_force_report_acknowledge(const opp_report_ack_t *ack)
-{
-    if (ack == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    esp_err_t result = ESP_ERR_INVALID_STATE;
-    portENTER_CRITICAL(&status_lock);
-    if (awaiting_ack() && report_status.request_id == ack->request_id &&
-        report_status.report_id == ack->report_id) {
+    if (report_status.state == OPP_FORCE_REPORT_REPORTING && report_status.report_id_valid &&
+        report_status.report_id == report_id) {
         report_status.state = OPP_FORCE_REPORT_ACKNOWLEDGED;
         report_status.acknowledged_at_ms = monotonic_ms();
-        result = ESP_OK;
-    } else if (report_status.state == OPP_FORCE_REPORT_ACKNOWLEDGED &&
-               report_status.request_id == ack->request_id &&
-               report_status.report_id == ack->report_id) {
-        result = ESP_OK;
     }
     portEXIT_CRITICAL(&status_lock);
-    return result;
 }
 
 const char *opp_force_report_state_name(opp_force_report_state_t state)
@@ -206,6 +161,8 @@ const char *opp_force_report_failure_name(opp_force_report_failure_t failure)
         return "payload encoding failed";
     case OPP_FORCE_REPORT_FAILURE_BROADCAST:
         return "BLE broadcast failed";
+    case OPP_FORCE_REPORT_FAILURE_QUEUE_FULL:
+        return "report queue full: the hub has not acknowledged earlier reports";
     default:
         return "unknown failure";
     }

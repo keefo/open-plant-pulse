@@ -758,10 +758,39 @@ function renderDrainageAssessment(profile) {
   }
 }
 
-function batteryLabel(reading) {
-  if (reading.battery_percent == null) return "Battery not reported";
-  const voltage = reading.battery_voltage_v == null ? "" : ` · ${Number(reading.battery_voltage_v).toFixed(2)} V`;
-  return `Battery ${reading.battery_percent}%${voltage}`;
+/**
+ * A phone-style battery: an outline with a terminal nub, filled in proportion
+ * to the charge, then the percentage and, when reported, the voltage. The fill
+ * turns amber at 20 % and red at 10 %; an unknown level is an empty outline.
+ */
+function renderBattery(element, reading) {
+  const percent = reading.battery_percent;
+  const known = percent != null;
+  const voltage = known && reading.battery_voltage_v != null
+    ? `${Number(reading.battery_voltage_v).toFixed(2)} V`
+    : null;
+  element.dataset.level = !known ? "unknown" : percent <= 10 ? "critical" : percent <= 20 ? "low" : "normal";
+  element.style.setProperty("--charge", known ? String(Math.min(100, Math.max(0, percent))) : "0");
+  const label = known ? `Battery ${percent}%${voltage ? `, ${voltage}` : ""}` : "Battery not reported";
+  element.setAttribute("aria-label", label);
+  element.title = label;
+
+  const glyph = document.createElement("span");
+  glyph.className = "battery-glyph";
+  glyph.setAttribute("aria-hidden", "true");
+  const fill = document.createElement("span");
+  fill.className = "battery-fill";
+  glyph.append(fill);
+  const text = document.createElement("span");
+  text.className = "battery-percent";
+  text.textContent = known ? `${percent}%` : "\u2014";
+  element.replaceChildren(glyph, text);
+  if (voltage) {
+    const secondary = document.createElement("span");
+    secondary.className = "battery-voltage";
+    secondary.textContent = voltage;
+    element.append(secondary);
+  }
 }
 
 function renderReading(payload) {
@@ -785,7 +814,7 @@ function renderReading(payload) {
     : `time unknown, received ${new Date(payload.received_at).toLocaleTimeString()}`;
   const report = reading.report_id == null ? "Sample" : `Report ${reading.report_id}`;
   document.getElementById("updated").textContent = `${report} · ${takenAt}`;
-  document.getElementById("battery").textContent = batteryLabel(reading);
+  renderBattery(document.getElementById("battery"), reading);
   renderProfileRanges();
 }
 

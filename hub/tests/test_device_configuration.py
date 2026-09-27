@@ -1,18 +1,21 @@
+import json
+from pathlib import Path
 import unittest
 
-from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.domain import SensorReading
+from open_plant_pulse_hub.ingestion.advertisement import Advertisement
 from open_plant_pulse_hub.ingestion.device_configuration import (
     DEVICE_CONFIG_CHARACTERISTIC_UUID,
     REPORT_ACK_CHARACTERISTIC_UUID,
     DeviceConfiguration,
     DeviceConfigurationSynchronizer,
-    ReportAcknowledgement,
     decode_device_configuration,
-    decode_report_acknowledgement,
     encode_device_configuration,
     encode_report_acknowledgement,
 )
+
+FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3.json"
 
 
 class DeviceConfigurationCodecTests(unittest.TestCase):
@@ -53,29 +56,22 @@ class DeviceConfigurationCodecTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             decode_device_configuration(b"\x01" + b"\0" * 10)
 
-    def test_round_trips_version_2_report_acknowledgement(self) -> None:
-        acknowledgement = ReportAcknowledgement(0x12345678, 0x000004D3)
-        payload = encode_report_acknowledgement(acknowledgement)
+    def test_encodes_the_version_3_report_acknowledgement_fixture(self) -> None:
+        fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["acknowledgement_v3"]
+        payload = encode_report_acknowledgement(fixture["report_id"])
 
-        self.assertEqual(payload.hex(), "0278563412d3040000")
-        self.assertEqual(decode_report_acknowledgement(payload), acknowledgement)
-        # The version 1 token carried a one-byte packet ID and is not accepted.
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(bytes.fromhex("01785634122a"))
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(bytes.fromhex("0178563412d3040000"))
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(payload + b"\x00")
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(bytes.fromhex("0200000000d3040000"))
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(bytes.fromhex("027856341200000000"))
-        with self.assertRaises(ValueError):
-            encode_report_acknowledgement(ReportAcknowledgement(0, 1235))
-        with self.assertRaises(ValueError):
-            encode_report_acknowledgement(ReportAcknowledgement(9, 0))
-        with self.assertRaises(ValueError):
-            encode_report_acknowledgement(ReportAcknowledgement(9, 0x100000000))
+        self.assertEqual(payload.hex(), fixture["token_hex"])
+        self.assertEqual(payload, bytes.fromhex("03d2040000"))
+        self.assertEqual(encode_report_acknowledgement(0xFFFFFFFF).hex(), "03ffffffff")
+        # Told apart from every other payload on the characteristic by its
+        # version and length.
+        self.assertNotEqual(payload[0], encode_device_configuration(
+            DeviceConfiguration(1, 60, "Fern", "Office")
+        )[0])
+        for report_id in (0, -1, 0x100000000):
+            with self.subTest(report_id=report_id):
+                with self.assertRaises(ValueError):
+                    encode_report_acknowledgement(report_id)
 
 
 class DeviceConfigurationSynchronizerTests(unittest.IsolatedAsyncioTestCase):
@@ -179,10 +175,7 @@ class DeviceConfigurationSynchronizerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(synchronizer.has_pending(self.sensor_id))
         self.assertEqual(self.store.sensor(self.sensor_id)["device_config_status"], "retrying")
 
-    async def test_acknowledges_exact_forced_report_after_ingestion(self) -> None:
-        report_payload = encode_report_acknowledgement(ReportAcknowledgement(9, 1235))
-        writes = []
-
+    def fake_client(self, writes, fail_on_write=False):
         class FakeClient:
             def __init__(self, identifier, timeout):
                 self.identifier = identifier
@@ -194,52 +187,85 @@ class DeviceConfigurationSynchronizerTests(unittest.IsolatedAsyncioTestCase):
                 return False
 
             async def write_gatt_char(self, uuid, payload, response):
+                if fail_on_write:
+                    raise RuntimeError("write failed")
                 writes.append((uuid, bytes(payload), response))
 
             async def read_gatt_char(self, uuid):
-                if not writes:
-                    return report_payload
                 return writes[-1][1]
 
-        synchronizer = DeviceConfigurationSynchronizer(self.store, client_factory=FakeClient)
+        return FakeClient
+
+    def complete_report(self, report_id):
+        ingestion = AdvertisementIngestionService(self.store)
+        report = report_id.to_bytes(4, "little").hex()
+        for service_data_hex in (f"402e2c3e{report}451001", f"403e{report}"):
+            ingestion.ingest(
+                Advertisement(
+                    received_at="2026-09-26T21:20:05Z",
+                    local_name=self.sensor_id,
+                    observed_identifier="platform-identifier",
+                    rssi=-48,
+                    service_data=bytes.fromhex(service_data_hex),
+                    source_adapter="test",
+                )
+            )
+
+    def acknowledged_at(self, report_id):
+        with self.store._condition:
+            return self.store._database.execute(
+                "SELECT acknowledged_at FROM sensor_readings "
+                "WHERE sensor_id = ? AND report_id = ?",
+                (self.sensor_id, report_id),
+            ).fetchone()[0]
+
+    async def test_writes_the_acknowledgement_without_reading_first_then_the_configuration(
+        self,
+    ) -> None:
+        self.complete_report(1235)
+        writes = []
+        synchronizer = DeviceConfigurationSynchronizer(
+            self.store, client_factory=self.fake_client(writes)
+        )
         self.assertEqual(
             await synchronizer.synchronize(self.sensor_id, "platform-identifier", 1235),
             "applied-and-acknowledged",
         )
-        self.assertIn((REPORT_ACK_CHARACTERISTIC_UUID, report_payload, True), writes)
         self.assertEqual(len(writes), 2)
+        self.assertEqual(
+            writes[0], (REPORT_ACK_CHARACTERISTIC_UUID, bytes.fromhex("03d3040000"), True)
+        )
         self.assertEqual(writes[1][0], DEVICE_CONFIG_CHARACTERISTIC_UUID)
         self.assertEqual(decode_device_configuration(writes[1][1]).plant_name, "Fern")
+        self.assertIsNotNone(self.acknowledged_at(1235))
 
-        with self.assertRaises(ValueError):
-            decode_report_acknowledgement(report_payload[:-1])
-
-    async def test_does_not_acknowledge_a_token_for_another_report(self) -> None:
-        report_payload = encode_report_acknowledgement(ReportAcknowledgement(9, 1236))
+    async def test_acknowledges_alone_when_no_configuration_is_waiting(self) -> None:
+        self.complete_report(1235)
         writes = []
+        synchronizer = DeviceConfigurationSynchronizer(
+            self.store, client_factory=self.fake_client(writes)
+        )
+        await synchronizer.synchronize(self.sensor_id, "platform-identifier")
+        writes.clear()
 
-        class FakeClient:
-            def __init__(self, identifier, timeout):
-                self.identifier = identifier
+        self.assertEqual(
+            await synchronizer.synchronize(self.sensor_id, "platform-identifier", 1235),
+            "acknowledged",
+        )
+        self.assertEqual(
+            writes, [(REPORT_ACK_CHARACTERISTIC_UUID, bytes.fromhex("03d3040000"), True)]
+        )
 
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, traceback):
-                return False
-
-            async def write_gatt_char(self, uuid, payload, response):
-                writes.append((uuid, bytes(payload), response))
-
-            async def read_gatt_char(self, uuid):
-                return report_payload
-
-        synchronizer = DeviceConfigurationSynchronizer(self.store, client_factory=FakeClient)
+    async def test_a_failed_acknowledgement_is_not_recorded(self) -> None:
+        self.complete_report(1235)
+        synchronizer = DeviceConfigurationSynchronizer(
+            self.store, client_factory=self.fake_client([], fail_on_write=True)
+        )
         self.assertEqual(
             await synchronizer.synchronize(self.sensor_id, "platform-identifier", 1235),
             "failed",
         )
-        self.assertEqual(writes, [])
+        self.assertIsNone(self.acknowledged_at(1235))
 
 
 if __name__ == "__main__":

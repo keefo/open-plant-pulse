@@ -54,12 +54,14 @@ class BTHomeFixtureTests(unittest.TestCase):
 
 
 class BTHomeDecoderTests(unittest.TestCase):
-    def test_decodes_the_forced_report_marker_from_the_supplementary_packet(self) -> None:
-        forced = decode("4001600c40103a013ed304000054080144010002000700")
-        self.assertIsInstance(forced, ReportSupplement)
-        self.assertTrue(forced.force_report)
-        self.assertEqual(forced.report_id, 1235)
-        self.assertFalse(decode(SUPPLEMENTARY_HEX).force_report)
+    def test_a_report_id_alone_is_a_supplementary_packet(self) -> None:
+        # Every report sends one, so that the hub knows when a report is complete
+        # even when there is nothing else to put in it.
+        supplement = decode("403ed3040000")
+        self.assertIsInstance(supplement, ReportSupplement)
+        self.assertEqual(supplement.report_id, 1235)
+        self.assertIsNone(supplement.battery_percent)
+        self.assertIsNone(supplement.soil_ph)
 
     def test_a_timestamp_is_optional_and_never_invented(self) -> None:
         reading = decode("402e2c3ed3040000451001")
@@ -71,9 +73,6 @@ class BTHomeDecoderTests(unittest.TestCase):
         self.assertEqual(battery_only.battery_percent, 96)
         self.assertEqual(battery_only.battery_voltage_v, 4.16)
         self.assertIsNone(battery_only.soil_ph)
-        forced_only = decode("403a013e01000000")
-        self.assertTrue(forced_only.force_report)
-        self.assertIsNone(forced_only.battery_percent)
         extras_only = decode("403e0100000054080100ffff00000100")
         self.assertEqual(extras_only.soil_ph, 0.0)
         self.assertEqual(extras_only.nitrogen_mg_kg, 65535)
@@ -86,7 +85,6 @@ class BTHomeDecoderTests(unittest.TestCase):
             "encrypted device info": "41022e092e2c2f643ed2040000451001500037b86a562900",
             "no report ID": "40022e092e2c2f64451001500037b86a562900",
             "report ID zero": "40022e092e2c2f643e00000000451001500037b86a562900",
-            "report ID alone": "403ed2040000",
             "truncated object": MAIN_HEX[:-2],
             "truncated report ID": "402e2c3ed304",
             "unknown object": "40022e092e2c2f643ed2040000451001500037b86a5629005a01",
@@ -102,7 +100,11 @@ class BTHomeDecoderTests(unittest.TestCase):
             "battery without voltage": "4001603ed3040000",
             "voltage without battery": "400c40103ed3040000",
             "battery above 100": "4001650c40103ed3040000",
-            "button that is not a press": "403a023ed3040000",
+            # Forced reports are ordinary reports now; the button event that
+            # marked one is no longer part of the contract.
+            "button event": "403a013ed3040000",
+            "button event with battery": "4001600c40103a013ed304000054080144010002000700",
+            "main and report ID with a button event": "402e2c3a013ed3040000451001",
             "extras with the wrong length": "403ed30400005407014401000200",
             "extras of an unknown layout": "403ed304000054080244010002000700",
             "pH above 14": "403ed30400005408018d010002000700",

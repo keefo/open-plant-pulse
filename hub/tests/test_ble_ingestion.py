@@ -7,10 +7,12 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION, MIGRATIONS
 from open_plant_pulse_hub.application.store import RECEIVE_DIAGNOSTIC_LIMIT
+from open_plant_pulse_hub.ingestion import ble
 from open_plant_pulse_hub.ingestion.advertisement import Advertisement
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber, _detection_callback
 from open_plant_pulse_hub.ingestion.bthome import BTHOME_SERVICE_UUID
@@ -24,7 +26,8 @@ FIXTURE_PATH = (
 SENSOR_ID = "sensor-aabbccddeeff"
 MAIN_1235 = "402e2c3ed3040000451001"
 SUPPLEMENTARY_1235 = "4001600c40103ed304000054080144010002000700"
-FORCED_SUPPLEMENTARY_1235 = "4001600c40103a013ed304000054080144010002000700"
+MAIN_1236 = "402e2c3ed4040000451001"
+SUPPLEMENTARY_1236 = "403ed4040000"
 
 
 def advertisement(service_data_hex, received_at="2026-09-26T21:20:05Z", **overrides):
@@ -289,17 +292,42 @@ class ReportJoinTests(unittest.TestCase):
         self.assertEqual([event["kind"] for event in events], ["fertilizing"])
         self.assertEqual(events[0]["changes"]["nitrogen_mg_kg"], 18.0)
 
-    def test_a_forced_report_counts_only_once_both_packets_are_stored(self) -> None:
-        self.ingestion.ingest(advertisement(FORCED_SUPPLEMENTARY_1235))
-        self.assertFalse(self.ingestion.stored_forced_report(SENSOR_ID, 1235))
+    def test_a_report_is_acknowledgeable_only_once_complete_and_owned(self) -> None:
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235))
+        self.store.manage_sensor(SENSOR_ID, "Fern", "Office", "monstera", None, None, 60)
+        self.assertFalse(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
         self.ingestion.ingest(advertisement(MAIN_1235))
-        self.assertTrue(self.ingestion.stored_forced_report(SENSOR_ID, 1235))
-        self.assertFalse(self.ingestion.stored_forced_report(SENSOR_ID, 1234))
-        self.assertFalse(self.ingestion.stored_forced_report("sensor-001122334455", 1235))
+        self.assertTrue(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
+        self.assertFalse(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1234))
+        self.assertFalse(
+            self.ingestion.report_is_acknowledgeable("sensor-001122334455", 1235)
+        )
 
-        self.ingestion.ingest(advertisement("402e2c3ed2040000451001"))
-        self.ingestion.ingest(advertisement("4001600c40103ed204000054080144010002000700"))
-        self.assertFalse(self.ingestion.stored_forced_report(SENSOR_ID, 1234))
+        # A main packet alone is a reading, but not a complete report.
+        self.ingestion.ingest(advertisement(MAIN_1236))
+        self.assertFalse(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1236))
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1236))
+        self.assertTrue(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1236))
+
+    def test_an_unclaimed_sensor_cannot_be_acknowledged(self) -> None:
+        # The acknowledgement travels over the bonded link, which only a sensor
+        # this hub owns has.
+        for service_data_hex in (MAIN_1235, SUPPLEMENTARY_1235):
+            self.ingestion.ingest(advertisement(service_data_hex))
+        self.assertEqual(self.store.sensor(SENSOR_ID)["enrollment_status"], "unclaimed")
+        self.assertFalse(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
+
+    def test_a_report_in_conflict_is_never_acknowledgeable(self) -> None:
+        self.ingestion.ingest(advertisement("40"))
+        self.store.manage_sensor(SENSOR_ID, "Fern", "Office", "monstera", None, None, 60)
+        self.ingestion.ingest(advertisement(MAIN_1235))
+        # The supplementary packet repeats identically, but the main packet the
+        # sensor now holds under this ID is not the one stored.
+        self.assertEqual(
+            self.ingestion.ingest(advertisement("402e2d3ed3040000451001")), "conflict"
+        )
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235))
+        self.assertFalse(self.ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
 
 class MigrationTests(unittest.TestCase):
     def test_migrates_version_1_rows_to_current_nullable_schema(self) -> None:
@@ -584,7 +612,10 @@ class MigrationTests(unittest.TestCase):
                 store.close()
 
             with sqlite3.connect(database_path) as database:
-                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 17)
+                self.assertEqual(
+                    database.execute("PRAGMA user_version").fetchone()[0],
+                    DATABASE_SCHEMA_VERSION,
+                )
                 self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
                 self.assertEqual(
                     database.execute(
@@ -658,6 +689,122 @@ class MigrationTests(unittest.TestCase):
                     "INSERT INTO sensor_readings (sensor_id, report_id, received_at) "
                     "VALUES (?, NULL, '2026-09-26T21:21:00Z')",
                     (SENSOR_ID,),
+                )
+
+
+    def test_migrates_version_17_supplements_and_readings_to_durable_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = str(Path(directory) / "hub.sqlite3")
+            with sqlite3.connect(database_path) as database:
+                database.execute("PRAGMA foreign_keys=ON")
+                for version in range(1, 18):
+                    database.executescript(MIGRATIONS[version])
+                database.execute("PRAGMA user_version=17")
+                database.execute(
+                    """
+                    INSERT INTO sensors (
+                        sensor_id, identity_kind, identity_value, enrollment_status,
+                        display_name, first_seen_at, last_seen_at, transport,
+                        contract_version
+                    ) VALUES (?, 'device-local-name', ?, 'enrolled', 'Fern',
+                              '2026-09-26T21:00:00Z', '2026-09-26T21:20:00Z',
+                              'bthome', 3)
+                    """,
+                    (SENSOR_ID, SENSOR_ID),
+                )
+                database.execute(
+                    """
+                    INSERT INTO advertisements (
+                        advertisement_id, sensor_id, report_id, packet_kind, received_at,
+                        transport, source_adapter, observed_identifier, rssi,
+                        contract_version, payload_sha256, decode_status, service_data
+                    ) VALUES (1, ?, 1235, 'main', '2026-09-26T21:20:05Z', 'bthome',
+                              'bleak', 'platform-a', -48, 3, 'hash', 'accepted', ?)
+                    """,
+                    (SENSOR_ID, bytes.fromhex(MAIN_1235)),
+                )
+                database.execute(
+                    """
+                    INSERT INTO sensor_readings (
+                        reading_id, advertisement_id, sensor_id, report_id, received_at,
+                        air_temperature_c, air_humidity_percent, battery_percent,
+                        battery_voltage_v, soil_source_status, air_source_status,
+                        contract_version
+                    ) VALUES (1, 1, ?, 1235, '2026-09-26T21:20:05Z', 27.2, 44.0,
+                              96, 4.16, 'unavailable', 'available', 3)
+                    """,
+                    (SENSOR_ID,),
+                )
+                database.executemany(
+                    """
+                    INSERT INTO report_supplements (
+                        sensor_id, report_id, received_at, battery_percent,
+                        battery_voltage_v, soil_ph, nitrogen_mg_kg, phosphorus_mg_kg,
+                        potassium_mg_kg, force_report
+                    ) VALUES (?, ?, '2026-09-26T21:20:06Z', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (SENSOR_ID, 1235, 96, 4.16, 6.8, 1, 2, 7, 1),
+                        # Held before its main packet arrived.
+                        (SENSOR_ID, 1236, None, None, None, None, None, None, 0),
+                    ],
+                )
+
+            store = ReadingStore(database_path=database_path)
+            try:
+                reading = store.latest(SENSOR_ID)["reading"]
+                self.assertEqual(reading["report_id"], 1235)
+                self.assertEqual(reading["battery_percent"], 96)
+                ingestion = AdvertisementIngestionService(store)
+                self.assertTrue(ingestion.report_is_acknowledgeable(SENSOR_ID, 1235))
+                # A supplement kept from before still judges repeats and joins
+                # the main packet that completes its report.
+                self.assertEqual(
+                    ingestion.ingest(advertisement(SUPPLEMENTARY_1235)), "duplicate"
+                )
+                self.assertEqual(ingestion.ingest(advertisement(MAIN_1236)), "accepted")
+                self.assertTrue(ingestion.report_is_acknowledgeable(SENSOR_ID, 1236))
+                store.mark_report_acknowledged(SENSOR_ID, 1236)
+            finally:
+                store.close()
+
+            with sqlite3.connect(database_path) as database:
+                self.assertEqual(database.execute("PRAGMA user_version").fetchone()[0], 18)
+                self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
+                supplement_columns = [
+                    row[1] for row in database.execute("PRAGMA table_info(report_supplements)")
+                ]
+                self.assertNotIn("force_report", supplement_columns)
+                self.assertEqual(
+                    database.execute(
+                        "SELECT sensor_id, report_id, received_at, battery_percent, "
+                        "battery_voltage_v, soil_ph, nitrogen_mg_kg, phosphorus_mg_kg, "
+                        "potassium_mg_kg FROM report_supplements ORDER BY report_id"
+                    ).fetchall(),
+                    [
+                        (SENSOR_ID, 1235, "2026-09-26T21:20:06Z", 96, 4.16, 6.8, 1, 2, 7),
+                        (SENSOR_ID, 1236, "2026-09-26T21:20:06Z",
+                         None, None, None, None, None, None),
+                    ],
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT report_id, acknowledged_at IS NOT NULL "
+                        "FROM sensor_readings ORDER BY report_id"
+                    ).fetchall(),
+                    [(1235, 0), (1236, 1)],
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT name FROM sqlite_master WHERE name LIKE '%v18%'"
+                    ).fetchall(),
+                    [],
+                )
+                self.assertIsNotNone(
+                    database.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'index' "
+                        "AND name = 'advertisements_conflicts_by_report'"
+                    ).fetchone()
                 )
 
 
@@ -788,39 +935,41 @@ class BleakSubscriberTests(unittest.TestCase):
             store.close()
 
 
-class ForcedReportSubscriberTests(unittest.IsolatedAsyncioTestCase):
-    async def test_acknowledges_one_exact_report_once_after_both_packets_are_stored(self) -> None:
-        store = ReadingStore()
-        synchronized = []
+class ReportAcknowledgementSubscriberTests(unittest.IsolatedAsyncioTestCase):
+    """When the subscriber tells a sensor that a report is stored."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.events = []
+        self.clock = [100.0]
+        events = self.events
 
         class RecordingIngestion(AdvertisementIngestionService):
             def ingest(self, advertisement):
                 status = super().ingest(advertisement)
-                synchronized.append(("ingested", status))
+                events.append(status)
                 return status
 
         class FakeSynchronizer:
-            def has_pending(self, sensor_id):
-                return False
-
-            async def synchronize(self, sensor_id, target, force_report_id=None):
-                synchronized.append((sensor_id, target, force_report_id))
+            async def synchronize(self, sensor_id, target, acknowledge_report_id=None):
+                events.append((sensor_id, target, acknowledge_report_id))
                 return "acknowledged"
 
-        subscriber = BleakSubscriber(
-            RecordingIngestion(store), configuration_synchronizer=FakeSynchronizer()
+        self.subscriber = BleakSubscriber(
+            RecordingIngestion(self.store), configuration_synchronizer=FakeSynchronizer()
         )
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def enrol(self) -> None:
+        # Found by its beacon, then adopted.
+        AdvertisementIngestionService(self.store).ingest(advertisement("40"))
+        self.store.manage_sensor(SENSOR_ID, "Fern", "Office", "monstera", None, None, 60)
+
+    async def hear(self, *service_data_hexes) -> None:
         queue = asyncio.Queue()
-        # An ordinary report, then the forced one advertised as its two packets
-        # alternate: supplementary first, so it is complete only on the main.
-        for service_data_hex in (
-            "402e2c3ed2040000451001",
-            "4001600c40103ed204000054080144010002000700",
-            FORCED_SUPPLEMENTARY_1235,
-            MAIN_1235,
-            FORCED_SUPPLEMENTARY_1235,
-            MAIN_1235,
-        ):
+        for service_data_hex in service_data_hexes:
             await queue.put(
                 advertisement(
                     service_data_hex,
@@ -829,26 +978,84 @@ class ForcedReportSubscriberTests(unittest.IsolatedAsyncioTestCase):
                     connection_target="connection-target",
                 )
             )
-        consumer = asyncio.create_task(subscriber._consume(queue))
-        try:
-            await asyncio.wait_for(queue.join(), timeout=1.0)
-        finally:
-            consumer.cancel()
-            await asyncio.gather(consumer, return_exceptions=True)
-            store.close()
+        # The subscriber's clock only, so that time moves when the test says.
+        clock = SimpleNamespace(monotonic=lambda: self.clock[0])
+        with patch.object(ble, "time", clock):
+            consumer = asyncio.create_task(self.subscriber._consume(queue))
+            try:
+                await asyncio.wait_for(queue.join(), timeout=1.0)
+            finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
 
+    def acknowledgements(self):
+        return [event for event in self.events if isinstance(event, tuple)]
+
+    async def test_acknowledges_as_soon_as_the_second_packet_is_stored(self) -> None:
+        self.enrol()
+        await self.hear(SUPPLEMENTARY_1235, MAIN_1235)
         self.assertEqual(
-            synchronized,
-            [
-                ("ingested", "accepted"),
-                ("ingested", "accepted"),
-                ("ingested", "accepted"),
-                ("ingested", "accepted"),
-                (SENSOR_ID, "connection-target", 1235),
-                ("ingested", "duplicate"),
-                ("ingested", "duplicate"),
-            ],
+            self.events,
+            ["accepted", "accepted", (SENSOR_ID, "connection-target", 1235)],
         )
+
+    async def test_repeats_right_after_an_acknowledgement_do_not_connect_again(self) -> None:
+        self.enrol()
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235, MAIN_1235, SUPPLEMENTARY_1235)
+        self.assertEqual(self.acknowledgements(), [(SENSOR_ID, "connection-target", 1235)])
+
+    async def test_acknowledges_again_when_both_packets_keep_repeating(self) -> None:
+        # Still advertising a report the hub holds complete and identical means
+        # the acknowledgement never reached the sensor.
+        self.enrol()
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
+        self.clock[0] += 6.0
+        await self.hear(MAIN_1235)
+        self.assertEqual(len(self.acknowledgements()), 1)
+        await self.hear(SUPPLEMENTARY_1235)
+        self.assertEqual(
+            self.acknowledgements(), [(SENSOR_ID, "connection-target", 1235)] * 2
+        )
+
+    async def test_a_lost_acknowledgement_is_retried_no_more_than_every_few_seconds(
+        self,
+    ) -> None:
+        self.enrol()
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
+        # Both packets repeat within the retry interval, many times over.
+        self.clock[0] += 1.0
+        await self.hear(*[MAIN_1235, SUPPLEMENTARY_1235] * 5)
+        self.assertEqual(len(self.acknowledgements()), 1)
+        # Past it, the next time both have been heard again.
+        self.clock[0] += 5.0
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
+        self.assertEqual(len(self.acknowledgements()), 2)
+
+    async def test_the_next_report_is_acknowledged_at_once(self) -> None:
+        # The retry interval is per report. The sensor moves on to its next
+        # report the moment an acknowledgement lands, and waiting would stall it.
+        self.enrol()
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235, MAIN_1236, SUPPLEMENTARY_1236)
+        self.assertEqual(
+            [event[2] for event in self.acknowledgements()], [1235, 1236]
+        )
+
+    async def test_a_report_in_conflict_is_never_acknowledged(self) -> None:
+        self.enrol()
+        await self.hear(MAIN_1235)
+        # The sensor holds a different main packet under the same ID; its
+        # supplementary packet matching proves nothing about the rest.
+        self.clock[0] += 10.0
+        await self.hear("402e2d3ed3040000451001", SUPPLEMENTARY_1235)
+        self.clock[0] += 10.0
+        await self.hear(*["402e2d3ed3040000451001", SUPPLEMENTARY_1235] * 3)
+        self.assertEqual(self.acknowledgements(), [])
+
+    async def test_an_unclaimed_sensor_is_never_acknowledged(self) -> None:
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
+        self.clock[0] += 10.0
+        await self.hear(MAIN_1235, SUPPLEMENTARY_1235)
+        self.assertEqual(self.acknowledgements(), [])
 
 
 if __name__ == "__main__":

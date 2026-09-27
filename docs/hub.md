@@ -199,15 +199,28 @@ write, or read-back failures remain visible as retrying and are attempted on a l
 report. The hub records the sensor's reporting interval only from that matching
 read-back; saving a new hub interval leaves the last confirmed sensor interval
 unchanged until synchronization succeeds. The hub does not connect when no
-configuration is pending.
+configuration is pending and no report acknowledgement is due.
 
-A report forced from the sensor's console carries button event `0x3A` in its
-supplementary packet. Once both of that report's packets are stored, the subscriber
-connects once, reads the nine-byte forced-report acknowledgement token (version 2:
-request ID and report ID), checks that its report ID is the forced report the hub
-stored, and writes the identical token back. A token naming any other report is not
-acknowledged. The repeated advertising of one forced report does not open further
-connections.
+An enrolled sensor keeps each report in a flash queue until the hub acknowledges
+it, and advertises only its oldest unacknowledged report. The hub acknowledges a
+report by writing the five-byte report acknowledgement (version 3: `0x03`, then the
+report ID as unsigned 32-bit little-endian) to the same characteristic over the
+bonded link, without reading anything first; pending configuration, if any, follows
+in the same connection. The subscriber acknowledges:
+
+- as soon as the packet that completes a report is stored, whichever of main and
+  supplementary arrives second, because the sensor sends nothing newer until then;
+- again when both packets of a report it already holds complete and identical have
+  been heard repeating since the last attempt, which means that acknowledgement was
+  lost. One repeated packet alone does not count: it cannot show that the other one
+  still matches.
+
+The same report is attempted at most every five seconds; a new report ID is
+attempted at once. A report with any conflict logged under its key is never
+acknowledged, and neither is a report from a sensor that is not enrolled, since
+only an owned sensor has the bond the characteristic requires. `acknowledged_at` on
+the reading records the latest successful acknowledgement. A forced report is an
+ordinary report.
 
 `bleak` presents platform-specific device identifiers: Linux commonly exposes a
 Bluetooth address while macOS exposes a CoreBluetooth UUID. Neither is guaranteed
@@ -234,12 +247,12 @@ offers an enrollment window or an allowlist policy.
 Contract v3 is defined in [`protocol/README.md`](../protocol/README.md). A report is
 keyed by `(sensor identity, report ID)`, where the report ID is a 32-bit count the
 sensor never repeats. A report travels as a main packet (soil and air measurements,
-optional acquisition timestamp) and, when there is anything for it, a supplementary
-packet (battery, soil pH and nitrogen/phosphorus/potassium, forced-report marker).
-The two may arrive in either order. A reading is stored, and appears in latest
-values, history, and care events, when its main packet arrives. A supplementary
-packet is kept in `report_supplements` whichever arrives first, and its values are
-copied onto the reading when both are present.
+optional acquisition timestamp) and a supplementary packet (battery, soil pH and
+nitrogen/phosphorus/potassium when reported, or the report ID alone). The two may
+arrive in either order, and the report is complete when both are stored. A reading
+is stored, and appears in latest values, history, and care events, when its main
+packet arrives. A supplementary packet is kept in `report_supplements` whichever
+arrives first, and its values are copied onto the reading when both are present.
 
 A packet whose content matches what is stored for its key and packet kind is a
 duplicate: it is logged as such and stores nothing, which is how the sensor's repeated

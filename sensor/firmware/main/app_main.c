@@ -18,6 +18,7 @@
 #include "device_identity.h"
 #include "firmware_update.h"
 #include "force_report.h"
+#include "report_delivery.h"
 #include "report_id.h"
 #include "sht45.h"
 #include "sht45_monitor.h"
@@ -120,29 +121,24 @@ static void set_timestamp(opp_bthome_report_t *report)
     }
 }
 
-/* A report's two packets, ready to advertise. */
-typedef struct {
-    uint8_t main[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
-    size_t main_size;
-    uint8_t supplementary[OPP_BTHOME_SERVICE_DATA_MAX_SIZE];
-    size_t supplementary_size;
-} encoded_report_t;
-
-/* Take a report ID and encode. False when there is no ID to give or nothing
- * valid to send; the ID is spent either way, which only leaves a gap. */
-static bool encode_report(opp_bthome_report_t *report, encoded_report_t *encoded)
+/* Take a report ID and encode both packets. False when there is no ID to give
+ * or nothing valid to send; the ID is spent either way, which only leaves a
+ * gap. */
+static bool encode_report(opp_bthome_report_t *report, opp_queued_report_t *encoded)
 {
+    *encoded = (opp_queued_report_t){0};
     report->report_id = opp_report_id_next();
     if (report->report_id == 0) {
         return false;
     }
-    encoded->main_size = opp_bthome_encode_main(report, encoded->main);
+    encoded->report_id = report->report_id;
+    encoded->main_size = (uint8_t)opp_bthome_encode_main(report, encoded->main);
     encoded->supplementary_size =
-        opp_bthome_encode_supplementary(report, encoded->supplementary);
-    return encoded->main_size > 0;
+        (uint8_t)opp_bthome_encode_supplementary(report, encoded->supplementary);
+    return encoded->main_size > 0 && encoded->supplementary_size > 0;
 }
 
-static esp_err_t broadcast_report(const char *local_name, const encoded_report_t *encoded)
+static esp_err_t broadcast_report(const char *local_name, const opp_queued_report_t *encoded)
 {
     return opp_bthome_broadcast(
         local_name,
@@ -152,6 +148,19 @@ static esp_err_t broadcast_report(const char *local_name, const encoded_report_t
         encoded->supplementary_size,
         CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS,
         CONFIG_OPP_BTHOME_ADVERTISEMENT_INTERVAL_MS);
+}
+
+/* Keep a new report until the hub acknowledges it. Only a sensor that belongs to
+ * a hub queues: nobody could acknowledge anything for an unclaimed one. */
+static bool queue_report(const opp_queued_report_t *encoded)
+{
+    if (opp_delivery_push(encoded)) {
+        return true;
+    }
+    ESP_LOGW(TAG, "Report %lu not kept: %lu of %lu reports already await the hub",
+             (unsigned long)encoded->report_id, (unsigned long)opp_delivery_depth(),
+             (unsigned long)opp_delivery_capacity());
+    return false;
 }
 
 #if CONFIG_OPP_PRODUCTION_LIFECYCLE
@@ -263,8 +272,11 @@ static void run_production_cycle(void)
     }
 
     esp_err_t id_error = opp_report_id_init();
+    if (id_error == ESP_OK) {
+        id_error = opp_delivery_init();
+    }
     if (id_error != ESP_OK) {
-        ESP_LOGE(TAG, "Report IDs unavailable: %s", esp_err_to_name(id_error));
+        ESP_LOGE(TAG, "Report IDs or queue unavailable: %s", esp_err_to_name(id_error));
         enter_deep_sleep();
     }
 
@@ -276,16 +288,22 @@ static void run_production_cycle(void)
     }
     set_timestamp(&report);
 
-    encoded_report_t encoded;
+    opp_queued_report_t encoded;
     char local_name[OPP_BTHOME_LOCAL_NAME_SIZE];
     if (!encode_report(&report, &encoded) ||
         !opp_bthome_format_local_name(device_id(), local_name)) {
         ESP_LOGE(TAG, "Could not encode BTHome report or stable identity");
         enter_deep_sleep();
     }
+    /* An owned sensor advertises its oldest unacknowledged report, which may be
+     * an earlier one: each wake is the retry. */
+    if (opp_device_identity_is_onboarded()) {
+        queue_report(&encoded);
+        opp_delivery_head(&encoded);
+    }
 
     ESP_LOGI(TAG, "Advertising %s report %lu for %d ms", local_name,
-             (unsigned long)report.report_id, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
+             (unsigned long)encoded.report_id, CONFIG_OPP_BTHOME_ADVERTISEMENT_WINDOW_MS);
     esp_err_t error = broadcast_report(local_name, &encoded);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "BTHome advertising cycle failed: %s", esp_err_to_name(error));
@@ -299,7 +317,9 @@ static void run_production_cycle(void)
 
 #if !CONFIG_OPP_PRODUCTION_LIFECYCLE
 /* What was last advertised, for reachability windows to repeat unchanged. */
-static encoded_report_t last_advertised;
+/* The latest report of a sensor no hub owns, for reachability windows to
+ * repeat. An owned sensor repeats its queue instead. */
+static opp_queued_report_t last_unqueued;
 
 /* Mains power removes the reason to be frugal, so a plugged-in sensor is always
  * reachable. On battery it is reachable only while somebody is working with it. */
@@ -328,21 +348,24 @@ static bool should_stay_reachable(void)
 
 static void advertise_onboarding_beacon(const char *local_name);
 
-/* Re-advertise what was last sent, unchanged.
+/* Keep the door open between reports without inventing a measurement.
  *
- * The same report ID is the point: the hub recognises a duplicate and stores
- * no reading, so opening the door often does not fill the database with rows
- * that say nothing new. */
+ * An owned sensor advertises its oldest unacknowledged report, which is also
+ * how it retries, or a beacon once the hub has everything: repeating a report
+ * the hub already acknowledged would only make it connect to acknowledge it
+ * again. An unclaimed sensor repeats its latest report, whose report ID tells
+ * the hub it is nothing new. */
 static void advertise_reachable_window(const char *local_name)
 {
-    if (last_advertised.main_size == 0) {
-        /* Nothing has been sent yet, so there is nothing to repeat. Announce
-         * presence instead: a beacon stores no reading, and it gives the next
-         * window something to echo. */
+    opp_queued_report_t report;
+    const bool have_report = opp_device_identity_is_onboarded()
+                                 ? opp_delivery_head(&report)
+                                 : (report = last_unqueued, report.main_size > 0);
+    if (!have_report) {
         advertise_onboarding_beacon(local_name);
         return;
     }
-    esp_err_t error = broadcast_report(local_name, &last_advertised);
+    esp_err_t error = broadcast_report(local_name, &report);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Reachability window failed: %s", esp_err_to_name(error));
     }
@@ -352,13 +375,12 @@ static void advertise_reachable_window(const char *local_name)
  * nothing about a plant, because there is nothing to tell. */
 static void advertise_onboarding_beacon(const char *local_name)
 {
-    encoded_report_t beacon = {0};
-    beacon.main_size = opp_bthome_encode_beacon(beacon.main);
+    opp_queued_report_t beacon = {0};
+    beacon.main_size = (uint8_t)opp_bthome_encode_beacon(beacon.main);
     if (beacon.main_size == 0) {
         ESP_LOGE(TAG, "Could not encode the onboarding beacon");
         return;
     }
-    last_advertised = beacon;
     esp_err_t error = broadcast_report(local_name, &beacon);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Onboarding beacon failed: %s", esp_err_to_name(error));
@@ -390,7 +412,7 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
         return;
     }
 
-    opp_bthome_report_t report = {.forced = forced};
+    opp_bthome_report_t report = {0};
     if (air_available) {
         set_air(&report, &air.values);
     }
@@ -399,7 +421,7 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
     }
     set_battery(&report);
     set_timestamp(&report);
-    encoded_report_t encoded;
+    opp_queued_report_t encoded;
     if (!encode_report(&report, &encoded)) {
         ESP_LOGW(TAG, "Skipping %s BLE report: no report ID or encoding failed",
                  forced ? "forced" : "scheduled");
@@ -408,7 +430,18 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
         }
         return;
     }
-    last_advertised = encoded;
+    const bool queued = opp_device_identity_is_onboarded();
+    if (queued) {
+        if (!queue_report(&encoded)) {
+            if (forced) {
+                opp_force_report_failed(force_request_id, OPP_FORCE_REPORT_FAILURE_QUEUE_FULL);
+            }
+            advertise_reachable_window(local_name);
+            return;
+        }
+    } else {
+        last_unqueued = encoded;
+    }
     if (forced) {
         opp_force_report_started(force_request_id, report.report_id);
     }
@@ -418,9 +451,14 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
              air_available ? "yes" : "no", soil_available ? "yes" : "no",
              report.battery_available ? "yes" : "no",
              report.timestamp_valid ? "timestamped" : "no clock");
+    /* An owned sensor puts its oldest unacknowledged report on air, which is
+     * this one unless earlier ones still wait. */
+    if (queued) {
+        opp_delivery_head(&encoded);
+    }
     esp_err_t error = broadcast_report(local_name, &encoded);
     if (forced) {
-        opp_force_report_finished(force_request_id, error);
+        opp_force_report_finished(force_request_id, error, queued);
     }
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "Development BTHome advertising failed: %s",
@@ -513,6 +551,9 @@ void app_main(void)
     ESP_ERROR_CHECK(opp_firmware_update_init());
     ESP_ERROR_CHECK(web_ui_config_init());
     esp_err_t report_id_error = opp_report_id_init();
+    if (report_id_error == ESP_OK) {
+        report_id_error = opp_delivery_init();
+    }
     if (report_id_error != ESP_OK) {
         ESP_LOGE(TAG, "Report IDs unavailable; only beacons can be sent: %s",
                  esp_err_to_name(report_id_error));

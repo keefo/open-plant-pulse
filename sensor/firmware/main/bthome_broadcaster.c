@@ -16,6 +16,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "force_report.h"
+#include "report_ack_protocol.h"
+#include "report_delivery.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
@@ -117,14 +119,6 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
     (void)attr_handle;
     (void)argument;
     if (context->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-        opp_report_ack_t ack;
-        uint8_t ack_payload[OPP_REPORT_ACK_PAYLOAD_SIZE];
-        if (opp_force_report_get_ack(&ack) &&
-            opp_report_ack_encode(&ack, ack_payload) == sizeof(ack_payload)) {
-            return os_mbuf_append(context->om, ack_payload, sizeof(ack_payload)) == 0
-                       ? 0
-                       : BLE_ATT_ERR_INSUFFICIENT_RES;
-        }
         opp_device_config_t config;
         uint8_t payload[OPP_DEVICE_CONFIG_PAYLOAD_MAX_SIZE + OPP_FIRMWARE_STATUS_SIZE +
                         OPP_STATION_STATUS_SIZE];
@@ -161,6 +155,8 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
             opp_wifi_credentials_store_clear();
             opp_device_config_store_clear();
             opp_device_identity_set_onboarded(false);
+            /* Nobody will acknowledge these now; a new owner starts clean. */
+            opp_delivery_clear();
             release_requested = true;
             return 0;
         }
@@ -175,11 +171,16 @@ static int device_config_access(uint16_t conn_handle, uint16_t attr_handle,
                        ? 0
                        : BLE_ATT_ERR_UNLIKELY;
         }
-        opp_report_ack_t ack;
-        if (opp_report_ack_decode(payload, payload_size, &ack)) {
-            return opp_force_report_acknowledge(&ack) == ESP_OK
-                       ? 0
-                       : BLE_ATT_ERR_UNLIKELY;
+        uint32_t acknowledged_report;
+        if (opp_report_ack_decode(payload, payload_size, &acknowledged_report)) {
+            /* Only the hub that owns this sensor gets here, over an encrypted
+             * link. Removing the report is saved before this returns, so the
+             * next window already advertises the one after it. */
+            if (opp_delivery_acknowledge(acknowledged_report) == OPP_REPORT_ACK_REFUSED) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            opp_force_report_delivered(acknowledged_report);
+            return 0;
         }
         opp_device_config_t config;
         if (!opp_device_config_decode(payload, payload_size, &config)) {

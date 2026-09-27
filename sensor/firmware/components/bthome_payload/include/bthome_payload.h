@@ -35,9 +35,6 @@ typedef struct {
     uint16_t nitrogen_mg_kg;
     uint16_t phosphorus_mg_kg;
     uint16_t potassium_mg_kg;
-
-    /* A report somebody asked for from the sensor's console. */
-    bool forced;
 } opp_bthome_report_t;
 
 /* The core measurements. Returns 0 when the report has neither soil nor air,
@@ -45,8 +42,9 @@ typedef struct {
 size_t opp_bthome_encode_main(const opp_bthome_report_t *report,
                               uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
 
-/* Battery, pH and N/P/K, and the forced-report marker. Returns 0 when the
- * report has none of them, in which case only the main packet is sent. */
+/* Battery, pH and N/P/K. Every report has one, even if it carries only the
+ * report ID: that is how the hub knows the report is complete. Returns 0 only
+ * for an invalid report. */
 size_t opp_bthome_encode_supplementary(const opp_bthome_report_t *report,
                                        uint8_t output[OPP_BTHOME_SERVICE_DATA_MAX_SIZE]);
 

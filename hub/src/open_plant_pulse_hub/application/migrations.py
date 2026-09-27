@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 17
+DATABASE_SCHEMA_VERSION = 18
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -522,6 +522,46 @@ MIGRATIONS: Dict[int, str] = {
             force_report INTEGER NOT NULL DEFAULT 0 CHECK (force_report IN (0, 1)),
             PRIMARY KEY (sensor_id, report_id)
         );
+    """,
+    18: """
+        /* Contract v3 durable delivery. A forced report is now an ordinary
+           report, so the supplementary packet no longer marks one and the
+           column goes. The table is rebuilt rather than altered so that the
+           migration does not depend on the SQLite version's DROP COLUMN.
+           Nothing references report_supplements, so it can simply be
+           replaced. */
+        CREATE TABLE report_supplements_v18 (
+            sensor_id TEXT NOT NULL REFERENCES sensors(sensor_id),
+            report_id INTEGER NOT NULL CHECK (report_id BETWEEN 1 AND 4294967295),
+            received_at TEXT NOT NULL,
+            battery_percent INTEGER
+                CHECK (battery_percent IS NULL OR battery_percent BETWEEN 0 AND 100),
+            battery_voltage_v REAL,
+            soil_ph REAL,
+            nitrogen_mg_kg INTEGER,
+            phosphorus_mg_kg INTEGER,
+            potassium_mg_kg INTEGER,
+            PRIMARY KEY (sensor_id, report_id)
+        );
+        INSERT INTO report_supplements_v18 (
+            sensor_id, report_id, received_at, battery_percent, battery_voltage_v,
+            soil_ph, nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg
+        )
+        SELECT sensor_id, report_id, received_at, battery_percent, battery_voltage_v,
+               soil_ph, nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg
+        FROM report_supplements;
+        DROP TABLE report_supplements;
+        ALTER TABLE report_supplements_v18 RENAME TO report_supplements;
+
+        /* When the hub last told the sensor this report is stored, which is
+           when the sensor may drop it. Null for a report never acknowledged,
+           every report stored before this migration included. */
+        ALTER TABLE sensor_readings ADD COLUMN acknowledged_at TEXT;
+
+        /* A report with a conflict is never acknowledged, and that is asked
+           every time a report is complete or repeated. */
+        CREATE INDEX advertisements_conflicts_by_report
+        ON advertisements(sensor_id, report_id) WHERE decode_status = 'conflict';
     """,
 }
 

@@ -87,9 +87,10 @@ class AdvertisementIngestionService:
             )
         return status
 
-    def stored_forced_report(self, sensor_id: str, report_id: int) -> bool:
-        """Return whether this report is stored in full and was forced by a person.
+    def report_is_acknowledgeable(self, sensor_id: str, report_id: int) -> bool:
+        """Return whether this report is stored in full, without conflict, from a
+        sensor this hub owns.
 
-        Only then may the sensor be told it arrived.
+        Only then may the sensor be told it arrived, and drop it.
         """
-        return self._store.stored_forced_report(sensor_id, report_id)
+        return self._store.report_is_acknowledgeable(sensor_id, report_id)

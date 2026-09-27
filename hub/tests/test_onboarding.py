@@ -441,8 +441,8 @@ class ConfigurationRetryRateTests(unittest.TestCase):
 
     def test_configuration_retries_are_not_keyed_on_the_payload(self):
         # Payloads change from one report to the next, so comparing them never
-        # matched and the configuration rate limit never applied. A forced
-        # report is identified by its report ID instead.
+        # matched and the configuration rate limit never applied. A report
+        # acknowledgement is identified by its report ID instead.
         self.assertNotIn("self._last_configuration_attempt", self.source)
 
 
@@ -465,8 +465,11 @@ class ReachabilityTests(unittest.TestCase):
     def test_reachability_repeats_the_last_payload_rather_than_inventing_one(self):
         # Re-sending the same report ID is what stops a sensor that is reachable
         # every few seconds from filling the database with rows saying nothing.
+        # An unclaimed sensor repeats its latest report; an owned one repeats
+        # the head of its delivery queue until the hub acknowledges it.
         self.assertIn("advertise_reachable_window", self.source)
-        self.assertIn("last_advertised", self.source)
+        self.assertIn("last_unqueued", self.source)
+        self.assertIn("opp_delivery_head", self.source)
 
 
 class ReleaseProtocolTests(unittest.TestCase):

@@ -57,10 +57,10 @@ DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 DEVICE_CONFIG_PAYLOAD_MAX_SIZE = 171
 MIN_REPORTING_INTERVAL_SECONDS = 1
 MAX_REPORTING_INTERVAL_SECONDS = 86400
-# The forced-report acknowledgement token: version, the sensor's request ID and
-# the report ID of the report it forced.
-REPORT_ACK_PROTOCOL_VERSION = 2
-REPORT_ACK_PAYLOAD_SIZE = 9
+# The report acknowledgement token: version, then the report ID of a report the
+# hub has stored in full. The sensor drops that report from its queue.
+REPORT_ACK_PROTOCOL_VERSION = 3
+REPORT_ACK_PAYLOAD_SIZE = 5
 ClientFactory = Callable[..., Any]
 
 
@@ -75,38 +75,11 @@ class DeviceConfiguration:
     console_enabled: bool = False
 
 
-@dataclass(frozen=True)
-class ReportAcknowledgement:
-    request_id: int
-    report_id: int
-
-
-def encode_report_acknowledgement(acknowledgement: ReportAcknowledgement) -> bytes:
-    if not 1 <= acknowledgement.request_id <= 0xFFFFFFFF:
-        raise ValueError("report request ID must be between 1 and 4294967295")
-    if not 1 <= acknowledgement.report_id <= 0xFFFFFFFF:
+def encode_report_acknowledgement(report_id: int) -> bytes:
+    """Say that the report with this ID is stored and may be dropped."""
+    if not 1 <= report_id <= 0xFFFFFFFF:
         raise ValueError("report ID must be between 1 and 4294967295")
-    return b"".join(
-        (
-            bytes((REPORT_ACK_PROTOCOL_VERSION,)),
-            acknowledgement.request_id.to_bytes(4, "little"),
-            acknowledgement.report_id.to_bytes(4, "little"),
-        )
-    )
-
-
-def decode_report_acknowledgement(payload: bytes) -> ReportAcknowledgement:
-    if len(payload) != REPORT_ACK_PAYLOAD_SIZE:
-        raise ValueError("report acknowledgement payload length is invalid")
-    if payload[0] != REPORT_ACK_PROTOCOL_VERSION:
-        raise ValueError("report acknowledgement protocol version is unsupported")
-    acknowledgement = ReportAcknowledgement(
-        request_id=int.from_bytes(payload[1:5], "little"),
-        report_id=int.from_bytes(payload[5:9], "little"),
-    )
-    if encode_report_acknowledgement(acknowledgement) != payload:
-        raise ValueError("report acknowledgement payload is not canonical")
-    return acknowledgement
+    return bytes((REPORT_ACK_PROTOCOL_VERSION,)) + report_id.to_bytes(4, "little")
 
 
 def encode_device_configuration(config: DeviceConfiguration) -> bytes:
@@ -462,27 +435,32 @@ class DeviceConfigurationSynchronizer:
         self,
         sensor_id: str,
         observed_identifier: str,
-        force_report_id: int | None = None,
+        acknowledge_report_id: int | None = None,
     ) -> str:
+        """Deliver pending configuration and acknowledge a report, over one link.
+
+        Both need the same connection, so a report completing while a change is
+        waiting costs one connection rather than two.
+        """
         desired = self._store.pending_device_configuration(sensor_id)
-        if desired is None and force_report_id is None:
+        if desired is None and acknowledge_report_id is None:
             return "not-needed"
         config = DeviceConfiguration(**desired) if desired is not None else None
         payload = encode_device_configuration(config) if config is not None else None
         try:
             factory = self._client_factory or self._load_client_factory()
             async with factory(observed_identifier, timeout=self._timeout) as client:
-                if force_report_id is not None:
-                    report_payload = bytes(
-                        await client.read_gatt_char(REPORT_ACK_CHARACTERISTIC_UUID)
-                    )
-                    report_acknowledgement = decode_report_acknowledgement(report_payload)
-                    # The sensor names the report it forced; only that report,
-                    # which the hub has stored, may be acknowledged.
-                    if report_acknowledgement.report_id != force_report_id:
-                        raise ValueError("forced report ID did not match sensor request")
+                if acknowledge_report_id is not None:
+                    # The acknowledgement goes first: the sensor advertises
+                    # nothing newer until its oldest report is acknowledged.
                     await client.write_gatt_char(
-                        REPORT_ACK_CHARACTERISTIC_UUID, report_payload, response=True
+                        REPORT_ACK_CHARACTERISTIC_UUID,
+                        encode_report_acknowledgement(acknowledge_report_id),
+                        response=True,
+                    )
+                    self._store.mark_report_acknowledged(sensor_id, acknowledge_report_id)
+                    LOGGER.info(
+                        "acknowledged report %d from %s", acknowledge_report_id, sensor_id
                     )
                 if config is not None and payload is not None:
                     await client.write_gatt_char(
@@ -515,7 +493,7 @@ class DeviceConfigurationSynchronizer:
                         self._store.record_sensor_wifi_result(
                             sensor_id, state, None, address or None
                         )
-            if config is not None and force_report_id is not None:
+            if config is not None and acknowledge_report_id is not None:
                 return "applied-and-acknowledged"
             return "applied" if config is not None else "acknowledged"
         except Exception as error:  # noqa: BLE001 - transport failures are persisted and retried

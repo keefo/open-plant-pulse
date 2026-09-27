@@ -113,6 +113,17 @@ config OPP_SENSOR_MODBUS_ADDRESS
     range 1 247
     default 1
 
+config OPP_REPORT_QUEUE_CAPACITY
+    int "Reports kept for the hub"
+    range 4 64
+    default 32
+    help
+        How many reports a sensor that belongs to a hub keeps until the hub
+        acknowledges them: at a 30-minute interval, 32 covers 16 hours without
+        a hub. Each takes about 60 bytes of the 24 KB NVS partition, which also
+        holds the bond, configuration and Wi-Fi credentials. When it is full
+        the sensor makes no new reports rather than overwrite one.
+
 config OPP_BATTERY_MONITOR_ENABLED
     bool "Monitor the battery with an INA219"
     default y

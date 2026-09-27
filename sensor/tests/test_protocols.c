@@ -12,6 +12,7 @@
 #include "ina219_decode.h"
 #include "power_source.h"
 #include "report_ack_protocol.h"
+#include "report_queue.h"
 #include "wifi_credentials_protocol.h"
 #include "sensor_protocol.h"
 #include "sht45_decode.h"
@@ -331,11 +332,12 @@ static void test_bthome_v3_fixture(void)
                    "4001600c40103ed204000054080144010002000700");
 
     report.report_id = 1235;
-    report.forced = true;
-    assert_encodes(opp_bthome_encode_supplementary, &report,
-                   "4001600c40103a013ed304000054080144010002000700");
+    report.battery_available = false;
+    report.soil_extras_available = false;
+    assert_encodes(opp_bthome_encode_supplementary, &report, "403ed3040000");
 
-    report.forced = false;
+    report = fixture_report();
+    report.report_id = 1235;
     report.timestamp_valid = false;
     report.soil_available = false;
     assert_encodes(opp_bthome_encode_main, &report, "402e2c3ed3040000451001");
@@ -351,8 +353,7 @@ static void test_bthome_v3_rules(void)
 
     /* The largest packets still fit a legacy advertisement. */
     assert(opp_bthome_encode_main(&report, payload) == OPP_BTHOME_SERVICE_DATA_MAX_SIZE);
-    report.forced = true;
-    assert(opp_bthome_encode_supplementary(&report, payload) == 23);
+    assert(opp_bthome_encode_supplementary(&report, payload) == 21);
 
     /* Percentages round to the nearest whole point. */
     report = fixture_report();
@@ -373,11 +374,12 @@ static void test_bthome_v3_rules(void)
     report.air_available = false;
     assert(opp_bthome_encode_main(&report, payload) == 0);
 
-    /* Nothing for the supplementary packet: only the main one is sent. */
+    /* Nothing else to carry: the supplementary packet still goes, with the
+     * report ID alone, so the hub can tell the report is complete. */
     report = fixture_report();
     report.battery_available = false;
     report.soil_extras_available = false;
-    assert(opp_bthome_encode_supplementary(&report, payload) == 0);
+    assert(opp_bthome_encode_supplementary(&report, payload) == 6);
 
     /* Out-of-range values are refused rather than sent. */
     report = fixture_report();
@@ -399,26 +401,181 @@ static void test_bthome_v3_rules(void)
 
 static void test_report_acknowledgement(void)
 {
-    const opp_report_ack_t expected = {
-        .request_id = 0x01020304U,
-        .report_id = 1235,
-    };
-    const uint8_t expected_payload[] = {0x02, 0x04, 0x03, 0x02, 0x01, 0xd3, 0x04, 0x00, 0x00};
+    /* protocol/fixtures/bthome-v3.json "acknowledgement_v3". */
+    const uint8_t expected[] = {0x03, 0xd2, 0x04, 0x00, 0x00};
     uint8_t payload[OPP_REPORT_ACK_PAYLOAD_SIZE];
-    opp_report_ack_t decoded;
+    uint32_t report_id;
 
-    assert(opp_report_ack_encode(&expected, payload) == sizeof(expected_payload));
-    assert(memcmp(payload, expected_payload, sizeof(expected_payload)) == 0);
-    assert(opp_report_ack_decode(payload, sizeof(payload), &decoded));
-    assert(opp_report_ack_equal(&decoded, &expected));
+    assert(opp_report_ack_encode(1234, payload) == sizeof(expected));
+    assert(memcmp(payload, expected, sizeof(expected)) == 0);
+    assert(opp_report_ack_decode(payload, sizeof(payload), &report_id));
+    assert(report_id == 1234);
 
-    /* The v1 six-byte token is gone, as are zero IDs. */
-    const uint8_t version_one[] = {0x01, 0x04, 0x03, 0x02, 0x01, 0x2a};
-    assert(!opp_report_ack_decode(version_one, sizeof(version_one), &decoded));
-    payload[5] = payload[6] = payload[7] = payload[8] = 0;
-    assert(!opp_report_ack_decode(payload, sizeof(payload), &decoded));
-    const opp_report_ack_t no_report = {.request_id = 1, .report_id = 0};
-    assert(opp_report_ack_encode(&no_report, payload) == 0);
+    /* The forced-report tokens of versions 1 and 2 are gone, as is ID 0. */
+    const uint8_t version_two[] = {0x02, 0x04, 0x03, 0x02, 0x01, 0xd2, 0x04, 0x00, 0x00};
+    assert(!opp_report_ack_decode(version_two, sizeof(version_two), &report_id));
+    const uint8_t zero[] = {0x03, 0x00, 0x00, 0x00, 0x00};
+    assert(!opp_report_ack_decode(zero, sizeof(zero), &report_id));
+    assert(opp_report_ack_encode(0, payload) == 0);
+}
+
+/* An in-memory stand-in for flash, with a switch to make writes fail. */
+typedef struct {
+    bool have_counters;
+    uint32_t head;
+    uint32_t tail;
+    opp_queued_report_t slots[4];
+    bool fail_writes;
+    bool fail_counter_writes;
+} memory_store_t;
+
+static bool memory_load_counters(void *context, uint32_t *head, uint32_t *tail)
+{
+    memory_store_t *store = context;
+    *head = store->head;
+    *tail = store->tail;
+    return store->have_counters;
+}
+
+static bool memory_save_counters(void *context, uint32_t head, uint32_t tail)
+{
+    memory_store_t *store = context;
+    if (store->fail_writes || store->fail_counter_writes) {
+        return false;
+    }
+    store->head = head;
+    store->tail = tail;
+    store->have_counters = true;
+    return true;
+}
+
+static bool memory_load_entry(void *context, uint32_t slot, opp_queued_report_t *entry)
+{
+    memory_store_t *store = context;
+    *entry = store->slots[slot];
+    return true;
+}
+
+static bool memory_save_entry(void *context, uint32_t slot, const opp_queued_report_t *entry)
+{
+    memory_store_t *store = context;
+    if (store->fail_writes) {
+        return false;
+    }
+    store->slots[slot] = *entry;
+    return true;
+}
+
+static opp_report_queue_storage_t memory_storage(memory_store_t *store)
+{
+    return (opp_report_queue_storage_t){
+        .context = store,
+        .load_counters = memory_load_counters,
+        .save_counters = memory_save_counters,
+        .load_entry = memory_load_entry,
+        .save_entry = memory_save_entry,
+    };
+}
+
+static opp_queued_report_t queued(uint32_t report_id)
+{
+    opp_queued_report_t entry = {.report_id = report_id, .main_size = 1, .supplementary_size = 1};
+    entry.main[0] = (uint8_t)report_id;
+    return entry;
+}
+
+static bool push(opp_report_queue_t *queue, uint32_t report_id)
+{
+    const opp_queued_report_t entry = queued(report_id);
+    return opp_report_queue_push(queue, &entry);
+}
+
+static void test_report_queue(void)
+{
+    memory_store_t store = {0};
+    const opp_report_queue_storage_t storage = memory_storage(&store);
+    opp_report_queue_t queue;
+    opp_queued_report_t head;
+
+    assert(opp_report_queue_open(&queue, &storage, 4));
+    assert(opp_report_queue_depth(&queue) == 0);
+    assert(!opp_report_queue_head(&queue, &head));
+    /* Nothing queued: any acknowledgement names something delivered before. */
+    assert(opp_report_queue_ack(&queue, 7) == OPP_REPORT_ACK_ALREADY);
+
+    for (uint32_t id = 10; id < 14; ++id) {
+        assert(push(&queue, id));
+    }
+    /* Full: refused, never overwritten. */
+    assert(opp_report_queue_full(&queue));
+    assert(!push(&queue, 14));
+    assert(opp_report_queue_head(&queue, &head) && head.report_id == 10);
+
+    /* Only the oldest can be removed. */
+    assert(opp_report_queue_ack(&queue, 12) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_ack(&queue, 99) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_ack(&queue, 10) == OPP_REPORT_ACK_REMOVED);
+    assert(opp_report_queue_head(&queue, &head) && head.report_id == 11);
+    /* A repeated acknowledgement is harmless. */
+    assert(opp_report_queue_ack(&queue, 10) == OPP_REPORT_ACK_ALREADY);
+    assert(opp_report_queue_depth(&queue) == 3);
+
+    /* The ring reuses the freed slot. */
+    assert(push(&queue, 14));
+    assert(opp_report_queue_full(&queue));
+
+    /* A restart continues exactly where the stored counters say. */
+    opp_report_queue_t reopened;
+    assert(opp_report_queue_open(&reopened, &storage, 4));
+    assert(opp_report_queue_depth(&reopened) == 4);
+    for (uint32_t id = 11; id <= 14; ++id) {
+        assert(opp_report_queue_head(&reopened, &head) && head.report_id == id);
+        assert(head.main[0] == (uint8_t)id);
+        assert(opp_report_queue_ack(&reopened, id) == OPP_REPORT_ACK_REMOVED);
+    }
+    assert(opp_report_queue_depth(&reopened) == 0);
+}
+
+static void test_report_queue_failures(void)
+{
+    memory_store_t store = {0};
+    const opp_report_queue_storage_t storage = memory_storage(&store);
+    opp_report_queue_t queue;
+    assert(opp_report_queue_open(&queue, &storage, 4));
+    assert(push(&queue, 1));
+
+    /* The entry saved but not its counter (a reset in between): the report
+     * is not part of the queue, before or after a restart. */
+    store.fail_counter_writes = true;
+    assert(!push(&queue, 2));
+    assert(opp_report_queue_depth(&queue) == 1);
+    opp_report_queue_t reopened;
+    assert(opp_report_queue_open(&reopened, &storage, 4));
+    assert(opp_report_queue_depth(&reopened) == 1);
+
+    /* An acknowledgement that cannot be saved removes nothing. */
+    assert(opp_report_queue_ack(&queue, 1) == OPP_REPORT_ACK_REFUSED);
+    assert(opp_report_queue_depth(&queue) == 1);
+    store.fail_counter_writes = false;
+    assert(opp_report_queue_ack(&queue, 1) == OPP_REPORT_ACK_REMOVED);
+
+    /* Inconsistent stored counters start an empty queue rather than a wild one. */
+    store.head = 9;
+    store.tail = 2;
+    assert(opp_report_queue_open(&reopened, &storage, 4));
+    assert(opp_report_queue_depth(&reopened) == 0);
+    store.head = 0;
+    store.tail = 50;
+    assert(opp_report_queue_open(&reopened, &storage, 4));
+    assert(opp_report_queue_depth(&reopened) == 0);
+
+    /* Clearing (a release by the hub) empties it durably. */
+    store = (memory_store_t){0};
+    assert(opp_report_queue_open(&queue, &storage, 4));
+    assert(push(&queue, 5));
+    assert(opp_report_queue_clear(&queue));
+    assert(opp_report_queue_open(&reopened, &storage, 4));
+    assert(opp_report_queue_depth(&reopened) == 0);
 }
 
 static void test_bthome_identity(void)
@@ -711,6 +868,8 @@ int main(void)
     test_bthome_identity();
     test_device_configuration();
     test_report_acknowledgement();
+    test_report_queue();
+    test_report_queue_failures();
     test_sht45_response();
     test_sht45_humidity_clamping();
     test_clock_policy();

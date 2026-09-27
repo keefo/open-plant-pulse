@@ -87,6 +87,16 @@ h2 { font-size: 24px; }
 .connection-copy { display: grid; gap: 2px; }
 .connection-copy strong { font-size: 14px; }
 .connection-copy span { color: var(--muted); font-size: 12px; }
+/* Battery: an outline with a terminal nub, filled to the charge. Sized to the
+   12px text beside it, and drawn in the text colour so it follows the theme. */
+.connection-copy .battery { --battery-level: var(--leaf); display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.battery[data-level="low"] { --battery-level: var(--sun); }
+.battery[data-level="critical"] { --battery-level: var(--coral); }
+.battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: 3px; }
+.battery-glyph::after { content: ""; position: absolute; top: 50%; right: -4px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: currentColor; transform: translateY(-50%); }
+.battery-fill { position: absolute; top: 1px; bottom: 1px; left: 1px; width: calc((100% - 2px) * var(--charge, 0) / 100); border-radius: 1.5px; background: var(--battery-level); }
+.battery[data-level="unknown"] .battery-glyph { opacity: 0.5; }
+.battery-voltage::before { content: "\00b7"; margin-right: 5px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 5px #d9a32722; }
 .status-dot.live { background: var(--leaf); box-shadow: 0 0 0 5px #19734c22; }
 main { padding: 32px 0 60px; display: grid; gap: 28px; }

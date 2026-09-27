@@ -30,6 +30,7 @@
 #include "lwip/ip4_addr.h"
 #include "power_source.h"
 #include "battery_monitor.h"
+#include "report_delivery.h"
 #include "sht45_monitor.h"
 #include "soil_probe.h"
 #include "web_ui_config.h"
@@ -535,7 +536,8 @@ static esp_err_t status_handler(httpd_req_t *request)
              "\"force_report_request_id\":%lu,\"force_report_report_id\":%s,"
              "\"force_report_requested_at_ms\":%lld,"
              "\"force_report_completed_at_ms\":%lld,"
-             "\"force_report_acknowledged_at_ms\":%lld}",
+             "\"force_report_acknowledged_at_ms\":%lld,"
+             "\"report_queue_depth\":%lu,\"report_queue_capacity\":%lu}",
              app->version, station_connected ? "true" : "false", escaped_ssid,
              station_ip, station_mac,
              usb_connected ? "true" : "false",
@@ -562,7 +564,8 @@ static esp_err_t status_handler(httpd_req_t *request)
              force_report_report_id,
              (long long)force_report.requested_at_ms,
              (long long)force_report.report_completed_at_ms,
-             (long long)force_report.acknowledged_at_ms);
+             (long long)force_report.acknowledged_at_ms,
+             (unsigned long)opp_delivery_depth(), (unsigned long)opp_delivery_capacity());
     if (status_length < 0 || status_length >= STATUS_JSON_MAX) {
         free(status);
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,

@@ -18,6 +18,7 @@ cc -std=c11 -Wall -Wextra -Werror \
     -I"$sensor_dir/firmware/components/firmware_update_protocol/include" \
     -I"$sensor_dir/firmware/components/ina219/include" \
     -I"$sensor_dir/firmware/components/battery_gauge/include" \
+    -I"$sensor_dir/firmware/components/report_queue/include" \
     "$sensor_dir/firmware/components/sensor_protocol/sensor_protocol.c" \
     "$sensor_dir/firmware/components/bthome_payload/bthome_payload.c" \
     "$sensor_dir/firmware/components/sht45/sht45_decode.c" \
@@ -29,6 +30,7 @@ cc -std=c11 -Wall -Wextra -Werror \
     "$sensor_dir/firmware/components/firmware_update_protocol/firmware_update_protocol.c" \
     "$sensor_dir/firmware/components/ina219/ina219_decode.c" \
     "$sensor_dir/firmware/components/battery_gauge/battery_gauge.c" \
+    "$sensor_dir/firmware/components/report_queue/report_queue.c" \
     "$sensor_dir/tests/test_protocols.c" \
     -lm -o "$build_dir/test_protocols"
 

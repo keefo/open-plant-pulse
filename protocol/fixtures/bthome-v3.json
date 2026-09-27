@@ -29,23 +29,21 @@
         "soil_ph": 6.8,
         "nitrogen_mg_kg": 1,
         "phosphorus_mg_kg": 2,
-        "potassium_mg_kg": 7,
-        "force_report": false
+        "potassium_mg_kg": 7
       }
     },
     {
-      "name": "supplementary_forced",
-      "service_data_hex": "4001600c40103a013ed304000054080144010002000700",
+      "name": "supplementary_report_id_only",
+      "service_data_hex": "403ed3040000",
       "expected": {
         "kind": "supplementary",
         "report_id": 1235,
-        "battery_percent": 96,
-        "battery_voltage_v": 4.16,
-        "soil_ph": 6.8,
-        "nitrogen_mg_kg": 1,
-        "phosphorus_mg_kg": 2,
-        "potassium_mg_kg": 7,
-        "force_report": true
+        "battery_percent": null,
+        "battery_voltage_v": null,
+        "soil_ph": null,
+        "nitrogen_mg_kg": null,
+        "phosphorus_mg_kg": null,
+        "potassium_mg_kg": null
       }
     },
     {
@@ -71,5 +69,9 @@
         "kind": "beacon"
       }
     }
-  ]
+  ],
+  "acknowledgement_v3": {
+    "report_id": 1234,
+    "token_hex": "03d2040000"
+  }
 }

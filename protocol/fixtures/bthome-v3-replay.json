@@ -42,8 +42,7 @@
         "soil_ph": 6.5,
         "nitrogen_mg_kg": 12,
         "phosphorus_mg_kg": 8,
-        "potassium_mg_kg": 30,
-        "force_report": false
+        "potassium_mg_kg": 30
       }
     },
     {
@@ -94,8 +93,7 @@
         "soil_ph": null,
         "nitrogen_mg_kg": null,
         "phosphorus_mg_kg": null,
-        "potassium_mg_kg": null,
-        "force_report": false
+        "potassium_mg_kg": null
       }
     },
     {

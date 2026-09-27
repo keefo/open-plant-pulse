@@ -67,6 +67,8 @@ python3 -m pip install -e './hub[dev]'
 
 The development hub receives contract-v3 BTHome advertisements through Bleak, joins
 each report's main and supplementary packets into one reading keyed by report ID,
+acknowledges each complete report to its enrolled sensor (report acknowledgement
+version 3) so the sensor can drop it from its delivery queue,
 persists unique readings and bounded receive
 diagnostics in migrated SQLite storage, restores a short live history after
 restart, serves JSON endpoints, and renders a local dashboard. The shared replay
