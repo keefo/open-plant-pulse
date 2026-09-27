@@ -733,11 +733,12 @@
   by the new hub forever and block the sensor's queue. The queue now records its
   packet format, and firmware with another format discards old ones at boot.
 - On the device, charging from the XIAO's USB: the hub's latest reading was
-  report 14510, 100 % at 4.208 V, charging true; queue empty afterwards.
+  report 14510, 100 % at 4.208 V, charging true; queue empty afterwards. The
+  user confirmed the bolt on the hub page, gone when the charger was unplugged
+  and back when it was plugged in again.
 
 ### Not validated
 
-- The charging flag turning false on the hub when the charger is unplugged.
 - A full queue on hardware, and a report surviving a power cut while queued.
 - Home Assistant decoding the battery objects from the supplementary packet.
 - The flash progress bar against a real USB flash.
