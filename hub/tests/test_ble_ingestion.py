@@ -100,7 +100,7 @@ class AdvertisementReplayTests(unittest.TestCase):
                         "SELECT decode_status, COUNT(*) FROM advertisements "
                         "GROUP BY decode_status ORDER BY decode_status"
                     ).fetchall(),
-                    [("accepted", 6), ("conflict", 1), ("duplicate", 1), ("rejected", 2)],
+                    [("accepted", 8), ("conflict", 1), ("duplicate", 1), ("rejected", 2)],
                 )
                 self.assertEqual(
                     database.execute(
@@ -118,7 +118,7 @@ class AdvertisementReplayTests(unittest.TestCase):
                 ).replay(FIXTURE_PATH)
                 self.assertEqual(
                     statuses,
-                    ["duplicate"] * 7 + ["conflict", "rejected", "rejected"],
+                    ["duplicate"] * 9 + ["conflict", "rejected", "rejected"],
                 )
                 self.assertEqual(len(reopened.history()), 4)
             finally:
@@ -181,9 +181,25 @@ class ReportJoinTests(unittest.TestCase):
 
     def test_main_then_supplementary_joins_one_reading(self) -> None:
         self.assertEqual(self.ingestion.ingest(advertisement(MAIN_1235)), "accepted")
-        self.assertIsNone(self.store.latest(SENSOR_ID)["reading"]["battery_percent"])
+        # Stored, but not the latest until its second packet makes it whole.
+        self.assertIsNone(self.store.latest(SENSOR_ID))
+        self.assertEqual(len(self.store.history(SENSOR_ID)), 1)
         self.assertEqual(self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235)), "accepted")
         self.assert_joined()
+
+    def test_latest_stays_on_the_last_complete_report(self) -> None:
+        """A report whose second packet is still coming must not blank the page."""
+        self.ingestion.ingest(advertisement(MAIN_1235))
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235))
+        self.ingestion.ingest(advertisement(MAIN_1236, received_at="2026-09-26T21:20:10Z"))
+        for latest in (self.store.latest(SENSOR_ID), self.store.latest()):
+            self.assertEqual(latest["reading"]["report_id"], 1235)
+            self.assertEqual(latest["reading"]["battery_percent"], 96)
+            self.assertEqual(latest["reading"]["soil_ph"], 6.8)
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1236, received_at="2026-09-26T21:20:11Z"))
+        self.assertEqual(self.store.latest(SENSOR_ID)["reading"]["report_id"], 1236)
+        # A report may carry no battery or soil extras; complete is complete.
+        self.assertIsNone(self.store.latest(SENSOR_ID)["reading"]["battery_percent"])
 
     def test_supplementary_then_main_joins_one_reading(self) -> None:
         self.assertEqual(self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235)), "accepted")
@@ -249,6 +265,7 @@ class ReportJoinTests(unittest.TestCase):
 
     def test_an_unknown_time_stays_unknown(self) -> None:
         self.ingestion.ingest(advertisement(MAIN_1235, "2026-09-26T21:20:05Z"))
+        self.ingestion.ingest(advertisement(SUPPLEMENTARY_1235, "2026-09-26T21:20:05Z"))
         latest = self.store.latest(SENSOR_ID)
         self.assertIsNone(latest["reading"]["observed_at"])
         self.assertEqual(latest["received_at"], "2026-09-26T21:20:05Z")
@@ -271,6 +288,7 @@ class ReportJoinTests(unittest.TestCase):
                 "2026-09-26T21:25:00Z",
             )
         )
+        self.ingestion.ingest(advertisement("403ed2040000", "2026-09-26T21:25:01Z"))
         latest = self.store.latest(SENSOR_ID)
         self.assertEqual(latest["reading"]["observed_at"], "2026-09-26T21:20:00Z")
         self.assertEqual(latest["received_at"], "2026-09-26T21:25:00Z")
@@ -607,6 +625,10 @@ class MigrationTests(unittest.TestCase):
                     "conflict",
                 )
                 self.assertEqual(len(store.history(SENSOR_ID)), 3)
+                self.assertEqual(
+                    ingestion.ingest(advertisement("403e2a000000", "2026-09-26T21:20:07Z")),
+                    "accepted",
+                )
                 self.assertEqual(store.latest(SENSOR_ID)["reading"]["report_id"], 42)
             finally:
                 store.close()

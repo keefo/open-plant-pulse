@@ -77,6 +77,26 @@
       }
     },
     {
+      "id": "sensor-a-supplementary-report-id-only",
+      "received_at": "2026-09-13T12:30:01Z",
+      "local_name": "sensor-aabbccddeeff",
+      "observed_identifier": "replay-a",
+      "rssi": -50,
+      "service_data_hex": "403e2b000000",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "supplementary",
+        "sensor_id": "sensor-aabbccddeeff",
+        "report_id": 43,
+        "battery_percent": null,
+        "battery_voltage_v": null,
+        "soil_ph": null,
+        "nitrogen_mg_kg": null,
+        "phosphorus_mg_kg": null,
+        "potassium_mg_kg": null
+      }
+    },
+    {
       "id": "sensor-b-supplementary-first",
       "received_at": "2026-09-13T12:00:03Z",
       "local_name": "sensor-001122334455",
@@ -138,6 +158,26 @@
         "air_humidity_percent": null,
         "soil_source_status": "available",
         "air_source_status": "unavailable"
+      }
+    },
+    {
+      "id": "sensor-c-supplementary-report-id-only",
+      "received_at": "2026-09-13T12:00:04Z",
+      "local_name": "sensor-102030405060",
+      "observed_identifier": "replay-c",
+      "rssi": -73,
+      "service_data_hex": "403eff000000",
+      "expected_status": "accepted",
+      "expected": {
+        "kind": "supplementary",
+        "sensor_id": "sensor-102030405060",
+        "report_id": 255,
+        "battery_percent": null,
+        "battery_voltage_v": null,
+        "soil_ph": null,
+        "nitrogen_mg_kg": null,
+        "phosphorus_mg_kg": null,
+        "potassium_mg_kg": null
       }
     },
     {

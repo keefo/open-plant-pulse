@@ -1479,22 +1479,32 @@ class ReadingStore:
         }
 
     def latest(self, sensor_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return the newest complete reading, for one sensor or any.
+
+        A contract-v3 report is complete once its supplementary packet is
+        stored too. The newest row can be a report whose second packet is
+        seconds away, and showing it blanked pH, N/P/K and battery until then:
+        with a report every few seconds the page flashed between the two.
+        Readings from before contract v3 have no report ID, and readings
+        stored directly with add() never had packets; both are complete.
+        """
         with self._condition:
-            if sensor_id is not None:
-                row = self._database.execute(
-                    f"""
-                    SELECT {READING_COLUMNS}
-                    FROM sensor_readings
-                    WHERE sensor_id = ?
-                    ORDER BY reading_id DESC
-                    LIMIT 1
-                    """,
-                    (sensor_id,),
-                ).fetchone()
-                return self._serialize_row(row) if row is not None else None
-            for reading, received_at in reversed(self._history):
-                return self._serialize(reading, received_at)
-            return None
+            row = self._database.execute(
+                f"""
+                SELECT {READING_COLUMNS}
+                FROM sensor_readings AS reading
+                WHERE (? IS NULL OR sensor_id = ?)
+                  AND (report_id IS NULL OR advertisement_id IS NULL OR EXISTS (
+                      SELECT 1 FROM report_supplements AS supplement
+                      WHERE supplement.sensor_id = reading.sensor_id
+                        AND supplement.report_id = reading.report_id
+                  ))
+                ORDER BY reading_id DESC
+                LIMIT 1
+                """,
+                (sensor_id, sensor_id),
+            ).fetchone()
+            return self._serialize_row(row) if row is not None else None
 
     def history(self, sensor_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._condition:

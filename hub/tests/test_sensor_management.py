@@ -67,14 +67,14 @@ class SensorManagementTests(unittest.TestCase):
 
         reports = self.store.raw_sensor_reports(sensor_id)
 
-        self.assertEqual([item["report_id"] for item in reports], [42, 43, 42, 42, 42])
+        self.assertEqual([item["report_id"] for item in reports], [42, 43, 43, 42, 42, 42])
         self.assertEqual(
             [item["packet_kind"] for item in reports],
-            ["main", "main", "main", "supplementary", "main"],
+            ["main", "supplementary", "main", "main", "supplementary", "main"],
         )
         self.assertEqual(
             [item["decode_status"] for item in reports],
-            ["conflict", "accepted", "duplicate", "accepted", "accepted"],
+            ["conflict", "accepted", "accepted", "duplicate", "accepted", "accepted"],
         )
         self.assertEqual(
             reports[0]["service_data_hex"],
@@ -388,9 +388,10 @@ class SensorManagementWebTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(
-            [item["report_id"] for item in payload["items"]], [42, 43, 42, 42, 42]
+            [item["report_id"] for item in payload["items"]], [42, 43, 43, 42, 42, 42]
         )
-        self.assertEqual(payload["items"][1]["service_data_hex"], "402e2e3e2b00000045f500")
+        self.assertEqual(payload["items"][1]["service_data_hex"], "403e2b000000")
+        self.assertEqual(payload["items"][2]["service_data_hex"], "402e2e3e2b00000045f500")
 
         with self.assertRaises(HTTPError) as raised:
             self.request("/api/raw-reports?" + urlencode({"sensor_id": "missing"}))

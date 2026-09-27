@@ -94,7 +94,8 @@ The hub's key for a report is `(sensor identity, report ID)`. Main and
 supplementary packets of one report may arrive in either order and are joined
 into one reading; a reading appears once its main packet is stored, with
 supplementary values attached whenever they arrive. A report is complete when
-both are stored. Receiving a packet whose
+both are stored, and only a complete report is shown as a sensor's latest
+reading, so one whose second packet is still coming does not blank its values. Receiving a packet whose
 content matches what is already stored for its key is a duplicate and stores
 nothing; this is how repeated advertising of one report is absorbed. The same
 key with different content for the same packet kind is a conflict: it is
