@@ -39,6 +39,11 @@ DRAIN_INTERVAL_SECONDS = 30.0
 # The least time between two drains of one sensor, whatever triggers them, so
 # that a drain that keeps failing cannot become a connection per packet.
 DRAIN_SPACING_SECONDS = 2.0
+# A drain that is due waits for the packet that completes a report, which marks
+# the start of the quiet part of the sensor's reporting cycle: a connection then
+# pauses advertising after the fresh report was heard, not across it. If no
+# report completes over the air for this long, it drains anyway.
+DRAIN_DEFER_LIMIT_SECONDS = 10.0
 
 ScannerFactory = Callable[..., Any]
 
@@ -132,6 +137,7 @@ class BleakSubscriber:
         # last drain stopped at a report it could not acknowledge; and which
         # are being drained right now.
         self._last_drain_attempt: dict[str, float] = {}
+        self._drain_due_since: dict[str, float] = {}
         self._last_drain: dict[str, float] = {}
         self._drain_stalled: set[str] = set()
         self._draining: set[str] = set()
@@ -296,6 +302,11 @@ class BleakSubscriber:
                                 firmware_update=update_due,
                             )
                             continue
+                        if sensor_id in self._drain_due_since:
+                            # A drain is due and waits for this report to
+                            # complete; whatever else is due rides on its
+                            # connection in a moment rather than open another.
+                            continue
                         status_due = status_wanted and not configuration_due and not update_due
                         if status_due:
                             self._last_status_time[sensor_id] = now
@@ -346,13 +357,28 @@ class BleakSubscriber:
             return False
         acknowledged, missing = synchronizer.report_delivery(sensor_id, report_id)
         if acknowledged:
+            self._drain_due_since.pop(sensor_id, None)
             return False
         last_drain = self._last_drain.get(sensor_id)
-        if last_drain is None or now - last_drain >= DRAIN_INTERVAL_SECONDS:
-            return True
         # A report the last drain could not acknowledge holds everything after
         # it on the sensor, so the gap it leaves is not one a drain can close.
-        return missing and sensor_id not in self._drain_stalled
+        due = (
+            last_drain is None
+            or now - last_drain >= DRAIN_INTERVAL_SECONDS
+            or (missing and sensor_id not in self._drain_stalled)
+        )
+        if not due:
+            self._drain_due_since.pop(sensor_id, None)
+            return False
+        # When, not whether: once the report just heard is complete, so the
+        # connection falls after a fresh report instead of cutting across it.
+        # The first packet of a new report waits for its second.
+        report_complete = self._ingestion.report_is_acknowledgeable(sensor_id, report_id)
+        due_since = self._drain_due_since.setdefault(sensor_id, now)
+        if report_complete or now - due_since >= DRAIN_DEFER_LIMIT_SECONDS:
+            self._drain_due_since.pop(sensor_id, None)
+            return True
+        return False
 
     async def _drain(
         self,

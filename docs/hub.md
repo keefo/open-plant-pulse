@@ -226,6 +226,14 @@ when:
 - 30 seconds (`DRAIN_INTERVAL_SECONDS`) have passed since the sensor's last
   successful drain.
 
+That decides whether a drain is due, not when it starts. A due drain waits until
+the report just heard is complete (both packets stored), which is the start of
+the quiet part of the sensor's reporting cycle: the connection then pauses
+advertising after a fresh report was heard instead of across it. If no report
+completes over the air within 10 seconds (`DRAIN_DEFER_LIMIT_SECONDS`), it drains
+anyway. While a drain waits, configuration, status and update work wait with it
+and ride on its connection.
+
 Drains of one sensor never overlap and start at most every two seconds
 (`DRAIN_SPACING_SECONDS`), whatever the outcome of the last. A failed drain
 (connection error, a refused page) is simply tried again by the next

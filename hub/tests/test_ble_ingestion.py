@@ -1162,9 +1162,13 @@ class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
     def drains(self):
         return [event for event in self.events if event[0] == "drain"]
 
-    async def test_the_first_report_after_start_is_drained_at_once(self) -> None:
+    async def test_the_first_report_after_start_is_drained_once_complete(self) -> None:
         self.enrol()
+        # The first packet of a report waits for the second, so the connection
+        # falls after the fresh report rather than across it.
         await self.hear(main_hex(10))
+        self.assertEqual(self.drains(), [])
+        await self.hear(supplementary_hex(10))
         self.assertEqual(
             self.drains(),
             [("drain", SENSOR_ID, "platform-identifier", "connection-target",
@@ -1180,7 +1184,7 @@ class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
             await self.hear(main_hex(report_id), supplementary_hex(report_id))
         self.assertEqual(len(self.drains()), 1)
         self.clock[0] = 100.0 + ble.DRAIN_INTERVAL_SECONDS
-        await self.hear(main_hex(14))
+        await self.hear(main_hex(14), supplementary_hex(14))
         self.assertEqual(len(self.drains()), 2)
 
     async def test_a_report_missed_over_the_air_is_drained_at_once(self) -> None:
@@ -1192,19 +1196,32 @@ class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.drains()), 1)
         # Report 12 was never heard.
         self.clock[0] += 10.0
-        await self.hear(main_hex(13))
+        await self.hear(main_hex(13), supplementary_hex(13))
         self.assertEqual(len(self.drains()), 2)
 
     async def test_drains_are_spaced_even_when_they_fail(self) -> None:
         self.enrol()
         self.outcomes.extend(["failed", "failed"])
-        await self.hear(main_hex(10))
+        await self.hear(main_hex(10), supplementary_hex(10))
+        self.assertEqual(len(self.drains()), 1)
+        # The report is complete, so its repeats may retry, but not at once.
         self.clock[0] += ble.DRAIN_SPACING_SECONDS - 0.5
-        await self.hear(supplementary_hex(10), main_hex(10))
+        await self.hear(main_hex(10))
         self.assertEqual(len(self.drains()), 1)
         self.clock[0] += 0.5
-        await self.hear(supplementary_hex(10))
+        await self.hear(main_hex(10))
         self.assertEqual(len(self.drains()), 2)
+
+    async def test_a_report_never_completed_over_the_air_drains_after_the_limit(self) -> None:
+        self.enrol()
+        await self.hear(main_hex(10))
+        self.assertEqual(self.drains(), [])
+        self.clock[0] += ble.DRAIN_DEFER_LIMIT_SECONDS - 0.5
+        await self.hear(main_hex(10))
+        self.assertEqual(self.drains(), [])
+        self.clock[0] += 0.5
+        await self.hear(main_hex(10))
+        self.assertEqual(len(self.drains()), 1)
 
     async def test_a_drain_is_never_started_twice_for_one_sensor(self) -> None:
         self.enrol()
@@ -1218,14 +1235,14 @@ class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
         self.store.mark_reports_acknowledged(SENSOR_ID, [10])
         self.outcomes.append("stopped")
         self.clock[0] += 5.0
-        await self.hear(main_hex(13))
+        await self.hear(main_hex(13), supplementary_hex(13))
         self.assertEqual(len(self.drains()), 2)
         # The gap is still there, but no drain could close it.
         self.clock[0] += 5.0
-        await self.hear(main_hex(14))
+        await self.hear(main_hex(14), supplementary_hex(14))
         self.assertEqual(len(self.drains()), 2)
         self.clock[0] += ble.DRAIN_INTERVAL_SECONDS
-        await self.hear(main_hex(15))
+        await self.hear(main_hex(15), supplementary_hex(15))
         self.assertEqual(len(self.drains()), 3)
 
     async def test_beacons_and_acknowledged_reports_never_drain(self) -> None:
@@ -1245,7 +1262,10 @@ class DrainSubscriberTests(unittest.IsolatedAsyncioTestCase):
     async def test_configuration_rides_on_the_drain_connection(self) -> None:
         self.enrol()
         self.store.manage_sensor(SENSOR_ID, "Fern", "Study", "monstera", None, None, 60)
+        # Held while the drain waits for the report to complete, then on its link.
         await self.hear(main_hex(10))
+        self.assertEqual(self.events, [])
+        await self.hear(supplementary_hex(10))
         self.assertEqual(
             self.events,
             [("drain", SENSOR_ID, "platform-identifier", "connection-target",

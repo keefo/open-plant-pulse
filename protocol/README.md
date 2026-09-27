@@ -167,7 +167,11 @@ hearing a report not yet acknowledged from a sensor it owns, the hub drains
 when the report IDs it holds since the last acknowledgement have a gap
 (something was missed over the air), when about 30 seconds have passed since
 its last drain of that sensor, or on the first such report after the hub
-starts. Over one connection it drains the whole queue in pages, oldest first, on the
+starts. A drain that is due waits until the report just heard is complete,
+both packets stored, so the connection falls in the quiet part of the
+reporting cycle rather than across a fresh report; if none completes over the
+air within 10 seconds it drains anyway, and other connection work waits to ride
+on the same connection. Over one connection it drains the whole queue in pages, oldest first, on the
 existing read/write characteristic `7f510002-1b15-4c28-9a4a-8d0f4f505000`
 (bonded, encrypted):
 
