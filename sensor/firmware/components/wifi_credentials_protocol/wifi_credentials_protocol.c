@@ -14,6 +14,14 @@
  * A disabled console still carries its network, so switching it back on does not
  * need the hub to resend anything. */
 
+/* strnlen without relying on POSIX: strict C11 on Linux does not declare it,
+ * which failed the host tests in CI. Reads no more than `limit` bytes. */
+static size_t bounded_length(const char *text, size_t limit)
+{
+    const char *end = memchr(text, '\0', limit);
+    return end == NULL ? limit : (size_t)(end - text);
+}
+
 static bool text_is_printable(const char *text, size_t length)
 {
     for (size_t index = 0; index < length; ++index) {
@@ -32,9 +40,9 @@ size_t opp_wifi_credentials_encode(
     if (credentials == NULL || output == NULL) {
         return 0;
     }
-    const size_t ssid_length = strnlen(credentials->ssid, OPP_WIFI_SSID_MAX_BYTES + 1);
+    const size_t ssid_length = bounded_length(credentials->ssid, OPP_WIFI_SSID_MAX_BYTES + 1);
     const size_t password_length =
-        strnlen(credentials->password, OPP_WIFI_PASSWORD_MAX_BYTES + 1);
+        bounded_length(credentials->password, OPP_WIFI_PASSWORD_MAX_BYTES + 1);
     if (ssid_length > OPP_WIFI_SSID_MAX_BYTES ||
         password_length > OPP_WIFI_PASSWORD_MAX_BYTES) {
         return 0;
