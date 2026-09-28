@@ -49,8 +49,8 @@ about N days" forecast.
 ## Recognising a full watering
 
 The hub already records a watering as a care event when moisture rises by at
-least 15 points (`WATERING_RISE_PERCENT`), and watches drainage settle (three
-samples within 1.5 points, `DRAINAGE_STABLE_*`). A watering counts for learning
+least 15 points (`WATERING_RISE_PERCENT`), and watches drainage settle
+(moisture within 1.5 points for 20 minutes, `DRAINAGE_SETTLE_WINDOW`). A watering counts for learning
 only if it is **full**: moisture reaches near saturation and then settles.
 
 A small top-up, like the half cup poured at the probe on 2026-09-27 to test its

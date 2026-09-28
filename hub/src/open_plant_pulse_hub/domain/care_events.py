@@ -7,8 +7,11 @@ from .models import SensorReading
 
 
 WATERING_RISE_PERCENT = 15.0
-DRAINAGE_MIN_OBSERVATION = timedelta(minutes=10)
-DRAINAGE_STABLE_SAMPLES = 3
+# Moisture has settled after a watering once it has stayed within this range for
+# this long. A length of time rather than a number of samples: at a 30-second
+# report interval three samples span a minute, which a pot still draining a
+# point a minute passes as steady.
+DRAINAGE_SETTLE_WINDOW = timedelta(minutes=20)
 DRAINAGE_STABLE_RANGE_PERCENT = 1.5
 WATERING_REARM_MARGIN_PERCENT = 5.0
 DRY_ALERT_REARM_MARGIN_PERCENT = 3.0
@@ -38,7 +41,9 @@ class DrainageObservation:
     baseline: float
     peak: float
     started_at: datetime
-    recent: List[float]
+    # Readings since the watering, oldest first, trimmed to the settle window
+    # and the one reading just before it.
+    recent: List[Tuple[datetime, float]]
 
 
 class CareEventDetector:
@@ -126,7 +131,7 @@ class CareEventDetector:
                 baseline=previous.moisture_percent,
                 peak=reading.moisture_percent,
                 started_at=detected_at,
-                recent=[reading.moisture_percent],
+                recent=[(detected_at, reading.moisture_percent)],
             )
             events.append(
                 self._event(
@@ -203,21 +208,27 @@ class CareEventDetector:
             return None
 
         observation.peak = max(observation.peak, reading.moisture_percent)
-        observation.recent.append(reading.moisture_percent)
-        observation.recent = observation.recent[-DRAINAGE_STABLE_SAMPLES:]
-        if detected_at - observation.started_at < DRAINAGE_MIN_OBSERVATION:
+        observation.recent.append((detected_at, reading.moisture_percent))
+        window_start = detected_at - DRAINAGE_SETTLE_WINDOW
+        # Keep the newest reading at or before the window's start: it shows the
+        # readings cover the whole window, not only its end.
+        while len(observation.recent) > 1 and observation.recent[1][0] <= window_start:
+            observation.recent.pop(0)
+        anchor_at = observation.recent[0][0]
+        if anchor_at > window_start or anchor_at <= observation.started_at:
             return None
-        if len(observation.recent) < DRAINAGE_STABLE_SAMPLES:
-            return None
-        if max(observation.recent) - min(observation.recent) > DRAINAGE_STABLE_RANGE_PERCENT:
+        moistures = [moisture for _, moisture in observation.recent]
+        if max(moistures) - min(moistures) > DRAINAGE_STABLE_RANGE_PERCENT:
             return None
 
-        settled = sum(observation.recent) / len(observation.recent)
+        settled = sum(moistures) / len(moistures)
         rise = observation.peak - observation.baseline
         drain_drop = max(0.0, observation.peak - settled)
         retained_fraction = max(0.0, min(1.0, (settled - observation.baseline) / rise))
         response_class = self._drainage_response_class(retained_fraction)
-        settle_minutes = (detected_at - observation.started_at).total_seconds() / 60
+        # How long draining took: from the watering to the start of the steady
+        # window, not to when the window had lasted long enough to be sure.
+        settle_minutes = (anchor_at - observation.started_at).total_seconds() / 60
         del self._drainage_observations[reading.sensor_id]
         return self._event(
             reading,

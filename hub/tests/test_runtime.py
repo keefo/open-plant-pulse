@@ -72,8 +72,8 @@ class CareLogTests(unittest.TestCase):
             (1, "2027-01-01T00:00:00Z", 30.0),
             (2, "2027-01-01T00:02:00Z", 50.0),
             (3, "2027-01-01T00:12:00Z", 45.0),
-            (4, "2027-01-01T00:13:00Z", 45.0),
-            (5, "2027-01-01T00:14:00Z", 45.0),
+            (4, "2027-01-01T00:22:00Z", 45.0),
+            (5, "2027-01-01T00:32:00Z", 45.0),
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))

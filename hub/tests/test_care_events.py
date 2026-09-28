@@ -51,28 +51,54 @@ class CareEventDetectorTests(unittest.TestCase):
         )
         self.assertEqual(
             self.detector.detect(
-                replace(BASE_READING, report_id=3, moisture_percent=60.8),
+                replace(BASE_READING, report_id=3, moisture_percent=62.0),
                 self.now + timedelta(minutes=9),
             ),
             [],
         )
         self.detector.detect(
-            replace(BASE_READING, report_id=4, moisture_percent=60.2),
+            replace(BASE_READING, report_id=4, moisture_percent=60.0),
             self.now + timedelta(minutes=10),
+        )
+        # Steady, but not yet for the whole settle window.
+        self.assertEqual(
+            self.detector.detect(
+                replace(BASE_READING, report_id=5, moisture_percent=60.0),
+                self.now + timedelta(minutes=29),
+            ),
+            [],
         )
 
         events = self.detector.detect(
-            replace(BASE_READING, report_id=5, moisture_percent=60.0),
-            self.now + timedelta(minutes=11),
+            replace(BASE_READING, report_id=6, moisture_percent=60.0),
+            self.now + timedelta(minutes=30),
         )
 
         self.assertEqual([event.kind for event in events], ["drainage_assessment"])
         self.assertEqual(events[0].title, "Pot response: balanced")
         self.assertEqual(events[0].changes["peak_moisture_percent"], 75.0)
-        self.assertEqual(events[0].changes["settled_moisture_percent"], 60.33)
-        self.assertEqual(events[0].changes["retained_fraction"], 0.633)
-        self.assertEqual(events[0].changes["settle_minutes"], 10.0)
+        self.assertEqual(events[0].changes["settled_moisture_percent"], 60.0)
+        self.assertEqual(events[0].changes["retained_fraction"], 0.625)
+        self.assertEqual(events[0].changes["settle_minutes"], 9.0)
         self.assertEqual(events[0].changes["response_class"], "balanced")
+
+    def test_frequent_reports_do_not_settle_a_pot_still_draining(self) -> None:
+        # The first sensor's watering on 2026-09-27: reports every 30 seconds,
+        # moisture falling about a point a minute. Any three reports in a row
+        # sit within 1.5 points, but the pot is not settled.
+        self.detector.detect(
+            replace(BASE_READING, report_id=2, moisture_percent=100.0),
+            self.now + timedelta(minutes=1),
+        )
+        events = []
+        moisture = 60.0
+        for step in range(1, 60):
+            moisture -= 0.5
+            events += self.detector.detect(
+                replace(BASE_READING, report_id=2 + step, moisture_percent=moisture),
+                self.now + timedelta(minutes=1, seconds=30 * step),
+            )
+        self.assertNotIn("drainage_assessment", [event.kind for event in events])
 
     def test_ignores_normal_drift(self) -> None:
         self.assertEqual(
