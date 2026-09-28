@@ -352,7 +352,7 @@ The characteristic value is a canonical binary payload:
 | --- | --- | --- |
 | 0 | 1 | Protocol version, currently `2` |
 | 1 | 4 | Non-zero configuration revision, unsigned little-endian |
-| 5 | 4 | Reporting interval in seconds, unsigned little-endian, `1`–`86400` |
+| 5 | 4 | Reporting interval in seconds, unsigned little-endian, `1`–`86400`; the hub sends no less than `30` |
 | 9 | 1 | Plant-name byte length, `1`–`80` |
 | 10 | 1 | Room byte length, `0`–`80` |
 | 11 | variable | Plant name followed by room, UTF-8 without control characters |

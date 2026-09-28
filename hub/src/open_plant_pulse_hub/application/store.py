@@ -76,7 +76,11 @@ POST_WATERING_BASIS_END = timedelta(minutes=60)
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 MIN_REPORTING_INTERVAL_MINUTES = 5
 MAX_REPORTING_INTERVAL_MINUTES = 1440
-MIN_REPORTING_INTERVAL_SECONDS = 1
+# The shortest interval anybody can ask for. Below this a sensor spends its
+# whole cycle advertising, reports pile up faster than the hub drains them, and
+# nothing is any fresher: a report carries measurements sampled on the sensor's
+# own schedule, not on this one.
+MIN_REPORTING_INTERVAL_SECONDS = 30
 MAX_REPORTING_INTERVAL_SECONDS = 86400
 ONBOARDING_STATES = ("onboarding", "onboarded")
 WIFI_STATES = ("off", "pending", "joined", "failed")

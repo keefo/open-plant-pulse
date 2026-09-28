@@ -305,13 +305,13 @@ class SensorManagementWebTests(unittest.TestCase):
                 "display_name": "Window fern",
                 "room": "Sunroom",
                 "profile_id": "monstera",
-                "expected_interval_seconds": 5,
+                "expected_interval_seconds": 30,
             },
         ) as response:
             updated = json.load(response)
-        self.assertEqual(updated["expected_interval_seconds"], 5)
-        self.assertEqual(updated["hub_reporting_interval_seconds"], 5)
-        self.assertEqual(self.store.sensor(sensor_id)["expected_interval_seconds"], 5)
+        self.assertEqual(updated["expected_interval_seconds"], 30)
+        self.assertEqual(updated["hub_reporting_interval_seconds"], 30)
+        self.assertEqual(self.store.sensor(sensor_id)["expected_interval_seconds"], 30)
 
         with self.request(f"/api/sensors/{encoded_id}", "DELETE") as response:
             self.assertEqual(response.status, 204)
@@ -497,15 +497,14 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("readonly", page)
         self.assertIn('id="device-config-status"', page)
         self.assertIn("sent when the sensor next reports", page)
-        for label in (
-            "Every second",
-            "Every 3 seconds",
-            "Every 5 seconds",
-            "Every 10 seconds",
-            "Every 30 seconds",
-            "Every minute",
-        ):
+        for label in ("Every 30 seconds", "Every minute", "Every 30 minutes"):
             self.assertEqual(page.count(label), 2)
+        # Thirty seconds is the floor. Anything shorter spends the whole cycle
+        # advertising and arrives no fresher, because a report carries what the
+        # sensor last sampled on its own schedule.
+        for label in ("Every second", "Every 3 seconds", "Every 5 seconds",
+                      "Every 10 seconds"):
+            self.assertNotIn(label, page)
         self.assertIn("selectedSensor.sensor_reporting_interval_seconds", app)
         self.assertIn("requestSequence !== fleetRequestSequence", app)
         self.assertIn("sensorSettingsDraftSensorId === selectedSensor.sensor_id", app)

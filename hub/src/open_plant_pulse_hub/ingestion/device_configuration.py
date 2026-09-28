@@ -60,7 +60,7 @@ FIRMWARE_STATUS_FAILURES = {
 STATION_REPORT_MAX_AGE_SECONDS = 900
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 DEVICE_CONFIG_PAYLOAD_MAX_SIZE = 171
-MIN_REPORTING_INTERVAL_SECONDS = 1
+MIN_REPORTING_INTERVAL_SECONDS = 30
 MAX_REPORTING_INTERVAL_SECONDS = 86400
 # Bulk drain. The drain request turns reads of the characteristic into queue
 # pages until the end token or the disconnect; a page holds up to eight of the

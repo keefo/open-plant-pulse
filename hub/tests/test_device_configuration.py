@@ -42,7 +42,7 @@ class DeviceConfigurationCodecTests(unittest.TestCase):
         self.assertEqual(encode_device_configuration(switched_off)[11], 0)
         self.assertFalse(decode_device_configuration(encode_device_configuration(switched_off)).console_enabled)
 
-        for interval_seconds in (1, 3, 5, 10, 30, 60):
+        for interval_seconds in (30, 60, 1800, 86400):
             with self.subTest(interval_seconds=interval_seconds):
                 requested = DeviceConfiguration(42, interval_seconds, "Fern", "Office")
                 self.assertEqual(
@@ -53,6 +53,9 @@ class DeviceConfigurationCodecTests(unittest.TestCase):
     def test_rejects_invalid_interval_text_and_payload(self) -> None:
         for config in (
             DeviceConfiguration(1, 0, "Fern", "Office"),
+            # Thirty seconds is the floor: shorter than this a sensor spends its
+            # whole cycle advertising and the reports arrive no fresher.
+            DeviceConfiguration(1, 29, "Fern", "Office"),
             DeviceConfiguration(1, 86401, "Fern", "Office"),
             DeviceConfiguration(1, 30, "", "Office"),
             DeviceConfiguration(1, 30, "x" * 81, "Office"),
