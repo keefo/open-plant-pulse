@@ -20,6 +20,36 @@ device.
 > continuous BLE collection, target hardware, predictions, and packaging have
 > not been validated end to end.
 
+## What it looks like
+
+The hub's plant page: current readings against the plant's own profile, air
+history, the conclusions it has drawn, a year of care, the lights it runs, and
+the log of what happened.
+
+[![A plant's page on the hub](docs/images/hub-plant-page.jpg)](docs/images/hub-plant-page.jpg)
+
+Each sensor has its own page for the things that are the device's rather than
+the plant's: what the hub asks of it, the lights it drives, and the firmware it
+runs — which is installed from here, over the air.
+
+[![A sensor's configuration page](docs/images/hub-sensor-configuration.jpg)](docs/images/hub-sensor-configuration.jpg)
+
+Grow lights are added once and given to a plant, which owns the daily window
+they follow.
+
+[![Managing lights](docs/images/hub-lights.jpg)](docs/images/hub-lights.jpg)
+
+A sensor also serves its own console on the household network, for looking at
+the device itself: what each of its parts reads, what the battery is doing, and
+the firmware log as it happens.
+
+[![The sensor's own console](docs/images/sensor-console.jpg)](docs/images/sensor-console.jpg)
+
+[![The sensor's maintenance page](docs/images/sensor-maintenance.jpg)](docs/images/sensor-maintenance.jpg)
+
+The Wi-Fi name and hardware addresses in these screenshots are replaced; the
+readings are a real sensor's.
+
 ## Repository layout
 
 ```text
