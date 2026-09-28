@@ -812,8 +812,8 @@ class InterfaceTests(unittest.TestCase):
         # and opens or lets go of one.
         self.assertNotIn(b"switch console-toggle", script)
         self.assertNotIn(b'closest(".console-toggle")', app)
-        self.assertIn(b'configure.textContent = "Configure"', script)
-        self.assertIn(b'forget.textContent = "Forget sensor"', script)
+        self.assertIn(b'setText(configure, "Configure")', script)
+        self.assertIn(b'setText(forget, "Forget sensor")', script)
 
     def test_the_sensor_list_shows_firmware_and_how_old_the_answer_is(self):
         script = self.get("/onboarding.js")

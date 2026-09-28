@@ -432,8 +432,29 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn('chartEndTime = lastSampleTime;', app)
         self.assertIn('(timestamp - startTime) / (endTime - startTime)', app)
         self.assertNotIn('const plotStartTime = points.length > 1', app)
-        self.assertIn('chart.toggleAttribute("hidden", points.length === 0);', app)
+        # SVG elements have no hidden property, so charts are hidden by attribute.
+        self.assertIn('setHidden(chart, points.length === 0);', app)
+        self.assertIn('element.toggleAttribute("hidden", Boolean(hidden))', app)
         self.assertNotIn('chart.hidden = points.length === 0;', app)
+
+    def test_dashboard_polling_leaves_unchanged_elements_alone(self) -> None:
+        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
+        # A write that would put back the value already shown is skipped.
+        self.assertIn('if (element.textContent !== value) element.textContent = value;', app)
+        self.assertIn('if (element.dataset.renderKey === key) return false;', app)
+        # Lists and charts are rebuilt only when what they are drawn from changes.
+        for renderer, guard in [
+            ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
+            ("function renderInbox(", "if (!renderKeyChanged(list, unclaimedSensors.map("),
+            ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
+            ("function renderBattery(", "if (!renderKeyChanged(element, [known, percent, charging, voltage])) return;"),
+            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange])) return;"),
+            ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
+        ]:
+            body = app[app.index(renderer):]
+            body = body[: body.index("\nfunction ", 1)]
+            self.assertIn(guard, body, renderer)
+            self.assertLess(body.index(guard), body.index("replaceChildren("), renderer)
 
     def test_dashboard_polling_updates_fleet_cards_without_replacing_grid(self) -> None:
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()

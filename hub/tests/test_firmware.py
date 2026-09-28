@@ -399,7 +399,7 @@ class InterfaceTests(unittest.TestCase):
         # Downloading needs the household network, which is a precondition, not
         # something to discover halfway through.
         self.assertIn(b'selectedSensor.wifi_enabled && selectedSensor.wifi_state === "joined"', script)
-        self.assertIn(b"install.disabled = running", script)
+        self.assertIn(b"setDisabled(install, running", script)
         self.assertIn(b"downloads firmware over the household network", script)
 
     def test_progress_is_what_the_sensor_said_and_names_every_state(self) -> None:
