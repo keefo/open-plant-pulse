@@ -181,7 +181,10 @@ def encode_device_configuration(config: DeviceConfiguration) -> bytes:
     if not 1 <= config.revision <= 0xFFFFFFFF:
         raise ValueError("configuration revision must be between 1 and 4294967295")
     if not MIN_REPORTING_INTERVAL_SECONDS <= config.reporting_interval_seconds <= MAX_REPORTING_INTERVAL_SECONDS:
-        raise ValueError("reporting interval must be between 1 and 86400 seconds")
+        raise ValueError(
+            f"reporting interval must be between {MIN_REPORTING_INTERVAL_SECONDS} and "
+            f"{MAX_REPORTING_INTERVAL_SECONDS} seconds"
+        )
     return b"".join(
         (
             bytes((DEVICE_CONFIG_PROTOCOL_VERSION,)),

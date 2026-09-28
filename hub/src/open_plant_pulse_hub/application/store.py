@@ -1565,7 +1565,10 @@ class ReadingStore:
         if conductivity_high_us_cm is not None and conductivity_high_us_cm < 0:
             raise ValueError("conductivity_high_us_cm cannot be negative")
         if not MIN_REPORTING_INTERVAL_SECONDS <= expected_interval_seconds <= MAX_REPORTING_INTERVAL_SECONDS:
-            raise ValueError("expected_interval_seconds must be between 1 and 86400")
+            raise ValueError(
+                "expected_interval_seconds must be between "
+                f"{MIN_REPORTING_INTERVAL_SECONDS} and {MAX_REPORTING_INTERVAL_SECONDS}"
+            )
 
         with self._condition, self._database:
             current = self._database.execute(
