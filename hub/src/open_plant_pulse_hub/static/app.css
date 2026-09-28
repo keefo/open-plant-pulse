@@ -226,6 +226,13 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .watering-calendar-day[data-state="drying"][data-level="1"], .watering-calendar-legend i[data-state="drying"][data-level="1"] { border-color: #c69a23; background: #e0b83f; }
 .watering-calendar-day[data-state="drying"][data-level="2"], .watering-calendar-legend i[data-state="drying"][data-level="2"] { border-color: #c36c28; background: #dc7d32; }
 .watering-calendar-day[data-state="drying"][data-level="3"], .watering-calendar-legend i[data-state="drying"][data-level="3"] { border-color: #a4392f; background: #c84a3d; }
+/* A feeding sits on top of whatever the day already says, as a corner mark,
+   because a day can be both watered and fed. */
+.watering-calendar-day, .watering-calendar-legend i { position: relative; }
+.watering-calendar-day[data-fertilized="true"]::after, .watering-calendar-legend i[data-fertilized="true"]::after {
+  content: ""; position: absolute; right: -1px; bottom: -1px; width: 5px; height: 5px;
+  border-radius: 50% 0 2px 0; background: var(--gold); box-shadow: 0 0 0 1px #fdfdfb;
+}
 .watering-calendar-day[data-future="true"] { opacity: .3; }
 .watering-calendar-day[data-outside-year="true"] { visibility: hidden; }
 .watering-calendar-legend { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10px; }

@@ -163,6 +163,16 @@ MISSED_WATERING_GRACE = timedelta(hours=24)
 MAX_LIGHTING_STRETCH = timedelta(hours=24)
 
 
+def _empty_calendar_day(day: str, moisture: Optional[float] = None) -> Dict[str, Any]:
+    return {
+        "date": day,
+        "watering_count": 0,
+        "fertilizing_count": 0,
+        "drying_level": 0,
+        "final_moisture_percent": moisture,
+    }
+
+
 def _timestamp(moment: datetime) -> str:
     # The form every stored time takes, so that text comparison orders them.
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2335,6 +2345,13 @@ class ReadingStore:
                 """,
                 (sensor_id, end_at),
             ).fetchall()
+            fertilizing_rows = self._database.execute(
+                """
+                SELECT detected_at FROM care_events
+                WHERE sensor_id = ? AND kind = 'fertilizing' AND detected_at < ?
+                """,
+                (sensor_id, end_at),
+            ).fetchall()
             moisture_rows = self._database.execute(
                 """
                 WITH dated AS (
@@ -2382,12 +2399,21 @@ class ReadingStore:
             day: {
                 "date": day,
                 "watering_count": 0,
+                "fertilizing_count": 0,
                 "drying_level": 0,
                 "final_moisture_percent": round(moisture, 2),
             }
             for day, moisture in final_moisture_by_day.items()
             if start.date().isoformat() <= day < end.date().isoformat()
         }
+        # Feeding is marked on the day somebody would say they did it, which is
+        # the day its entry is named after, not the UTC day it was stored on.
+        for (detected_at,) in fertilizing_rows:
+            day = self._local_day(detected_at)
+            if not start.date().isoformat() <= day < end.date().isoformat():
+                continue
+            item = activity.setdefault(day, _empty_calendar_day(day))
+            item["fertilizing_count"] += 1
         events = [
             (kind, datetime.fromisoformat(detected_at.replace("Z", "+00:00")))
             for kind, detected_at in event_rows
@@ -2395,10 +2421,7 @@ class ReadingStore:
         for kind, detected_at in events:
             if kind == "watering" and start <= detected_at < end:
                 day = detected_at.date().isoformat()
-                item = activity.setdefault(
-                    day,
-                    {"date": day, "watering_count": 0, "drying_level": 0, "final_moisture_percent": None},
-                )
+                item = activity.setdefault(day, _empty_calendar_day(day))
                 item["watering_count"] += 1
 
         for index, (kind, due_at) in enumerate(events):
@@ -2423,12 +2446,7 @@ class ReadingStore:
                     drying_level = min(3, drying_level + 1)
                 item = activity.setdefault(
                     day_key,
-                    {
-                        "date": day_key,
-                        "watering_count": 0,
-                        "drying_level": 0,
-                        "final_moisture_percent": final_moisture_by_day.get(day_key),
-                    },
+                    _empty_calendar_day(day_key, final_moisture_by_day.get(day_key)),
                 )
                 if not item["watering_count"]:
                     item["drying_level"] = max(item["drying_level"], drying_level)

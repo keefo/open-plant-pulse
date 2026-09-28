@@ -1434,8 +1434,8 @@ function renderWateringCalendar(items, range, watering) {
   layout.style.gridTemplateColumns = `24px ${chartWidth}px`;
   months.style.gridTemplateColumns = `repeat(${range.weekCount}, 11px)`;
   grid.style.gridTemplateColumns = `repeat(${range.weekCount}, 11px)`;
-  setAttr(grid, "aria-label", `Watering events for ${range.year}`);
-  setText(document.getElementById("watering-calendar-title"), `${range.year} watering history`);
+  setAttr(grid, "aria-label", `Watering and feeding for ${range.year}`);
+  setText(document.getElementById("watering-calendar-title"), `${range.year} care history`);
   grid.replaceChildren();
   months.replaceChildren();
   let previousMonth = -1;
@@ -1445,12 +1445,17 @@ function renderWateringCalendar(items, range, watering) {
     const dateKey = utcDateKey(date);
     const activity = activityByDay.get(dateKey) || { watering_count: 0, drying_level: 0 };
     const count = activity.watering_count;
+    const fed = Boolean(activity.fertilizing_count);
     const moisture = activity.final_moisture_percent;
     const cell = document.createElement("span");
     const formattedDate = date.toLocaleDateString([], { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" });
     cell.className = "watering-calendar-day";
     setData(cell, "state", count ? "watered" : activity.drying_level ? "drying" : moisture != null ? "moisture" : "none");
     setData(cell, "level", count ? Math.min(3, count) : activity.drying_level);
+    /* Feeding is an event on a day, not a state of it: a day can be watered,
+       drying, or simply wet, and fed as well. It is marked on top rather than
+       taking the square's colour, so neither answer hides the other. */
+    setData(cell, "fertilized", fed ? "true" : "false");
     setData(cell, "future", date > range.todayStart ? "true" : "false");
     setData(cell, "outsideYear", date < range.yearStart || date >= range.yearEnd ? "true" : "false");
     setAttr(cell, "role", "gridcell");
@@ -1467,7 +1472,8 @@ function renderWateringCalendar(items, range, watering) {
         : moisture != null
           ? `final soil moisture ${moisture.toFixed(1)}%`
           : "no reading";
-    setAttr(cell, "aria-label", `${formattedDate}: ${description}`);
+    setAttr(cell, "aria-label",
+      `${formattedDate}: ${description}${fed ? "; fertilized" : ""}`);
     cell.title = cell.getAttribute("aria-label");
     grid.append(cell);
 
@@ -1481,8 +1487,9 @@ function renderWateringCalendar(items, range, watering) {
   }
 
   const total = items.reduce((sum, item) => sum + item.watering_count, 0);
+  const fedDays = items.reduce((sum, item) => sum + (item.fertilizing_count ? 1 : 0), 0);
   setText(document.getElementById("watering-calendar-summary"),
-    `${total} watering event${total === 1 ? "" : "s"} in ${range.year}`);
+    `${total} watering${total === 1 ? "" : "s"} and ${fedDays} feeding${fedDays === 1 ? "" : "s"} in ${range.year}`);
 }
 
 async function refreshWateringCalendar() {

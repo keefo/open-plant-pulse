@@ -294,6 +294,22 @@ class ManualCareTests(unittest.TestCase):
         self.assertEqual(self.store.plant_journey("plant-01")["fertilizing_count"], 1)
         self.assertEqual(self.store.rebuild_journey("plant-01")["fertilizing_count"], 1)
 
+    def test_a_fed_day_is_marked_on_the_year(self) -> None:
+        self.store.record_manual_care("plant-01", "fertilizing", at="2026-09-20T17:00:00Z")
+
+        days = self.store.watering_calendar(
+            "plant-01", "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z"
+        )
+        fed = [day for day in days if day["fertilizing_count"]]
+
+        self.assertEqual(len(fed), 1)
+        # Marked on the day somebody would say they fed it, which is the day the
+        # entry is named after rather than the UTC day it was stored on.
+        self.assertEqual(fed[0]["date"], self.store._local_day("2026-09-20T17:00:00Z"))
+        # Feeding is marked alongside whatever the day already said about water.
+        self.assertEqual(fed[0]["watering_count"], 0)
+        self.assertEqual(fed[0]["drying_level"], 0)
+
     def test_it_refuses_what_it_cannot_record(self) -> None:
         with self.assertRaises(ValueError):
             self.store.record_manual_care("plant-01", "levitating")

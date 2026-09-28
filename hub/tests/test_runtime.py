@@ -175,11 +175,16 @@ class CareLogTests(unittest.TestCase):
         self.assertEqual(
             activity,
             [
-                {"date": "2027-01-01", "watering_count": 0, "drying_level": 0, "final_moisture_percent": 19.0},
-                {"date": "2027-01-02", "watering_count": 0, "drying_level": 1, "final_moisture_percent": 16.0},
-                {"date": "2027-01-03", "watering_count": 0, "drying_level": 2, "final_moisture_percent": 13.0},
-                {"date": "2027-01-04", "watering_count": 0, "drying_level": 3, "final_moisture_percent": 8.0},
-                {"date": "2027-01-05", "watering_count": 1, "drying_level": 0, "final_moisture_percent": 40.0},
+                {"date": "2027-01-01", "watering_count": 0, "fertilizing_count": 0,
+                 "drying_level": 0, "final_moisture_percent": 19.0},
+                {"date": "2027-01-02", "watering_count": 0, "fertilizing_count": 0,
+                 "drying_level": 1, "final_moisture_percent": 16.0},
+                {"date": "2027-01-03", "watering_count": 0, "fertilizing_count": 0,
+                 "drying_level": 2, "final_moisture_percent": 13.0},
+                {"date": "2027-01-04", "watering_count": 0, "fertilizing_count": 0,
+                 "drying_level": 3, "final_moisture_percent": 8.0},
+                {"date": "2027-01-05", "watering_count": 1, "fertilizing_count": 0,
+                 "drying_level": 0, "final_moisture_percent": 40.0},
             ],
         )
 
@@ -402,6 +407,7 @@ class WebApiTests(unittest.TestCase):
                     {
                         "date": "2027-03-01",
                         "watering_count": 1,
+                        "fertilizing_count": 0,
                         "drying_level": 0,
                         "final_moisture_percent": 60.0,
                     }
