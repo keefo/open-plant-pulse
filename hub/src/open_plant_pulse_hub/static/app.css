@@ -226,7 +226,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .watering-calendar-day[data-future="true"] { opacity: .3; }
 .watering-calendar-day[data-outside-year="true"] { visibility: hidden; }
 .watering-calendar-legend { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10px; }
-.journey-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); }
+.journey-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--line); }
 .journey-stats > div { min-height: 112px; padding: 20px; display: grid; align-content: center; gap: 4px; border-right: 1px solid var(--line); }
 .journey-stats > div:last-child { border-right: 0; }
 .journey-stats strong { font: 500 36px Georgia, "Times New Roman", serif; font-variant-numeric: tabular-nums; }
@@ -240,6 +240,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .care-event.fertilizing::before { background: var(--sun); box-shadow: 0 0 0 4px #f4e8c5; }
 .care-event.watering_due::before { background: var(--coral); box-shadow: 0 0 0 4px #f3dfd9; }
 .care-event.drainage_assessment::before { background: var(--leaf); box-shadow: 0 0 0 4px #dcecdf; }
+.care-event.lighting::before { background: var(--gold); box-shadow: 0 0 0 4px #f5ead0; }
 .care-event time { grid-row: span 2; color: var(--muted); font-size: 12px; }
 .care-event-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .care-event-heading strong { font-size: 15px; }
@@ -315,8 +316,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .hero-metric { grid-column: span 2; grid-row: auto; min-height: 360px; }
   .chemistry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .journey-stats > div:nth-child(2) { border-right: 0; }
-  .journey-stats > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .journey-stats > div:nth-child(even) { border-right: 0; }
+  .journey-stats > div:not(:nth-last-child(-n+1)) { border-bottom: 1px solid var(--line); }
   .climate-chart-grid { grid-template-columns: 1fr; }
 }
 

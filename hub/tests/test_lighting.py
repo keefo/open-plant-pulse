@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from threading import Thread
@@ -260,6 +260,101 @@ class Clock:
 
     def now(self):
         return self.wall
+
+
+class LightingCareLogTests(unittest.TestCase):
+    """Switching a light is part of a plant's history, and the record of it."""
+
+    def setUp(self):
+        self.store = ReadingStore()
+        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        enroll(self.store, self.sensor_id, "Strelitzia")
+        self.store.create_light("light-a", "Lamp A", "wemo-switch", {})
+        self.store.create_light("light-b", "Lamp B", "wemo-switch", {})
+        self.store.set_plant_lighting(
+            self.sensor_id, ["light-a", "light-b"],
+            {"enabled": True, "on": "08:00", "off": "21:30"},
+        )
+
+    def tearDown(self):
+        self.store.close()
+
+    def switch(self, light_id, at, wanted, outcome="confirmed", source="schedule"):
+        """Write the event the hub writes, dated, so hours can be checked."""
+        self.store._database.execute(
+            """
+            INSERT INTO care_events (event_id, sensor_id, kind, detected_at, title,
+                                     summary, confidence, changes_json)
+            VALUES (?, ?, 'lighting', ?, 'x', 'y', 'high', ?)
+            """,
+            (light_id + at, self.sensor_id, at,
+             json.dumps({"light_id": light_id, "light": "Lamp", "wanted": wanted,
+                         "source": source, "outcome": outcome})),
+        )
+        self.store._database.commit()
+
+    def test_a_switched_light_appears_in_the_plants_care_log(self):
+        self.store.record_light_event("light-a", "schedule", True, "confirmed", None)
+
+        entry = self.store.care_log(10, self.sensor_id)[0]
+        self.assertEqual(entry["kind"], "lighting")
+        self.assertEqual(entry["title"], "Lamp A on")
+        self.assertIn("daily schedule", entry["summary"])
+        self.assertEqual(entry["confidence"], "high")
+        self.assertEqual(entry["changes"]["light_id"], "light-a")
+        self.assertTrue(entry["changes"]["wanted"])
+
+    def test_a_light_nobody_could_reach_says_so(self):
+        self.store.record_light_event("light-a", "schedule", True, "unreachable", "timed out")
+
+        entry = self.store.care_log(10, self.sensor_id)[0]
+        self.assertIn("could not be reached", entry["summary"])
+        self.assertEqual(entry["confidence"], "low")
+
+    def test_a_light_no_plant_owns_writes_nothing(self):
+        self.store.create_light("light-loose", "Spare", "wemo-switch", {})
+        before = len(self.store.care_log(50, self.sensor_id))
+
+        self.store.record_light_event("light-loose", "manual", True, "confirmed", None)
+
+        self.assertEqual(len(self.store.care_log(50, self.sensor_id)), before)
+
+    def test_lifetime_hours_count_the_time_the_plant_was_lit(self):
+        # Lamp A from 08:00 to 12:00 and Lamp B from 10:00 to 14:00 is six hours
+        # of light, not eight: this is how long the plant was lit.
+        self.switch("light-a", "2026-09-20T08:00:00Z", True)
+        self.switch("light-b", "2026-09-20T10:00:00Z", True)
+        self.switch("light-a", "2026-09-20T12:00:00Z", False)
+        self.switch("light-b", "2026-09-20T14:00:00Z", False)
+
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 6.0)
+        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 6.0)
+
+    def test_the_watchdog_holding_a_light_on_does_not_restart_the_clock(self):
+        self.switch("light-a", "2026-09-21T08:00:00Z", True)
+        self.switch("light-a", "2026-09-21T09:00:00Z", True, source="watchdog")
+        self.switch("light-a", "2026-09-21T10:00:00Z", False)
+
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 2.0)
+
+    def test_an_instruction_the_light_never_answered_counts_for_nothing(self):
+        # Being told to come on is not being on, and counting it would inflate
+        # the one number somebody uses to judge whether a plant gets enough.
+        self.switch("light-a", "2026-09-22T08:00:00Z", True, outcome="unreachable")
+        self.switch("light-a", "2026-09-22T12:00:00Z", False, outcome="unreachable")
+
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0.0)
+
+    def test_a_light_still_on_counts_up_to_now(self):
+        started = datetime.now(timezone.utc) - timedelta(hours=3)
+        self.switch("light-a", started.strftime("%Y-%m-%dT%H:%M:%SZ"), True)
+
+        self.assertAlmostEqual(self.store.lighting_hours(self.sensor_id), 3.0, delta=0.2)
+
+    def test_a_plant_that_has_never_had_a_light_reports_none(self):
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0.0)
+        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 0.0)
 
 
 class SchedulerTests(unittest.TestCase):

@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 from statistics import median
 from threading import Condition
+from uuid import uuid4
 from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
@@ -128,6 +129,24 @@ WIFI_FAILURES = (
     "no_address",
     "unsupported_band",
 )
+
+
+# Who asked for the switch, in the words somebody reading a care log needs.
+LIGHTING_SOURCE_TEXT = {
+    "schedule": "by the plant's daily schedule",
+    "watchdog": "to match the plant's schedule",
+    "manual": "by hand",
+}
+
+
+def _lighting_summary(source: str, wanted: bool, outcome: str) -> str:
+    reason = LIGHTING_SOURCE_TEXT.get(source, f"by {source}")
+    state = "on" if wanted else "off"
+    if outcome == "confirmed":
+        return f"Switched {state} {reason}, and the light confirmed it."
+    if outcome == "unreachable":
+        return f"Asked to switch {state} {reason}, but the light could not be reached."
+    return f"Asked to switch {state} {reason}; the light did not confirm."
 
 
 def _timestamp(moment: datetime) -> str:
@@ -989,6 +1008,55 @@ class ReadingStore:
                 )
                 """,
                 (light_id, light_id, LIGHT_EVENT_LIMIT),
+            )
+            self._record_lighting_care_events(light_id, source, wanted, outcome)
+
+    def _record_lighting_care_events(
+        self, light_id: str, source: str, wanted: bool, outcome: str
+    ) -> None:
+        """Put a light's switching in the care log of the plant it lights.
+
+        The light's own event list is trimmed to the most recent few hundred, so
+        it cannot answer how long a plant has been lit over its life. The care
+        log is never trimmed, which makes it both the history somebody reads and
+        the record the lifetime hours are counted from.
+        """
+        row = self._database.execute(
+            "SELECT lights.display_name, plant_lights.plant_id FROM lights "
+            "JOIN plant_lights ON plant_lights.light_id = lights.light_id "
+            "WHERE lights.light_id = ?",
+            (light_id,),
+        ).fetchone()
+        if row is None:
+            # A light nobody has given to a plant lights no plant.
+            return
+        light_name, plant_id = row
+        detected_at = _timestamp(datetime.now(timezone.utc))
+        changes = {
+            "light_id": light_id,
+            "light": light_name,
+            "wanted": bool(wanted),
+            "source": source,
+            "outcome": outcome,
+        }
+        for (sensor_id,) in self._database.execute(
+            "SELECT sensor_id FROM sensors WHERE plant_id = ?", (plant_id,)
+        ):
+            self._database.execute(
+                """
+                INSERT OR IGNORE INTO care_events
+                (event_id, sensor_id, kind, detected_at, title, summary, confidence, changes_json)
+                VALUES (?, ?, 'lighting', ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid4().hex,
+                    sensor_id,
+                    detected_at,
+                    f"{light_name} {'on' if wanted else 'off'}",
+                    _lighting_summary(source, wanted, outcome),
+                    "high" if outcome == "confirmed" else "low",
+                    json.dumps(changes),
+                ),
             )
 
     def light_events(self, light_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -2424,7 +2492,60 @@ class ReadingStore:
             "watering_count": sum(kind == "watering" for kind, _ in events),
             "fertilizing_count": sum(kind == "fertilizing" for kind, _ in events),
             "missed_watering_count": missed_waterings,
+            "lighting_hours": self.lighting_hours(sensor_id),
         }
+
+    def lighting_hours(self, sensor_id: str) -> float:
+        """How long this plant has had a light on, over its whole life.
+
+        Counted from the care log, which is never trimmed, and only from what a
+        light confirmed: an instruction that went unanswered says nothing about
+        whether the lamp was lit. Two lamps over one plant are counted once,
+        because this is how long the plant was lit, not how long lamps ran.
+        """
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT detected_at, changes_json FROM care_events
+                WHERE sensor_id = ? AND kind = 'lighting'
+                ORDER BY detected_at
+                """,
+                (sensor_id,),
+            ).fetchall()
+        now = datetime.now(timezone.utc)
+        lit_since: Dict[str, datetime] = {}
+        intervals: List[Tuple[datetime, datetime]] = []
+        for detected_at, changes_json in rows:
+            try:
+                changes = json.loads(changes_json)
+            except json.JSONDecodeError:
+                continue
+            if changes.get("outcome") != "confirmed":
+                continue
+            light_id = str(changes.get("light_id", ""))
+            at = self._observation_datetime(detected_at, now)
+            started = lit_since.get(light_id)
+            if changes.get("wanted"):
+                # A light told to come on while it is already on is the watchdog
+                # holding it there, which changes nothing about when it started.
+                if started is None:
+                    lit_since[light_id] = at
+            elif started is not None:
+                intervals.append((started, at))
+                del lit_since[light_id]
+        for started in lit_since.values():
+            intervals.append((started, now))
+
+        seconds = 0.0
+        finish: Optional[datetime] = None
+        for start, end in sorted(intervals):
+            if finish is None or start > finish:
+                seconds += (end - start).total_seconds()
+                finish = end
+            elif end > finish:
+                seconds += (end - finish).total_seconds()
+                finish = end
+        return round(max(0.0, seconds) / 3600.0, 1)
 
     def wait_for_reading(self, timeout: float) -> bool:
         with self._condition:

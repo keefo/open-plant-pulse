@@ -1339,7 +1339,11 @@ function renderCareLog(items) {
     const confidence = document.createElement("span");
     setText(confidence, event.kind === "drainage_assessment"
       ? "Estimated response"
-      : event.confidence === "high" ? "High confidence" : "Confirm this event");
+      /* A light the hub switched is not something to confirm or to be confident
+         about: either the lamp answered or it did not. */
+      : event.kind === "lighting"
+        ? (event.confidence === "high" ? "Light confirmed" : "No answer from the light")
+        : event.confidence === "high" ? "High confidence" : "Confirm this event");
     heading.append(title, confidence);
     const summary = document.createElement("p");
     setText(summary, event.summary);
@@ -1510,6 +1514,10 @@ async function refreshPlantJourney() {
     setText(document.getElementById("journey-waterings"), journey.watering_count);
     setText(document.getElementById("journey-fertilizing"), journey.fertilizing_count);
     setText(document.getElementById("journey-missed"), journey.missed_watering_count);
+    /* Hours, to one decimal, because a plant lit for twenty minutes today has
+       had light and "0" would say it had none. */
+    setText(document.getElementById("journey-light-hours"),
+      journey.lighting_hours != null ? journey.lighting_hours.toFixed(1) : "--");
     setText(document.getElementById("journey-started"), journey.started_at
       ? `Since ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(journey.started_at))}`
       : "No sensor history yet");

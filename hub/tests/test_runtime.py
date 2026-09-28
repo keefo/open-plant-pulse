@@ -62,6 +62,7 @@ class CareLogTests(unittest.TestCase):
                 "watering_count": 2,
                 "fertilizing_count": 0,
                 "missed_watering_count": 1,
+                "lighting_hours": 0.0,
             },
         )
 
@@ -348,6 +349,7 @@ class WebApiTests(unittest.TestCase):
                     "watering_count": 0,
                     "fertilizing_count": 0,
                     "missed_watering_count": 0,
+                    "lighting_hours": 0.0,
                 },
             )
         finally:
