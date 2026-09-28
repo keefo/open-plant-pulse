@@ -9,6 +9,14 @@ let lightDrivers = [];
 let lightItems = [];
 let plantLighting = null;
 let plantLightingDraftSensorId = null;
+// Lights being switched from the plant page, by ID, to the state asked for.
+// A switch shows what was asked while the light is asked, not what the last
+// poll said a moment before.
+const plantLightRequests = new Map();
+const plantLightNotes = new Map();
+// Bumped when a switch finishes, so a poll that set off before it cannot put
+// the old state back.
+let plantLightingEpoch = 0;
 
 async function refreshLightDrivers() {
   const response = await fetch("/api/light-drivers");
@@ -280,8 +288,9 @@ async function removeLight(lightId) {
 async function refreshPlantLighting() {
   if (!selectedSensorId) return;
   const sensorId = selectedSensorId;
+  const epoch = plantLightingEpoch;
   const response = await fetch("/api/sensors/" + encodeURIComponent(sensorId) + "/lighting");
-  if (selectedSensorId !== sensorId) return;
+  if (selectedSensorId !== sensorId || epoch !== plantLightingEpoch) return;
   if (!response.ok) {
     plantLighting = null;
     renderPlantLighting();
@@ -299,12 +308,15 @@ function plantLights() {
 function renderPlantLighting() {
   const windowText = document.getElementById("plant-lighting-window");
   const lightsList = document.getElementById("plant-lighting-lights");
+  const allToggle = document.getElementById("plant-lighting-all");
   if (!plantLighting) {
     setText(windowText, "Lighting is not available for this plant.");
     lightsList.replaceChildren();
+    setHidden(allToggle.closest(".lighting-all"), true);
     return;
   }
   const chosen = plantLights();
+  renderAllLightsToggle(allToggle, chosen);
   const schedule = plantLighting.schedule;
   if (!chosen.length) {
     setText(windowText, "No grow lights. Choose them on this plant's configuration page.");
@@ -314,24 +326,119 @@ function renderPlantLighting() {
     const lit = chosen.some((light) => light.schedule?.in_window);
     setText(windowText, `On ${schedule.on}, off ${schedule.off} · ${lit ? "lit now" : "dark now"}`);
   }
-  const renderKey = JSON.stringify(chosen.map((light) => [light.light_id, light.display_name, light.state, light.alert]));
+  const renderKey = JSON.stringify(chosen.map((light) => [
+    light.light_id, light.display_name, light.state, light.alert, Boolean(light.schedule),
+    Math.ceil(light.override_seconds_left / 60), plantLightRequests.get(light.light_id) ?? null,
+    plantLightNotes.get(light.light_id) || null,
+  ]));
   if (lightsList.dataset.renderKey !== renderKey) {
     setData(lightsList, "renderKey", renderKey);
     lightsList.replaceChildren();
-    chosen.forEach((light) => {
-      const row = document.createElement("div");
-      row.className = "lighting-light";
-      const name = document.createElement("strong");
-      setText(name, light.display_name);
-      const state = document.createElement("span");
-      state.className = "light-state";
-      setData(state, "level", lightStateLevel(light));
-      setText(state, light.alert || describeLightState(light));
-      row.append(name, state);
-      lightsList.append(row);
-    });
+    chosen.forEach((light) => lightsList.append(plantLightRow(light)));
   }
   renderPlantLightingForm();
+}
+
+/* One switch for all of a plant's lights: on when every light that can be
+ * reached is on, or has been asked to be. Unreachable lights are left out,
+ * since they cannot be switched either way. */
+function reachablePlantLights(chosen) {
+  return chosen.filter((light) => light.state.online);
+}
+
+function lightIsOn(light) {
+  return plantLightRequests.get(light.light_id) ?? light.state.power === true;
+}
+
+function renderAllLightsToggle(toggle, chosen) {
+  const reachable = reachablePlantLights(chosen);
+  setHidden(toggle.closest(".lighting-all"), chosen.length === 0);
+  const allOn = reachable.length > 0 && reachable.every(lightIsOn);
+  if (toggle.checked !== allOn) toggle.checked = allOn;
+  setDisabled(toggle, reachable.length === 0 || plantLightRequests.size > 0);
+  setAttr(toggle, "aria-label", allOn ? "Turn all this plant's lights off" : "Turn all this plant's lights on");
+}
+
+async function toggleAllPlantLights(on) {
+  const reachable = reachablePlantLights(plantLights());
+  await Promise.all(reachable
+    .filter((light) => lightIsOn(light) !== on)
+    .map((light) => togglePlantLight(light.light_id, on)));
+}
+
+function plantLightRow(light) {
+  const requested = plantLightRequests.get(light.light_id);
+  const row = document.createElement("div");
+  row.className = "lighting-light";
+
+  const text = document.createElement("div");
+  text.className = "lighting-light-text";
+  const name = document.createElement("strong");
+  setText(name, light.display_name);
+  const state = document.createElement("span");
+  state.className = "light-state";
+  if (requested !== undefined) {
+    setData(state, "level", "unknown");
+    setText(state, `Turning ${requested ? "on" : "off"}…`);
+  } else {
+    setData(state, "level", lightStateLevel(light));
+    setText(state, light.alert || describeLightState(light));
+  }
+  text.append(name, state);
+  const note = plantLightNotes.get(light.light_id)
+    || (light.override_seconds_left > 0 && light.schedule
+      ? "Switched by hand · the schedule takes over again in "
+        + Math.ceil(light.override_seconds_left / 60) + " min, or at its next on or off"
+      : "");
+  if (note) {
+    const small = document.createElement("small");
+    setText(small, note);
+    text.append(small);
+  }
+
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.className = "switch lighting-toggle";
+  toggle.dataset.lightId = light.light_id;
+  toggle.checked = requested ?? light.state.power === true;
+  // An unreachable light cannot be switched, and a switch that seemed to work
+  // would be a lie.
+  toggle.disabled = requested !== undefined || !light.state.online;
+  toggle.setAttribute("aria-label", "Turn " + light.display_name + (toggle.checked ? " off" : " on"));
+  row.append(text, toggle);
+  return row;
+}
+
+async function togglePlantLight(lightId, on) {
+  plantLightRequests.set(lightId, on);
+  plantLightNotes.delete(lightId);
+  renderPlantLighting();
+  let note = null;
+  try {
+    const response = await fetch("/api/lights/" + encodeURIComponent(lightId) + "/power", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      note = payload.error || "Could not switch the light";
+    } else {
+      const { result, ...light } = payload;
+      if (plantLighting) {
+        plantLighting.lights = plantLighting.lights.map((each) => each.light_id === lightId ? light : each);
+      }
+      if (result.outcome !== "confirmed") {
+        note = "Did not confirm: " + (result.detail || result.outcome);
+      }
+    }
+  } catch (_error) {
+    note = "Hub unavailable";
+  }
+  plantLightingEpoch += 1;
+  plantLightRequests.delete(lightId);
+  if (note) plantLightNotes.set(lightId, note);
+  renderPlantLighting();
 }
 
 function renderPlantLightingForm() {
@@ -413,6 +520,13 @@ document.getElementById("light-list").addEventListener("click", (event) => {
   else if (button.classList.contains("light-off")) switchLight(lightId, false, button);
   else if (button.classList.contains("edit-light")) startLightEdit(lightId);
   else if (button.classList.contains("remove-light")) removeLight(lightId);
+});
+document.getElementById("plant-lighting-all").addEventListener("change", (event) => {
+  toggleAllPlantLights(event.target.checked);
+});
+document.getElementById("plant-lighting-lights").addEventListener("change", (event) => {
+  const toggle = event.target.closest(".lighting-toggle");
+  if (toggle) togglePlantLight(toggle.dataset.lightId, toggle.checked);
 });
 const plantLightingForm = document.getElementById("plant-lighting-form");
 plantLightingForm.addEventListener("input", () => {

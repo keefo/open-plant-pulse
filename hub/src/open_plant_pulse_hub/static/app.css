@@ -486,7 +486,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .plant-lighting-summary .section-heading { margin-bottom: 0; }
 .lighting-window { margin: 0; font-size: 18px; font-weight: 700; }
 .lighting-lights { display: grid; gap: 8px; }
-.lighting-light { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.lighting-light { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.lighting-light-text { display: grid; gap: 2px; min-width: 0; }
+.lighting-heading-actions { display: flex; align-items: center; gap: 16px; }
+.lighting-all { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+.lighting-light-text small { color: var(--muted); }
 .lighting-choices { grid-column: 1 / -1; display: grid; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 .lighting-choices legend { padding: 0 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .sensor-settings-form label.lighting-choice { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 14px; font-weight: 400; }
@@ -497,5 +501,4 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 
 @media (max-width: 440px) {
   .plant-lighting-summary { padding: 16px; }
-  .lighting-light { flex-direction: column; gap: 4px; }
 }

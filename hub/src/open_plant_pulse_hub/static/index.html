@@ -260,26 +260,6 @@
       </div>
     </section>
 
-    <section class="plant-journey" data-page="detail" aria-labelledby="plant-journey-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
-        <span id="journey-started">Waiting for sensor history</span>
-      </div>
-      <div class="journey-stats" aria-live="polite">
-        <div><strong id="journey-days">--</strong><span>Days monitored</span></div>
-        <div><strong id="journey-waterings">--</strong><span>Waterings detected</span></div>
-        <div><strong id="journey-fertilizing">--</strong><span>Likely fertilizations</span></div>
-        <div><strong id="journey-missed">--</strong><span>Missed watering windows</span></div>
-      </div>
-      <div id="plant-assessment" class="plant-assessment" data-level="waiting" aria-live="polite">
-        <div>
-          <p class="eyebrow">CURRENT HEALTH</p>
-          <strong id="plant-status">Waiting</strong>
-        </div>
-        <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
-      </div>
-    </section>
-
     <section class="primary-grid" data-page="detail" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
@@ -405,10 +385,36 @@
     <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="detail" aria-labelledby="plant-lighting-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">GROW LIGHTS</p><h2 id="plant-lighting-title">Lighting</h2></div>
-        <a id="plant-lighting-change" class="secondary-action" href="/settings">Change lighting</a>
+        <div class="lighting-heading-actions">
+          <label class="lighting-all" for="plant-lighting-all">
+            <span>All lights</span>
+            <input id="plant-lighting-all" class="switch" type="checkbox">
+          </label>
+          <a id="plant-lighting-change" class="secondary-action" href="/settings">Adjust lighting</a>
+        </div>
       </div>
       <p id="plant-lighting-window" class="lighting-window"></p>
       <div id="plant-lighting-lights" class="lighting-lights"></div>
+    </section>
+
+    <section class="plant-journey" data-page="detail" aria-labelledby="plant-journey-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
+        <span id="journey-started">Waiting for sensor history</span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="journey-days">--</strong><span>Days monitored</span></div>
+        <div><strong id="journey-waterings">--</strong><span>Waterings detected</span></div>
+        <div><strong id="journey-fertilizing">--</strong><span>Likely fertilizations</span></div>
+        <div><strong id="journey-missed">--</strong><span>Missed watering windows</span></div>
+      </div>
+      <div id="plant-assessment" class="plant-assessment" data-level="waiting" aria-live="polite">
+        <div>
+          <p class="eyebrow">CURRENT HEALTH</p>
+          <strong id="plant-status">Waiting</strong>
+        </div>
+        <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
+      </div>
     </section>
 
     <section class="care-log" data-page="detail" aria-label="Plant care history" hidden>

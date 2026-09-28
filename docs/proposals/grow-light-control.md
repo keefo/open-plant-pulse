@@ -16,10 +16,10 @@ at most one plant. One scheduler in the
 hub turns the chosen lights on and off. It replaces the standalone `gl1cd`
 controller rather than talking to it.
 
-The device protocols come from the Grow Light Control technical specification,
-extracted from the working `glowlight` project (`gl1cd.py`):
-<https://claude.ai/artifact/XFQMqijabPRdKWXopSNDik>. The link is private to the
-repository owner and will not open for anyone else.
+The device protocols come from the working `glowlight` project: `gl1cd.py`,
+the controller that ran both lights before the hub, and its `HARDWARE.md`
+protocol notes. The drivers in `hub/src/open_plant_pulse_hub/lighting/` carry
+the facts that matter in their docstrings.
 
 In scope for the first release:
 

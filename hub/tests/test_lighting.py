@@ -532,6 +532,19 @@ class LightApiTests(unittest.TestCase):
         raised.exception.close()
         self.assertEqual(raised.exception.code, 400)
 
+    def test_the_plant_page_can_switch_its_lights(self):
+        with self.request("/lights.js") as response:
+            script = response.read()
+        self.assertIn(b"lighting-toggle", script)
+        # A light that cannot be reached is not offered a switch that would
+        # appear to work.
+        self.assertIn(b"!light.state.online", script)
+        # One switch beside Adjust lighting for all of them, which only asks
+        # the lights that are not already where it is going.
+        with self.request("/sensors/" + quote(self.sensor_id)) as response:
+            self.assertIn(b'id="plant-lighting-all"', response.read())
+        self.assertIn(b"lightIsOn(light) !== on", script)
+
     def test_the_lights_tab_is_a_page_of_its_own(self):
         with self.request("/settings/lights") as response:
             self.assertIn(b'id="settings-lights-panel"', response.read())
