@@ -106,7 +106,10 @@ h2 { font-size: 24px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 5px #d9a32722; }
 .status-dot.live { background: var(--leaf); box-shadow: 0 0 0 5px #19734c22; }
 main { padding: 32px 0 60px; display: grid; gap: 28px; }
-.plant-assessment { min-height: 112px; padding: 20px 0 0; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; }
+/* Standing beside the pot's response, the two conclusions the hub draws read
+   as a pair: same rule above and below, same tinted ground, and this one
+   keeps the larger type because it is the answer to the bigger question. */
+.plant-assessment { min-height: 112px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--line); background: #f8fbf7; }
 .plant-assessment > div { padding-left: 16px; border-left: 5px solid var(--sun); }
 .plant-assessment strong { display: block; font: 500 40px Georgia, "Times New Roman", serif; }
 .plant-assessment > p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }

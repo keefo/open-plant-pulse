@@ -1314,6 +1314,20 @@ async function loadProfiles() {
 
 const plantLabel = document.getElementById("plant-label");
 
+/* What the hub can say about an entry, which is not always confidence.
+ *
+ * Something a person recorded is not a guess to be confirmed, and a light the
+ * hub switched either answered or it did not. Only what was inferred from
+ * readings is a matter of confidence. */
+function careEventNote(event) {
+  if (event.changes?.source === "manual") return "Recorded by hand";
+  if (event.kind === "drainage_assessment") return "Estimated response";
+  if (event.kind === "lighting") {
+    return event.confidence === "high" ? "Light confirmed" : "No answer from the light";
+  }
+  return event.confidence === "high" ? "High confidence" : "Confirm this event";
+}
+
 function renderCareLog(items) {
   const list = document.getElementById("care-log-list");
   if (!renderKeyChanged(list, items)) return;
@@ -1337,13 +1351,7 @@ function renderCareLog(items) {
     const title = document.createElement("strong");
     setText(title, event.title);
     const confidence = document.createElement("span");
-    setText(confidence, event.kind === "drainage_assessment"
-      ? "Estimated response"
-      /* A light the hub switched is not something to confirm or to be confident
-         about: either the lamp answered or it did not. */
-      : event.kind === "lighting"
-        ? (event.confidence === "high" ? "Light confirmed" : "No answer from the light")
-        : event.confidence === "high" ? "High confidence" : "Confirm this event");
+    setText(confidence, careEventNote(event));
     heading.append(title, confidence);
     const summary = document.createElement("p");
     setText(summary, event.summary);
@@ -1357,6 +1365,31 @@ function renderCareLog(items) {
   }
   renderedCareEventIds = new Set(items.map(event => event.event_id));
   careLogInitialized = true;
+  renderFertilizedButton(items);
+}
+
+/* Feeding a plant happens once on a day or not at all, so the button says which
+ * of those it is rather than letting somebody wonder whether it took. */
+function renderFertilizedButton(items) {
+  const button = document.getElementById("record-fertilized");
+  if (button === null) return;
+  const today = new Date().toDateString();
+  const recorded = items.some((event) =>
+    event.kind === "fertilizing" &&
+    event.changes?.source === "manual" &&
+    new Date(event.detected_at).toDateString() === today);
+  setText(button, recorded ? "Fertilized today ✓" : "Fertilized today");
+  setDisabled(button, recorded);
+}
+
+async function recordFertilized() {
+  if (!selectedSensorId) return;
+  await fetch("/api/sensors/" + encodeURIComponent(selectedSensorId) + "/care", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "fertilizing" }),
+  });
+  await refresh();
 }
 
 function utcDateKey(date) {
@@ -1936,6 +1969,7 @@ document.getElementById("firmware-file").addEventListener("change", (event) => {
   if (file) uploadFirmwareImage(file);
   event.target.value = "";
 });
+document.getElementById("record-fertilized").addEventListener("click", recordFertilized);
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 trackRawReportsDisclosure();

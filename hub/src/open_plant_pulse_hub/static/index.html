@@ -317,6 +317,14 @@
       </div>
     </section>
 
+    <section id="plant-assessment" class="plant-assessment" data-page="detail" data-level="waiting" aria-live="polite" hidden>
+      <div>
+        <p class="eyebrow">CURRENT HEALTH</p>
+        <strong id="plant-status">Waiting</strong>
+      </div>
+      <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
+    </section>
+
     <section id="drainage-assessment" class="drainage-assessment" data-page="detail" data-level="learning" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">POT RESPONSE</p>
@@ -401,21 +409,17 @@
       <div class="journey-stats" aria-live="polite">
         <div><strong id="journey-days">--</strong><span>Days monitored</span></div>
         <div><strong id="journey-waterings">--</strong><span>Waterings detected</span></div>
-        <div><strong id="journey-fertilizing">--</strong><span>Likely fertilizations</span></div>
+        <div><strong id="journey-fertilizing">--</strong><span>Fertilizations</span></div>
         <div><strong id="journey-missed">--</strong><span>Missed watering windows</span></div>
         <div><strong id="journey-light-hours">--</strong><span>Total lighting hours</span></div>
-      </div>
-      <div id="plant-assessment" class="plant-assessment" data-level="waiting" aria-live="polite">
-        <div>
-          <p class="eyebrow">CURRENT HEALTH</p>
-          <strong id="plant-status">Waiting</strong>
-        </div>
-        <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
       </div>
     </section>
 
     <section class="care-log" data-page="detail" aria-label="Plant care history" hidden>
-      <div class="section-heading"><div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div><span>Detected automatically</span></div>
+      <div class="section-heading">
+        <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
+        <button id="record-fertilized" class="secondary-action" type="button">Fertilized today</button>
+      </div>
       <div id="care-log-list" class="care-log-list">
         <p class="care-log-empty">No care events detected yet.</p>
       </div>

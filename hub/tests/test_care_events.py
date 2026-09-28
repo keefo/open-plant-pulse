@@ -2,7 +2,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from open_plant_pulse_hub.domain.care_events import CareEventDetector
+from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
 from open_plant_pulse_hub.domain.models import SensorReading
 
 
@@ -225,3 +226,76 @@ class CareEventDetectorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ManualCareTests(unittest.TestCase):
+    """Care a person gave the plant, which no probe could have seen."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.store.record_beacon(
+            sensor_id="plant-01",
+            received_at="2026-09-28T00:00:00Z",
+            observed_identifier="test",
+            source_adapter="test",
+            rssi=-40,
+            service_data=b"\x40\x00\x01",
+            contract_version=3,
+        )
+        self.store.manage_sensor("plant-01", "Fern", "Office", "monstera", 40, 1500, 1800)
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_recording_feeding_writes_one_entry_and_counts_it(self) -> None:
+        journey = self.store.record_manual_care("plant-01", "fertilizing")
+
+        entry = self.store.care_log(10, "plant-01")[0]
+        self.assertEqual(entry["kind"], "fertilizing")
+        self.assertEqual(entry["title"], "Fertilized")
+        self.assertEqual(entry["changes"]["source"], "manual")
+        # Not a guess from a reading, so not something to confirm.
+        self.assertEqual(entry["confidence"], "recorded")
+        self.assertEqual(journey["fertilizing_count"], 1)
+
+    def test_a_plant_is_fed_once_a_day_however_often_the_button_is_pressed(self) -> None:
+        for _ in range(5):
+            journey = self.store.record_manual_care("plant-01", "fertilizing")
+
+        self.assertEqual(len(self.store.care_log(20, "plant-01")), 1)
+        self.assertEqual(journey["fertilizing_count"], 1)
+        # And the figure kept still agrees with counting the log again.
+        self.assertEqual(self.store.rebuild_journey("plant-01"), journey)
+
+    def test_another_day_is_another_feeding(self) -> None:
+        self.store.record_manual_care("plant-01", "fertilizing")
+        self.store.record_manual_care("plant-01", "fertilizing", at="2026-09-27T09:00:00Z")
+
+        self.assertEqual(len(self.store.care_log(20, "plant-01")), 2)
+        self.assertEqual(self.store.plant_journey("plant-01")["fertilizing_count"], 2)
+
+    def test_a_probe_noticing_the_same_day_is_the_same_feeding(self) -> None:
+        # A rise the probe reads and the hand that caused it are one feeding.
+        self.store.record_manual_care("plant-01", "fertilizing", at="2026-09-28T09:00:00Z")
+        self.store._save_event(
+            CareEvent(
+                event_id="detected-1",
+                sensor_id="plant-01",
+                kind="fertilizing",
+                detected_at="2026-09-28T17:00:00Z",
+                title="Likely fertilization",
+                summary="Conductivity and nutrients rose together.",
+                confidence="high",
+                changes={"conductivity_us_cm": 400},
+            )
+        )
+
+        entries = [e for e in self.store.care_log(20, "plant-01") if e["kind"] == "fertilizing"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(self.store.plant_journey("plant-01")["fertilizing_count"], 1)
+        self.assertEqual(self.store.rebuild_journey("plant-01")["fertilizing_count"], 1)
+
+    def test_it_refuses_what_it_cannot_record(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.record_manual_care("plant-01", "levitating")
+        with self.assertRaises(ValueError):
+            self.store.record_manual_care("sensor-unknown", "fertilizing")

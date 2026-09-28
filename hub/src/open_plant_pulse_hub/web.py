@@ -365,6 +365,11 @@ def create_server(
                         if digest
                         else store.cancel_firmware_update(sensor_id)
                     )
+                elif path.startswith("/api/sensors/") and path.endswith("/care"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/care")])
+                    result = store.record_manual_care(
+                        sensor_id, str(payload.get("kind", ""))
+                    )
                 elif path.startswith("/api/sensors/") and path.endswith("/onboarding"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/onboarding")])
                     result = store.set_sensor_onboarding_state(

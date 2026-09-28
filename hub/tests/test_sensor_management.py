@@ -490,6 +490,8 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("const moistureLow = profile?.watering?.refill_below;", app)
         self.assertIn("const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];", app)
         self.assertIn('id="setting-reporting-interval"', page)
+        self.assertIn('id="record-fertilized"', page)
+        self.assertIn("Fertilized today", page)
         self.assertIn('id="journey-light-hours"', page)
         self.assertIn("Total lighting hours", page)
         self.assertIn('id="detail-setting-reporting-interval"', page)

@@ -1,5 +1,5 @@
 from collections import deque
-from dataclasses import asdict, replace
+from dataclasses import asdict, replace, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -149,6 +149,12 @@ def _lighting_summary(source: str, wanted: bool, outcome: str) -> str:
     return f"Asked to switch {state} {reason}; the light did not confirm."
 
 
+# Care a person records themselves, because no probe could have seen it.
+MANUAL_CARE_KINDS = {"fertilizing": "Fertilized"}
+# Care that happens at most once in a day, whoever noticed it. A rise the probe
+# reads and the hand that caused it are one feeding, not two, so they collapse
+# into a single entry: the first to arrive is the one that is kept.
+ONE_PER_DAY_KINDS = ("fertilizing",)
 # How long after a watering was called for it is counted as missed.
 MISSED_WATERING_GRACE = timedelta(hours=24)
 # The longest believable stretch of light. Nobody leaves a grow light on over a
@@ -2529,6 +2535,52 @@ class ReadingStore:
         deadline = now - MISSED_WATERING_GRACE
         return sum(1 for (due_at,) in rows if self._observation_datetime(due_at, now) < deadline)
 
+    @staticmethod
+    def _local_day(detected_at: str) -> str:
+        """The day a person would call it.
+
+        Everything here is stored in UTC, but a feeding at eight in the evening
+        is that evening's, not the small hours of the next day's, so the day a
+        care event belongs to is read off the hub's own clock.
+        """
+        try:
+            at = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
+        except ValueError:
+            at = datetime.now(timezone.utc)
+        return at.astimezone().date().isoformat()
+
+    def record_manual_care(
+        self, sensor_id: str, kind: str, at: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Record care somebody gave the plant, as told by them.
+
+        A probe can suggest that a plant was fed, from a rise in conductivity
+        and nutrients, but on a plant whose probe reads neither it can see
+        nothing at all. What somebody did is not a guess, so it is recorded as
+        theirs: once for the day, so pressing twice does not feed a plant twice
+        in its own history.
+        """
+        if kind not in MANUAL_CARE_KINDS:
+            raise ValueError(f"unknown care kind: {kind}")
+        if self.sensor(sensor_id) is None:
+            raise ValueError("sensor_id has not been observed")
+        detected_at = at or _timestamp(datetime.now(timezone.utc))
+        event = CareEvent(
+            # _save_event names a once-a-day event after its day, so whether the
+            # probe or a person recorded this feeding, it is one entry.
+            event_id=f"manual-{kind}-{sensor_id}",
+            sensor_id=sensor_id,
+            kind=kind,
+            detected_at=detected_at,
+            title=MANUAL_CARE_KINDS[kind],
+            summary="Recorded by hand.",
+            confidence="recorded",
+            changes={"source": "manual"},
+        )
+        with self._condition:
+            self._save_event(event)
+        return self.plant_journey(sensor_id)
+
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
         """Count a plant's journey again from its readings and care events.
 
@@ -2781,7 +2833,14 @@ class ReadingStore:
             self._database.close()
 
     def _save_event(self, event: CareEvent) -> None:
-        self._database.execute(
+        if event.kind in ONE_PER_DAY_KINDS:
+            # Named after the day it belongs to, so a second record of the same
+            # day's feeding is the same row and is written once.
+            event = replace(
+                event,
+                event_id=f"{event.kind}-{event.sensor_id}-{self._local_day(event.detected_at)}",
+            )
+        cursor = self._database.execute(
             """
             INSERT OR IGNORE INTO care_events
             (event_id, sensor_id, kind, detected_at, title, summary, confidence, changes_json)
@@ -2798,12 +2857,15 @@ class ReadingStore:
                 json.dumps(event.changes, separators=(",", ":")),
             ),
         )
-        self._journey_apply_event(
-            event.sensor_id,
-            event.kind,
-            event.detected_at,
-            json.dumps(event.changes, separators=(",", ":")),
-        )
+        if cursor.rowcount > 0:
+            # Only a row that was really written counts: saving the same event
+            # twice must not add to a figure twice.
+            self._journey_apply_event(
+                event.sensor_id,
+                event.kind,
+                event.detected_at,
+                json.dumps(event.changes, separators=(",", ":")),
+            )
         self._database.commit()
 
     def _save_reading(self, reading: SensorReading, received_at: str) -> bool:
