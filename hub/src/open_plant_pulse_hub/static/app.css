@@ -147,7 +147,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .conductivity { border-top: 4px solid var(--sun); }
 .air-temp { border-top: 4px solid var(--water); }
 .humidity { border-top: 4px solid #5196a8; }
-.climate-gauge, .root-zone-gauge, .bulk-ec { min-height: 190px; gap: 9px; }
+.climate-gauge, .root-zone-gauge { min-height: 190px; gap: 9px; }
+.primary-grid .soil-temp { grid-column: span 2; }
 .climate-gauge .range-track, .root-zone-gauge .range-track { margin-top: 3px; }
 .climate-gauge .range-status, .root-zone-gauge .range-status { min-height: 17px; }
 .care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
@@ -269,6 +270,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .pore-ec-note:empty { display: none; }
 .pore-ec-dry-note { color: #796019; font-weight: 600; }
 .probe-chemistry { min-height: 0; }
+.bulk-ec { grid-column: 1 / -1; }
 .chemistry-guidance { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .sensor-settings { padding: 24px; display: grid; gap: 20px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf6; }
 .sensor-settings .section-heading { margin-bottom: 0; }
