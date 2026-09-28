@@ -285,6 +285,12 @@
         <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
         <p class="range-status">Waiting for reading</p>
       </article>
+      <article class="metric moisture-trend">
+        <span>Soil moisture · last 30 days</span>
+        <svg id="moisture-trend-chart" class="history-chart moisture-trend-chart" viewBox="0 0 360 150" role="img" aria-label="Soil moisture history" hidden></svg>
+        <p id="moisture-trend-empty" class="history-chart-empty moisture-trend-empty">Waiting for moisture readings</p>
+        <p id="moisture-trend-summary" class="range-status"></p>
+      </article>
       <article class="metric air-temp climate-gauge" data-metric="air_temperature_c">
         <span>Air temperature</span><strong><b id="air-temp">--</b><small>°C</small></strong>
         <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>

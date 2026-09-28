@@ -482,6 +482,8 @@ async function selectSensor(sensorId) {
   latestReading = null;
   latestReadingAt = null;
   historyRequestKey = null;
+  moistureTrendItems = [];
+  moistureTrendSensorId = null;
   wateringCalendarRequestKey = null;
   renderedCareEventIds = new Set();
   careLogInitialized = false;
@@ -704,6 +706,7 @@ function renderProfileRanges() {
   document.getElementById("scientific-name").textContent = profile.scientific_name;
   document.getElementById("chemistry-profile").textContent = `${profile.name} starter targets`;
   renderMoistureVessel(profile);
+  renderMoistureTrend(profile);
   renderPlantAssessment(profile);
   renderDrainageAssessment(profile);
 
@@ -1056,6 +1059,143 @@ async function refreshClimateHistory() {
   }
 }
 
+// A month of soil moisture beside the soil temperature. The month is fetched
+// at most once a minute; the reading that arrives in between is appended, so
+// the line's end is always the reading the pot shows.
+const moistureTrendMs = 30 * 24 * 60 * 60 * 1000;
+const moistureTrendRefetchMs = 60_000;
+let moistureTrendItems = [];
+let moistureTrendSensorId = null;
+let moistureTrendFetchedAt = 0;
+
+function moistureTrendPoints() {
+  const points = moistureTrendItems.map(item => ({
+    timestamp: Date.parse(item.reading.observed_at || item.received_at),
+    value: item.reading.moisture_percent
+  }));
+  if (latestReading && latestReadingAt) {
+    points.push({ timestamp: Date.parse(latestReadingAt), value: latestReading.moisture_percent });
+  }
+  const valid = points
+    .filter(point => point.value != null && Number.isFinite(point.timestamp) && Number.isFinite(Number(point.value)))
+    .map(point => ({ timestamp: point.timestamp, value: Number(point.value) }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+  return valid.filter((point, index) => index === 0 || point.timestamp > valid[index - 1].timestamp);
+}
+
+function renderMoistureTrend(profile) {
+  const chart = document.getElementById("moisture-trend-chart");
+  const empty = document.getElementById("moisture-trend-empty");
+  const summary = document.getElementById("moisture-trend-summary");
+  const points = moistureTrendPoints();
+  chart.replaceChildren();
+  chart.toggleAttribute("hidden", points.length === 0);
+  empty.hidden = points.length !== 0;
+  if (!points.length) {
+    summary.textContent = "";
+    return;
+  }
+
+  // A sensor with less than a month of history is drawn across the time it
+  // has, so a new pot does not show as a sliver at the right edge.
+  const endTime = points[points.length - 1].timestamp;
+  const firstTime = points[0].timestamp;
+  const fitted = endTime - firstTime < moistureTrendMs;
+  const startTime = fitted ? Math.min(firstTime, endTime - 60 * 60 * 1000) : endTime - moistureTrendMs;
+  // Drawn at the card's own width, so the labels keep their size on a wide
+  // phone layout instead of scaling up with the chart.
+  const width = Math.max(240, Math.round(chart.getBoundingClientRect().width) || 360);
+  const height = 150;
+  chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const plot = { left: 30, right: 8, top: 8, bottom: 22 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const x = timestamp => plot.left + ((timestamp - startTime) / (endTime - startTime)) * plotWidth;
+  const y = value => plot.top + ((100 - Math.max(0, Math.min(100, value))) / 100) * plotHeight;
+
+  const watering = profile?.watering;
+  if (watering) {
+    const [cycleLow, cycleHigh] = watering.comfortable_cycle;
+    chart.append(
+      svgElement("rect", {
+        class: "trend-cycle", x: plot.left, width: plotWidth,
+        y: y(cycleHigh), height: y(cycleLow) - y(cycleHigh)
+      }),
+      svgElement("line", {
+        class: "trend-refill", x1: plot.left, x2: width - plot.right,
+        y1: y(watering.refill_below), y2: y(watering.refill_below)
+      }),
+      svgElement("text", {
+        class: "trend-refill-label", x: plot.left + 4, y: y(watering.refill_below) + 12, "text-anchor": "start"
+      }, `Water below ${watering.refill_below}%`)
+    );
+  }
+  for (const value of [0, 50, 100]) {
+    chart.append(
+      svgElement("line", { class: "grid-line", x1: plot.left, x2: width - plot.right, y1: y(value), y2: y(value) }),
+      svgElement("text", { class: "axis-label", x: plot.left - 6, y: y(value) + 4, "text-anchor": "end" }, `${value}`)
+    );
+  }
+  const tickFormat = endTime - startTime < 36 * 60 * 60 * 1000
+    ? { hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric" };
+  [startTime, endTime].forEach((timestamp, index) => {
+    chart.append(svgElement("text", {
+      class: "axis-label", x: x(timestamp), y: height - 5, "text-anchor": index === 0 ? "start" : "end"
+    }, new Intl.DateTimeFormat(undefined, tickFormat).format(new Date(timestamp))));
+  });
+
+  if (points.length > 1) {
+    chart.append(svgElement("polyline", {
+      class: "history-line",
+      points: points.map(point => `${x(point.timestamp).toFixed(2)},${y(point.value).toFixed(2)}`).join(" ")
+    }));
+  }
+  const latest = points[points.length - 1];
+  chart.append(svgElement("circle", {
+    class: "history-point latest-point", cx: x(latest.timestamp), cy: y(latest.value), r: 3.5
+  }));
+
+  const values = points.map(point => point.value);
+  const low = Math.min(...values).toFixed(0);
+  const high = Math.max(...values).toFixed(0);
+  const since = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    .format(new Date(firstTime));
+  summary.textContent = fitted
+    ? `Low ${low}% · high ${high}% · since ${since}`
+    : `Low ${low}% · high ${high}% over 30 days`;
+  chart.setAttribute(
+    "aria-label",
+    `Soil moisture ${fitted ? `since ${since}` : "over the last 30 days"}: `
+      + `${points.length} readings from ${low} to ${high} percent; latest ${latest.value.toFixed(1)} percent.`
+  );
+}
+
+async function refreshMoistureTrend() {
+  if (!latestReadingAt || !selectedSensorId) return;
+  const sensorId = selectedSensorId;
+  if (moistureTrendSensorId === sensorId && Date.now() - moistureTrendFetchedAt < moistureTrendRefetchMs) return;
+  const endTime = Date.parse(latestReadingAt);
+  if (!Number.isFinite(endTime)) return;
+  moistureTrendSensorId = sensorId;
+  moistureTrendFetchedAt = Date.now();
+  const query = new URLSearchParams({
+    sensor_id: sensorId,
+    start: new Date(endTime - moistureTrendMs).toISOString(),
+    end: new Date(endTime).toISOString()
+  });
+  try {
+    const response = await fetch(`/api/readings/history?${query}`);
+    if (!response.ok) throw new Error("moisture history request failed");
+    const items = (await response.json()).items;
+    if (selectedSensorId !== sensorId) return;
+    moistureTrendItems = items;
+    renderProfileRanges();
+  } catch (_error) {
+    // The next attempt waits out the usual minute; the live point still draws.
+  }
+}
+
 async function loadProfiles() {
   const response = await fetch("/api/plant-profiles");
   profiles = await response.json();
@@ -1304,7 +1444,8 @@ async function refresh() {
     if (latestResponse.ok) renderReading(await latestResponse.json());
     if (careLogResponse.ok) renderCareLog((await careLogResponse.json()).items);
     await Promise.all([
-      refreshClimateHistory(), refreshWateringCalendar(), refreshPotResponse(), refreshPlantJourney()
+      refreshClimateHistory(), refreshMoistureTrend(), refreshWateringCalendar(),
+      refreshPotResponse(), refreshPlantJourney()
     ]);
   } catch (_error) {
     document.getElementById("status").textContent = "Hub unavailable";
