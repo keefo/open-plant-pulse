@@ -22,30 +22,50 @@ device.
 
 ## What it looks like
 
-The hub's plant page: current readings against the plant's own profile, air
-history, the conclusions it has drawn, a year of care, the lights it runs, and
-the log of what happened.
+Small previews; click one for the whole page.
 
-[![A plant's page on the hub](docs/images/hub-plant-page.jpg)](docs/images/hub-plant-page.jpg)
-
-Each sensor has its own page for the things that are the device's rather than
-the plant's: what the hub asks of it, the lights it drives, and the firmware it
-runs — which is installed from here, over the air.
-
-[![A sensor's configuration page](docs/images/hub-sensor-configuration.jpg)](docs/images/hub-sensor-configuration.jpg)
-
-Grow lights are added once and given to a plant, which owns the daily window
-they follow.
-
-[![Managing lights](docs/images/hub-lights.jpg)](docs/images/hub-lights.jpg)
+<table>
+<tr>
+<td width="33%" valign="top">
+<a href="docs/images/hub-plant-page.jpg"><img src="docs/images/previews/hub-plant-page.jpg" alt="A plant's page on the hub"></a>
+<br><b>A plant's page</b>
+<br><sub>Readings against the plant's own profile, air history, the conclusions
+drawn from them, a year of care, its lights, and the log of what happened.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="docs/images/hub-sensor-configuration.jpg"><img src="docs/images/previews/hub-sensor-configuration.jpg" alt="A sensor's configuration page"></a>
+<br><b>A sensor's configuration</b>
+<br><sub>What is the device's rather than the plant's: what the hub asks of it,
+the lights it drives, and the firmware it runs — installed from here, over the
+air.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="docs/images/hub-lights.jpg"><img src="docs/images/previews/hub-lights.jpg" alt="Managing grow lights"></a>
+<br><b>Grow lights</b>
+<br><sub>Each light is added once and given to a plant, which owns the daily
+window they follow.</sub>
+</td>
+</tr>
+</table>
 
 A sensor also serves its own console on the household network, for looking at
-the device itself: what each of its parts reads, what the battery is doing, and
-the firmware log as it happens.
+the device rather than the plant.
 
-[![The sensor's own console](docs/images/sensor-console.jpg)](docs/images/sensor-console.jpg)
-
-[![The sensor's maintenance page](docs/images/sensor-maintenance.jpg)](docs/images/sensor-maintenance.jpg)
+<table>
+<tr>
+<td width="50%" valign="top">
+<a href="docs/images/sensor-console.jpg"><img src="docs/images/previews/sensor-console.jpg" alt="The sensor's own console"></a>
+<br><b>The sensor's console</b>
+<br><sub>What each part of the device reads, what the battery is doing, and the
+firmware log as it happens.</sub>
+</td>
+<td width="50%" valign="top">
+<a href="docs/images/sensor-maintenance.jpg"><img src="docs/images/previews/sensor-maintenance.jpg" alt="The sensor's maintenance page"></a>
+<br><b>Maintenance</b>
+<br><sub>Interface settings kept on the device, a forced report, and a restart.</sub>
+</td>
+</tr>
+</table>
 
 The Wi-Fi name and hardware addresses in these screenshots are replaced; the
 readings are a real sensor's.
