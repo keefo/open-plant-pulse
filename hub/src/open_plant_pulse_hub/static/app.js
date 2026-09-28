@@ -14,6 +14,54 @@ const metricPrecision = {
   air_humidity_percent: 1
 };
 const sensorOfflineAfterMs = 10_000;
+
+/* Lazy page updates.
+ *
+ * The page refreshes every second and most of it is the same as a second ago.
+ * Every write goes through one of these helpers, which leave an element alone
+ * when it already shows the value, and every list or chart is rebuilt only when
+ * what it is drawn from has changed. Nothing flickers, nothing loses a hover or
+ * a text selection, and an animation is not restarted by an unchanged value. */
+function setText(element, text) {
+  const value = text == null ? "" : String(text);
+  if (element.textContent !== value) element.textContent = value;
+}
+
+// By attribute rather than the hidden property, which SVG elements lack.
+function setHidden(element, hidden) {
+  if (element.hasAttribute("hidden") !== Boolean(hidden)) element.toggleAttribute("hidden", Boolean(hidden));
+}
+
+function setData(element, key, value) {
+  const text = String(value);
+  if (element.dataset[key] !== text) element.dataset[key] = text;
+}
+
+function setAttr(element, name, value) {
+  const text = String(value);
+  if (element.getAttribute(name) !== text) element.setAttribute(name, text);
+}
+
+function setDisabled(element, disabled) {
+  if (element.disabled !== Boolean(disabled)) element.disabled = Boolean(disabled);
+}
+
+function setStyle(element, property, value) {
+  if (element.style.getPropertyValue(property) !== value) element.style.setProperty(property, value);
+}
+
+function setClass(element, name, on) {
+  if (element.classList.contains(name) !== Boolean(on)) element.classList.toggle(name, Boolean(on));
+}
+
+// True, and remembered, when an element's source differs from what it was last
+// built from; false when rebuilding it would draw the same thing again.
+function renderKeyChanged(element, source) {
+  const key = JSON.stringify(source);
+  if (element.dataset.renderKey === key) return false;
+  element.dataset.renderKey = key;
+  return true;
+}
 const historyRanges = {
   "live": { label: "Live (up to 24 hours)", milliseconds: 24 * 60 * 60 * 1000, fitSamples: true },
   "24h": { label: "Last 24 hours", milliseconds: 24 * 60 * 60 * 1000 },
@@ -95,18 +143,18 @@ function sensorQuery() {
 function renderPage() {
   const page = pageFromLocation();
   document.querySelectorAll("[data-page]").forEach((element) => {
-    element.hidden = element.dataset.page !== page;
+    setHidden(element, element.dataset.page !== page);
   });
-  document.getElementById("fleet-link").classList.toggle("active", page === "fleet");
-  document.getElementById("settings-link").classList.toggle("active", page === "settings");
+  setClass(document.getElementById("fleet-link"), "active", page === "fleet");
+  setClass(document.getElementById("settings-link"), "active", page === "settings");
   if (selectedSensorId) {
-    document.getElementById("detail-config-link").href = sensorPath(selectedSensorId, "/settings");
-    document.getElementById("config-back-link").href = sensorPath(selectedSensorId);
+    setAttr(document.getElementById("detail-config-link"), "href", sensorPath(selectedSensorId, "/settings"));
+    setAttr(document.getElementById("config-back-link"), "href", sensorPath(selectedSensorId));
   }
   if (page === "config") {
-    document.getElementById("config-plant-name").textContent = selectedSensor
+    setText(document.getElementById("config-plant-name"), selectedSensor
       ? selectedSensor.display_name || selectedSensor.sensor_id
-      : selectedSensorId || "Sensor";
+      : selectedSensorId || "Sensor");
     renderSensorFirmware();
   }
   if (page === "settings") renderSettingsTab();
@@ -157,29 +205,29 @@ function sensorState(sensor) {
 }
 
 function updateFleetCard(card, sensor) {
-  card.href = `/sensors/${encodeURIComponent(sensor.sensor_id)}`;
-  card.children[0].textContent = sensor.display_name || sensor.sensor_id;
-  card.children[1].textContent = sensor.sensor_id;
+  setAttr(card, "href", `/sensors/${encodeURIComponent(sensor.sensor_id)}`);
+  setText(card.children[0], sensor.display_name || sensor.sensor_id);
+  setText(card.children[1], sensor.sensor_id);
   const reportedAt = sensor.latest?.received_at || sensor.last_seen_at;
-  card.children[2].textContent = reportedAt
+  setText(card.children[2], reportedAt
     ? `Last report ${new Date(reportedAt).toLocaleString()}`
-    : "No reports received";
+    : "No reports received");
   const state = sensorState(sensor);
-  card.children[3].textContent = state;
-  card.children[3].dataset.state = state.toLowerCase();
+  setText(card.children[3], state);
+  setData(card.children[3], "state", state.toLowerCase());
 }
 
 function createFleetCard(sensor) {
   const card = document.createElement("a");
   card.className = "fleet-card";
-  card.dataset.sensorId = sensor.sensor_id;
+  setData(card, "sensorId", sensor.sensor_id);
   card.innerHTML = `<strong></strong><code></code><span></span><small></small>`;
   updateFleetCard(card, sensor);
   return card;
 }
 
 function renderFleet() {
-  document.getElementById("inbox-count").textContent = unclaimedSensors.length;
+  setText(document.getElementById("inbox-count"), unclaimedSensors.length);
   const grid = document.getElementById("fleet-grid");
   const cardsBySensorId = new Map(
     Array.from(grid.querySelectorAll(".fleet-card"), (card) => [card.dataset.sensorId, card])
@@ -189,7 +237,7 @@ function renderFleet() {
     if (!grid.querySelector(".empty-state")) {
       const empty = document.createElement("p");
       empty.className = "empty-state";
-      empty.textContent = "No sensors are enrolled. Open the sensor inbox to enroll a nearby sensor.";
+      setText(empty, "No sensors are enrolled. Open the sensor inbox to enroll a nearby sensor.");
       grid.append(empty);
     }
     return;
@@ -210,10 +258,13 @@ function renderFleet() {
 
 function renderInbox() {
   const list = document.getElementById("inbox-list");
+  if (!renderKeyChanged(list, unclaimedSensors.map(sensor => [
+    sensor.sensor_id, sensor.transport, sensor.latest_rssi, sensor.last_seen_at
+  ]))) return;
   list.replaceChildren();
   if (!unclaimedSensors.length) {
     const empty = document.createElement("p");
-    empty.textContent = "No unclaimed sensors are nearby.";
+    setText(empty, "No unclaimed sensors are nearby.");
     list.append(empty);
     return;
   }
@@ -221,12 +272,12 @@ function renderInbox() {
     const item = document.createElement("article");
     item.className = "inbox-item";
     const name = document.createElement("strong");
-    name.textContent = sensor.sensor_id;
+    setText(name, sensor.sensor_id);
     const details = document.createElement("small");
-    details.textContent = `${sensor.transport} · RSSI ${sensor.latest_rssi ?? "unknown"} · last seen ${new Date(sensor.last_seen_at).toLocaleString()}`;
+    setText(details, `${sensor.transport} · RSSI ${sensor.latest_rssi ?? "unknown"} · last seen ${new Date(sensor.last_seen_at).toLocaleString()}`);
     const enroll = document.createElement("button");
     enroll.type = "button";
-    enroll.textContent = "Enroll";
+    setText(enroll, "Enroll");
     enroll.addEventListener("click", () => openSettings(sensor));
     item.append(name, enroll, details);
     list.append(item);
@@ -250,7 +301,7 @@ function selectReportingInterval(select, intervalSeconds) {
   const value = String(intervalSeconds);
   if (![...select.options].some((option) => option.value === value)) {
     const currentOption = new Option(`${formatReportingInterval(intervalSeconds)} (current)`, value);
-    currentOption.dataset.currentInterval = "true";
+    setData(currentOption, "currentInterval", "true");
     select.add(currentOption);
   }
   select.value = value;
@@ -268,7 +319,7 @@ function renderConfigRevision(sensor) {
   const text =
     applied > 0 ? `revision ${applied}` : "no configuration delivered yet";
   if (element.textContent === text) return;
-  element.textContent = text;
+  setText(element, text);
   if (renderedConfigRevision !== null && applied !== renderedConfigRevision) {
     element.classList.remove("just-changed");
     // Reading offsetWidth restarts the animation when the value changes twice
@@ -296,7 +347,7 @@ function renderSensorSettings() {
   ]);
   if (renderedSettingsKey === renderKey) return;
   renderedSettingsKey = renderKey;
-  document.getElementById("settings-sensor-id").textContent = selectedSensor.sensor_id;
+  setText(document.getElementById("settings-sensor-id"), selectedSensor.sensor_id);
   renderConfigRevision(selectedSensor);
   if (!preserveDraft) {
     document.getElementById("detail-setting-name").value = selectedSensor.display_name || "";
@@ -308,7 +359,7 @@ function renderSensorSettings() {
       document.getElementById("detail-setting-reporting-interval"),
       selectedSensor.expected_interval_seconds
     );
-    document.getElementById("sensor-settings-message").textContent = "";
+    setText(document.getElementById("sensor-settings-message"), "");
   }
   // The console switch belongs with the sensor's other settings as well as on
   // the Settings list, because this is the page somebody is on when they want
@@ -316,11 +367,11 @@ function renderSensorSettings() {
   const consoleToggle = document.getElementById("detail-console-toggle");
   const consoleState = document.getElementById("detail-console-state");
   consoleToggle.checked = Boolean(selectedSensor.wifi_enabled);
-  consoleToggle.dataset.sensorId = selectedSensor.sensor_id;
-  consoleToggle.disabled = !householdNetwork || !householdNetwork.wifi_ssid;
-  consoleState.textContent = consoleToggle.disabled
+  setData(consoleToggle, "sensorId", selectedSensor.sensor_id);
+  setDisabled(consoleToggle, !householdNetwork || !householdNetwork.wifi_ssid);
+  setText(consoleState, consoleToggle.disabled
     ? "No household network saved yet. Add one in Settings to switch this on."
-    : describeWifi(selectedSensor);
+    : describeWifi(selectedSensor));
   // Only offered once the sensor has said it reached the network and given its
   // address. Before that there is nothing at the other end of the link.
   const consoleLink = document.getElementById("detail-console-link");
@@ -328,10 +379,10 @@ function renderSensorSettings() {
     selectedSensor.wifi_enabled &&
     selectedSensor.wifi_state === "joined" &&
     selectedSensor.wifi_address;
-  consoleLink.hidden = !reachable;
+  setHidden(consoleLink, !reachable);
   if (reachable) {
-    consoleLink.href = "http://" + selectedSensor.wifi_address + "/";
-    consoleLink.textContent = "Open this sensor's console at " + selectedSensor.wifi_address;
+    setAttr(consoleLink, "href", "http://" + selectedSensor.wifi_address + "/");
+    setText(consoleLink, "Open this sensor's console at " + selectedSensor.wifi_address);
   }
   const sensorInterval = selectedSensor.sensor_reporting_interval_seconds;
   document.getElementById("sensor-reporting-interval").value = sensorInterval == null
@@ -339,11 +390,11 @@ function renderSensorSettings() {
     : formatReportingInterval(sensorInterval);
   const delivery = document.getElementById("device-config-status");
   if (selectedSensor.device_config_status === "applied") {
-    delivery.textContent = `Applied on sensor · revision ${selectedSensor.device_config_revision}`;
+    setText(delivery, `Applied on sensor · revision ${selectedSensor.device_config_revision}`);
   } else if (selectedSensor.device_config_status === "retrying") {
-    delivery.textContent = `Delivery will retry on the next report · ${selectedSensor.device_config_error}`;
+    setText(delivery, `Delivery will retry on the next report · ${selectedSensor.device_config_error}`);
   } else {
-    delivery.textContent = "Waiting to send when the sensor next reports.";
+    setText(delivery, "Waiting to send when the sensor next reports.");
   }
 }
 
@@ -383,6 +434,7 @@ function rawReportLabel(item) {
 
 function renderRawReports(items) {
   const rows = document.getElementById("raw-report-list");
+  if (!renderKeyChanged(rows, items)) return;
   if (!items.length) {
     const cell = Object.assign(document.createElement("td"), {
       className: "raw-report-empty",
@@ -401,7 +453,7 @@ function renderRawReports(items) {
       textContent: item.decode_status,
       title: item.decode_error || ""
     });
-    status.dataset.status = item.decode_status;
+    setData(status, "status", item.decode_status);
     const payload = Object.assign(document.createElement("code"), {
       textContent: item.service_data_hex || "unavailable",
       title: `SHA-256 ${item.payload_sha256}`
@@ -428,12 +480,15 @@ function renderHubHealth(health) {
   const scanner = health.scanner || { status: "unknown" };
   scannerHealth = scanner;
   renderScanState();
-  document.getElementById("hub-health").replaceChildren(
-    Object.assign(document.createElement("span"), { textContent: `Hub started ${new Date(health.started_at).toLocaleString()}` }),
-    Object.assign(document.createElement("span"), { textContent: `Database: ${health.database.status}` }),
-    Object.assign(document.createElement("span"), { textContent: `BLE scanner: ${scanner.status}` }),
-    Object.assign(document.createElement("span"), { textContent: `Last BLE receive: ${scanner.last_receive_at ? new Date(scanner.last_receive_at).toLocaleString() : "none"}` })
-  );
+  const lines = [
+    `Hub started ${new Date(health.started_at).toLocaleString()}`,
+    `Database: ${health.database.status}`,
+    `BLE scanner: ${scanner.status}`,
+    `Last BLE receive: ${scanner.last_receive_at ? new Date(scanner.last_receive_at).toLocaleString() : "none"}`
+  ];
+  const panel = document.getElementById("hub-health");
+  if (!renderKeyChanged(panel, lines)) return;
+  panel.replaceChildren(...lines.map(line => Object.assign(document.createElement("span"), { textContent: line })));
 }
 
 async function refreshFleet() {
@@ -461,8 +516,8 @@ async function refreshFleet() {
     plantLabel.value = selectedSensor.display_name || selectedSensor.sensor_id;
     if (profiles?.profiles[selectedSensor.profile_id]) {
       const profile = profiles.profiles[selectedSensor.profile_id];
-      document.getElementById("plant-profile-name").textContent = profile.name;
-      document.getElementById("scientific-name").textContent = profile.scientific_name;
+      setText(document.getElementById("plant-profile-name"), profile.name);
+      setText(document.getElementById("scientific-name"), profile.scientific_name);
     }
   }
   renderFleet();
@@ -500,7 +555,7 @@ function openSettings(sensor) {
     document.getElementById("setting-reporting-interval"),
     sensor.expected_interval_seconds
   );
-  document.getElementById("settings-message").textContent = "";
+  setText(document.getElementById("settings-message"), "");
   if (document.getElementById("inbox-dialog").open) document.getElementById("inbox-dialog").close();
   document.getElementById("settings-dialog").showModal();
 }
@@ -519,7 +574,7 @@ async function saveManagedSensor(event) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    document.getElementById("settings-message").textContent = payload.error || "Could not save sensor";
+    setText(document.getElementById("settings-message"), payload.error || "Could not save sensor");
     return;
   }
   document.getElementById("settings-dialog").close();
@@ -602,19 +657,19 @@ function renderMoistureVessel(profile) {
   const [cycleLow, cycleHigh] = watering.comfortable_cycle;
   const clamp = number => Math.max(0, Math.min(100, number));
 
-  vessel.style.setProperty("--fill", `${clamp(value)}%`);
-  vessel.style.setProperty("--target-low", `${clamp(targetLow)}%`);
-  vessel.style.setProperty("--target-size", `${clamp(targetHigh) - clamp(targetLow)}%`);
-  vessel.style.setProperty("--cycle-low", `${clamp(cycleLow)}%`);
-  vessel.style.setProperty("--cycle-size", `${clamp(cycleHigh) - clamp(cycleLow)}%`);
-  vessel.style.setProperty("--refill", `${clamp(watering.refill_below)}%`);
-  vessel.setAttribute("aria-label", `Soil moisture ${value.toFixed(1)} percent. ${wateringPhase(watering, value)}.`);
-  vessel.dataset.phase = wateringPhase(watering, value).toLowerCase().replaceAll(" ", "-");
-  document.getElementById("moisture-cycle-label").textContent = `Comfortable ${cycleLow}–${cycleHigh}%`;
-  document.getElementById("moisture-target-label").textContent = `After watering ${targetLow}–${targetHigh}%`;
-  document.getElementById("moisture-refill-label").textContent = `Water below ${watering.refill_below}%`;
-  document.getElementById("moisture-phase").textContent = wateringPhase(watering, value);
-  document.getElementById("moisture-strategy").textContent = watering.label;
+  setStyle(vessel, "--fill", `${clamp(value)}%`);
+  setStyle(vessel, "--target-low", `${clamp(targetLow)}%`);
+  setStyle(vessel, "--target-size", `${clamp(targetHigh) - clamp(targetLow)}%`);
+  setStyle(vessel, "--cycle-low", `${clamp(cycleLow)}%`);
+  setStyle(vessel, "--cycle-size", `${clamp(cycleHigh) - clamp(cycleLow)}%`);
+  setStyle(vessel, "--refill", `${clamp(watering.refill_below)}%`);
+  setAttr(vessel, "aria-label", `Soil moisture ${value.toFixed(1)} percent. ${wateringPhase(watering, value)}.`);
+  setData(vessel, "phase", wateringPhase(watering, value).toLowerCase().replaceAll(" ", "-"));
+  setText(document.getElementById("moisture-cycle-label"), `Comfortable ${cycleLow}–${cycleHigh}%`);
+  setText(document.getElementById("moisture-target-label"), `After watering ${targetLow}–${targetHigh}%`);
+  setText(document.getElementById("moisture-refill-label"), `Water below ${watering.refill_below}%`);
+  setText(document.getElementById("moisture-phase"), wateringPhase(watering, value));
+  setText(document.getElementById("moisture-strategy"), watering.label);
 }
 
 // The value a profile metric is judged on. Conductivity targets describe the
@@ -641,9 +696,9 @@ function renderPlantAssessment(profile) {
   const reason = document.getElementById("plant-status-reason");
 
   if (!assessments.length) {
-    panel.dataset.level = "waiting";
-    status.textContent = "Unknown";
-    reason.textContent = "No profiled measurements are available yet.";
+    setData(panel, "level", "waiting");
+    setText(status, "Unknown");
+    setText(reason, "No profiled measurements are available yet.");
     return;
   }
 
@@ -651,17 +706,17 @@ function renderPlantAssessment(profile) {
   const level = profiles.assessment_policy.levels.find(
     item => item.max_deviation == null || worst.deviation <= item.max_deviation
   );
-  panel.dataset.level = level.status.toLowerCase();
-  status.textContent = level.status;
+  setData(panel, "level", level.status.toLowerCase());
+  setText(status, level.status);
 
   const coverage = `${assessments.length} of ${metricCount} readings assessed`;
   if (worst.deviation === 0) {
-    reason.textContent = `All ${assessments.length} readings are within ${profile.name} healthy limits.`;
+    setText(reason, `All ${assessments.length} readings are within ${profile.name} healthy limits.`);
   } else if (worst.reason) {
-    reason.textContent = `${worst.reason} ${coverage}.`;
+    setText(reason, `${worst.reason} ${coverage}.`);
   } else {
     const suffix = worst.unit ? ` ${worst.unit}` : "";
-    reason.textContent = `${worst.label} is ${formatDifference(worst.distance, worst.metricName)}${suffix} ${worst.direction}. ${coverage}.`;
+    setText(reason, `${worst.label} is ${formatDifference(worst.distance, worst.metricName)}${suffix} ${worst.direction}. ${coverage}.`);
   }
 }
 
@@ -669,34 +724,33 @@ function renderGauge(card, metricName, metric, value) {
   const [scaleLow, scaleHigh] = metric.scale;
   const [idealLow, idealHigh] = metric.ideal;
   const percentage = number => (number - scaleLow) / (scaleHigh - scaleLow) * 100;
-  card.querySelector(".ideal-range").style.left = `${percentage(idealLow)}%`;
-  card.querySelector(".ideal-range").style.width = `${percentage(idealHigh) - percentage(idealLow)}%`;
-  card.querySelector(".scale-low").textContent = scaleLow;
-  card.querySelector(".scale-high").textContent = scaleHigh;
-  card.querySelector(".ideal-label").textContent = `Ideal ${idealLow}–${idealHigh}`;
+  setStyle(card.querySelector(".ideal-range"), "left", `${percentage(idealLow)}%`);
+  setStyle(card.querySelector(".ideal-range"), "width", `${percentage(idealHigh) - percentage(idealLow)}%`);
+  setText(card.querySelector(".scale-low"), scaleLow);
+  setText(card.querySelector(".scale-high"), scaleHigh);
+  setText(card.querySelector(".ideal-label"), `Ideal ${idealLow}–${idealHigh}`);
 
   const status = card.querySelector(".range-status");
-  status.className = "range-status";
   const valueMarker = card.querySelector(".value-marker");
   // A value the sensor did not send is not a value of zero, which is where a
   // missing number would otherwise put the marker.
-  valueMarker.hidden = value == null;
+  setHidden(valueMarker, value == null);
+  const inRange = value != null && value >= idealLow && value <= idealHigh;
+  setClass(status, "in-range", inRange);
+  setClass(status, "out-range", value != null && !inRange);
   if (value == null) {
-    status.textContent = "Not in the latest report";
+    setText(status, "Not in the latest report");
     return;
   }
-  valueMarker.style.left = `${Math.max(0, Math.min(100, percentage(value)))}%`;
+  setStyle(valueMarker, "left", `${Math.max(0, Math.min(100, percentage(value)))}%`);
   const suffix = metric.unit ? ` ${metric.unit}` : "";
   if (value < idealLow) {
-    status.textContent = `${formatDifference(idealLow - value, metricName)}${suffix} below ideal`;
-    status.classList.add("out-range");
+    setText(status, `${formatDifference(idealLow - value, metricName)}${suffix} below ideal`);
   } else if (value > idealHigh) {
-    status.textContent = `${formatDifference(value - idealHigh, metricName)}${suffix} above ideal`;
-    status.classList.add("out-range");
+    setText(status, `${formatDifference(value - idealHigh, metricName)}${suffix} above ideal`);
   } else {
     const margin = Math.min(value - idealLow, idealHigh - value);
-    status.textContent = `Inside ideal zone · ${formatValue(margin, metricName)}${suffix} to nearest edge`;
-    status.classList.add("in-range");
+    setText(status, `Inside ideal zone · ${formatValue(margin, metricName)}${suffix} to nearest edge`);
   }
 }
 
@@ -704,8 +758,8 @@ function renderProfileRanges() {
   if (!profiles || !latestReading) return;
   const profileId = selectedSensor?.profile_id || profiles.default_profile;
   const profile = profiles.profiles[profileId];
-  document.getElementById("scientific-name").textContent = profile.scientific_name;
-  document.getElementById("chemistry-profile").textContent = `${profile.name} starter targets`;
+  setText(document.getElementById("scientific-name"), profile.scientific_name);
+  setText(document.getElementById("chemistry-profile"), `${profile.name} starter targets`);
   renderMoistureVessel(profile);
   renderMoistureTrend(profile);
   renderPlantAssessment(profile);
@@ -723,7 +777,7 @@ function renderProfileRanges() {
   // band: they are labelled in the page as unverified and trend-only.
   for (const [metricName, id] of Object.entries(chemistryValueIds)) {
     const value = latestReading[metricName];
-    document.getElementById(id).textContent = value == null ? "--" : formatValue(value, metricName);
+    setText(document.getElementById(id), value == null ? "--" : formatValue(value, metricName));
   }
   renderPoreWaterEc(profile);
 }
@@ -750,34 +804,34 @@ function renderPoreWaterEc(profile) {
   const chemistry = latestChemistry;
   const status = chemistry?.status || "none";
   const estimate = status === "none" ? null : chemistry.pore_water_ec_us_cm;
-  card.dataset.status = status;
-  card.dataset.level = chemistry?.nutrient_level || "none";
+  setData(card, "status", status);
+  setData(card, "level", chemistry?.nutrient_level || "none");
   renderGauge(card, "conductivity_us_cm", metric, estimate);
 
   const level = { low: "Low", ok: "OK", high: "High" }[chemistry?.nutrient_level];
-  document.getElementById("nutrient-level").textContent = level || "--";
-  document.getElementById("nutrient-level-basis").textContent =
-    status === "last_valid" ? "· last estimate" : "";
-  document.getElementById("pore-ec").textContent = estimate == null ? "--" : String(estimate);
-  document.getElementById("pore-ec-target").textContent = `(target ${metric.ideal[0]}–${metric.ideal[1]})`;
+  setText(document.getElementById("nutrient-level"), level || "--");
+  setText(document.getElementById("nutrient-level-basis"),
+    status === "last_valid" ? "· last estimate" : "");
+  setText(document.getElementById("pore-ec"), estimate == null ? "--" : String(estimate));
+  setText(document.getElementById("pore-ec-target"), `(target ${metric.ideal[0]}–${metric.ideal[1]})`);
 
   const basisText = document.getElementById("pore-ec-basis");
   const dryNote = document.getElementById("pore-ec-dry-note");
   if (status === "none") {
-    card.querySelector(".range-status").textContent = "No recent estimate — water the plant to get one";
-    basisText.textContent = "";
+    setText(card.querySelector(".range-status"), "No recent estimate — water the plant to get one");
+    setText(basisText, "");
   } else {
     const basis = chemistry.basis;
     const afterWatering = basis.post_watering ? " after watering" : "";
-    basisText.textContent =
+    setText(basisText,
       `from EC ${basis.conductivity_us_cm} µS/cm at ${Math.round(basis.moisture_percent)} % moisture, ` +
-      `${Number(basis.soil_temperature_c).toFixed(1)} °C${afterWatering} · ${formatAge(chemistry.age_seconds)}`;
+      `${Number(basis.soil_temperature_c).toFixed(1)} °C${afterWatering} · ${formatAge(chemistry.age_seconds)}`);
   }
   const moisture = latestReading.moisture_percent;
-  dryNote.hidden = !chemistry?.too_dry;
-  dryNote.textContent = chemistry?.too_dry
+  setHidden(dryNote, !chemistry?.too_dry);
+  setText(dryNote, chemistry?.too_dry
     ? `Now too dry to estimate (moisture ${moisture == null ? "--" : Math.round(moisture)} %) — updates after the next watering`
-    : "";
+    : "");
 }
 
 function drainageResponseClass(retainedFraction) {
@@ -797,15 +851,15 @@ function renderDrainageAssessment(profile) {
   if (wateringIntervalSummary?.typical_days != null) {
     const days = wateringIntervalSummary.typical_days;
     const formattedDays = Number.isInteger(days) ? days.toFixed(0) : days.toFixed(1);
-    interval.textContent = `Typical dry-down cycle: ${formattedDays} days`;
+    setText(interval, `Typical dry-down cycle: ${formattedDays} days`);
   } else {
-    interval.textContent = "Two watering dates are needed to learn the usual interval";
+    setText(interval, "Two watering dates are needed to learn the usual interval");
   }
 
   if (sensorEvents.length < requiredCycles) {
-    panel.dataset.level = "learning";
-    status.textContent = "Learning";
-    reason.textContent = `${sensorEvents.length} of ${requiredCycles} watering cycles learned. ${profile.drainage.label}.`;
+    setData(panel, "level", "learning");
+    setText(status, "Learning");
+    setText(reason, `${sensorEvents.length} of ${requiredCycles} watering cycles learned. ${profile.drainage.label}.`);
     return;
   }
 
@@ -820,16 +874,16 @@ function renderDrainageAssessment(profile) {
   const responseLabel = responseClass === "retaining" ? "water-retaining" : `${responseClass}-draining`;
 
   if (classMatches && settlesInTime) {
-    panel.dataset.level = "suitable";
-    status.textContent = "Suitable";
-    reason.textContent = `This pot appears suitable for ${profile.name}. It is consistently ${responseLabel} and settles within ${settleMinutes.toFixed(0)} minutes.`;
+    setData(panel, "level", "suitable");
+    setText(status, "Suitable");
+    setText(reason, `This pot appears suitable for ${profile.name}. It is consistently ${responseLabel} and settles within ${settleMinutes.toFixed(0)} minutes.`);
   } else {
-    panel.dataset.level = "unsuitable";
-    status.textContent = "Possibly unsuitable";
+    setData(panel, "level", "unsuitable");
+    setText(status, "Possibly unsuitable");
     const issue = classMatches
       ? `takes up to ${settleMinutes.toFixed(0)} minutes to settle`
       : `behaves as ${responseLabel}`;
-    reason.textContent = `The pot ${issue}; ${profile.name} prefers ${profile.drainage.label.toLowerCase()}. Check substrate, drainage holes, and probe placement.`;
+    setText(reason, `The pot ${issue}; ${profile.name} prefers ${profile.drainage.label.toLowerCase()}. Check substrate, drainage holes, and probe placement.`);
   }
 }
 
@@ -847,16 +901,17 @@ function renderBattery(element, reading) {
   const voltage = known && reading.battery_voltage_v != null
     ? `${Number(reading.battery_voltage_v).toFixed(2)} V`
     : null;
-  element.dataset.level = !known ? "unknown" : percent <= 10 ? "critical" : percent <= 20 ? "low" : "normal";
-  element.style.setProperty("--charge", known ? String(Math.min(100, Math.max(0, percent))) : "0");
+  setData(element, "level", !known ? "unknown" : percent <= 10 ? "critical" : percent <= 20 ? "low" : "normal");
+  setStyle(element, "--charge", known ? String(Math.min(100, Math.max(0, percent))) : "0");
   const details = [`${percent}%`, charging ? "charging" : null, voltage].filter(Boolean);
   const label = known ? `Battery ${details.join(", ")}` : "Battery not reported";
-  element.setAttribute("aria-label", label);
-  element.title = label;
+  setAttr(element, "aria-label", label);
+  if (element.title !== label) element.title = label;
+  if (!renderKeyChanged(element, [known, percent, charging, voltage])) return;
 
   const glyph = document.createElement("span");
   glyph.className = "battery-glyph";
-  glyph.setAttribute("aria-hidden", "true");
+  setAttr(glyph, "aria-hidden", "true");
   const fill = document.createElement("span");
   fill.className = "battery-fill";
   glyph.append(fill);
@@ -867,12 +922,12 @@ function renderBattery(element, reading) {
   }
   const text = document.createElement("span");
   text.className = "battery-percent";
-  text.textContent = known ? `${percent}%` : "\u2014";
+  setText(text, known ? `${percent}%` : "\u2014");
   element.replaceChildren(glyph, text);
   if (voltage) {
     const secondary = document.createElement("span");
     secondary.className = "battery-voltage";
-    secondary.textContent = voltage;
+    setText(secondary, voltage);
     element.append(secondary);
   }
 }
@@ -883,7 +938,7 @@ function renderReading(payload) {
   latestChemistry = payload.chemistry || null;
   for (const [id, [key, precision]] of Object.entries(fields)) {
     const value = reading[key];
-    document.getElementById(id).textContent = value == null ? "--" : Number(value).toFixed(precision);
+    setText(document.getElementById(id), value == null ? "--" : Number(value).toFixed(precision));
   }
   const receivedAt = Date.parse(payload.received_at);
   const staleAfterMs = selectedSensor
@@ -891,14 +946,14 @@ function renderReading(payload) {
       ?? selectedSensor.expected_interval_seconds) * 2_000
     : sensorOfflineAfterMs;
   const isLive = Number.isFinite(receivedAt) && Date.now() - receivedAt <= staleAfterMs;
-  document.getElementById("status").textContent = isLive ? "Sensor fresh" : "Sensor stale";
-  document.getElementById("status-dot").classList.toggle("live", isLive);
+  setText(document.getElementById("status"), isLive ? "Sensor fresh" : "Sensor stale");
+  setClass(document.getElementById("status-dot"), "live", isLive);
   latestReadingAt = reading.observed_at || payload.received_at;
   const takenAt = reading.observed_at
     ? new Date(reading.observed_at).toLocaleTimeString()
     : `time unknown, received ${new Date(payload.received_at).toLocaleTimeString()}`;
   const report = reading.report_id == null ? "Sample" : `Report ${reading.report_id}`;
-  document.getElementById("updated").textContent = `${report} · ${takenAt}`;
+  setText(document.getElementById("updated"), `${report} · ${takenAt}`);
   renderBattery(document.getElementById("battery"), reading);
   renderProfileRanges();
 }
@@ -924,9 +979,10 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
     timestamp: Date.parse(item.reading.observed_at || item.received_at),
     value: item.reading[metric] == null ? null : Number(item.reading[metric])
   })).filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value));
+  if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange])) return;
   chart.replaceChildren();
-  chart.toggleAttribute("hidden", points.length === 0);
-  empty.hidden = points.length !== 0;
+  setHidden(chart, points.length === 0);
+  setHidden(empty, points.length !== 0);
   if (!points.length) return;
 
   const width = 720;
@@ -1011,10 +1067,10 @@ function renderClimateHistory(items, startTime, endTime) {
     .map(item => item.reading.air_humidity_percent)
     .filter(value => value != null && Number.isFinite(Number(value)))
     .map(Number);
-  document.getElementById("history-temperature").textContent = temperatures.length
-    ? temperatures[temperatures.length - 1].toFixed(1) : "--";
-  document.getElementById("history-humidity").textContent = humidities.length
-    ? humidities[humidities.length - 1].toFixed(1) : "--";
+  setText(document.getElementById("history-temperature"), temperatures.length
+    ? temperatures[temperatures.length - 1].toFixed(1) : "--");
+  setText(document.getElementById("history-humidity"), humidities.length
+    ? humidities[humidities.length - 1].toFixed(1) : "--");
   renderHistoryChart(
     "temperature-history-chart", "temperature-history-empty", items,
     "air_temperature_c", "degrees Celsius", chartStartTime, chartEndTime
@@ -1024,11 +1080,11 @@ function renderClimateHistory(items, startTime, endTime) {
     "air_humidity_percent", "percent relative humidity", chartStartTime, chartEndTime
   );
   const status = document.getElementById("climate-history-status");
-  status.classList.remove("error");
+  setClass(status, "error", false);
   const sampleStatus = items.length === 1
     ? "Collecting another reading to draw the line"
     : `${items.length} stored readings`;
-  status.textContent = `${historyRanges[selectedHistoryRange].label} · ${sampleStatus} · Updates live`;
+  setText(status, `${historyRanges[selectedHistoryRange].label} · ${sampleStatus} · Updates live`);
 }
 
 async function refreshClimateHistory() {
@@ -1055,8 +1111,8 @@ async function refreshClimateHistory() {
     if (historyRequestKey !== requestKey) return;
     historyRequestKey = null;
     const status = document.getElementById("climate-history-status");
-    status.classList.add("error");
-    status.textContent = "Climate history is temporarily unavailable.";
+    setClass(status, "error", true);
+    setText(status, "Climate history is temporarily unavailable.");
   }
 }
 
@@ -1068,6 +1124,8 @@ const moistureTrendRefetchMs = 60_000;
 let moistureTrendItems = [];
 let moistureTrendSensorId = null;
 let moistureTrendFetchedAt = 0;
+// Counts fetched months, so a new fetch redraws even with the same last point.
+let moistureTrendVersion = 0;
 
 function moistureTrendPoints() {
   const points = moistureTrendItems.map(item => ({
@@ -1089,11 +1147,13 @@ function renderMoistureTrend(profile) {
   const empty = document.getElementById("moisture-trend-empty");
   const summary = document.getElementById("moisture-trend-summary");
   const points = moistureTrendPoints();
+  setHidden(chart, points.length === 0);
+  setHidden(empty, points.length !== 0);
+  const width = Math.max(240, Math.round(chart.getBoundingClientRect().width) || 360);
+  if (!renderKeyChanged(chart, [moistureTrendVersion, points.length, points.at(-1), width, profile?.watering])) return;
   chart.replaceChildren();
-  chart.toggleAttribute("hidden", points.length === 0);
-  empty.hidden = points.length !== 0;
   if (!points.length) {
-    summary.textContent = "";
+    setText(summary, "");
     return;
   }
 
@@ -1105,9 +1165,8 @@ function renderMoistureTrend(profile) {
   const startTime = fitted ? Math.min(firstTime, endTime - 60 * 60 * 1000) : endTime - moistureTrendMs;
   // Drawn at the card's own width, so the labels keep their size on a wide
   // phone layout instead of scaling up with the chart.
-  const width = Math.max(240, Math.round(chart.getBoundingClientRect().width) || 360);
   const height = 150;
-  chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
   const plot = { left: 30, right: 8, top: 8, bottom: 22 };
   const plotWidth = width - plot.left - plot.right;
   const plotHeight = height - plot.top - plot.bottom;
@@ -1168,9 +1227,9 @@ function renderMoistureTrend(profile) {
   const high = Math.max(...values).toFixed(0);
   const since = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     .format(new Date(firstTime));
-  summary.textContent = fitted
+  setText(summary, fitted
     ? `Low ${low}% · high ${high}% · since ${since}`
-    : `Low ${low}% · high ${high}% over 30 days`;
+    : `Low ${low}% · high ${high}% over 30 days`);
   chart.setAttribute(
     "aria-label",
     `Soil moisture ${fitted ? `since ${since}` : "over the last 30 days"}: `
@@ -1197,6 +1256,7 @@ async function refreshMoistureTrend() {
     const items = (await response.json()).items;
     if (selectedSensorId !== sensorId) return;
     moistureTrendItems = items;
+    moistureTrendVersion += 1;
     renderProfileRanges();
   } catch (_error) {
     // The next attempt waits out the usual minute; the live point still draws.
@@ -1214,7 +1274,7 @@ async function loadProfiles() {
     detailSettingSelect.add(new Option(profile.name, id));
     onboardingSelect.add(new Option(profile.name, id));
   }
-  document.getElementById("chemistry-guidance").textContent = profiles.guidance;
+  setText(document.getElementById("chemistry-guidance"), profiles.guidance);
   renderProfileRanges();
 }
 
@@ -1222,11 +1282,12 @@ const plantLabel = document.getElementById("plant-label");
 
 function renderCareLog(items) {
   const list = document.getElementById("care-log-list");
+  if (!renderKeyChanged(list, items)) return;
   list.replaceChildren();
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "care-log-empty";
-    empty.textContent = "No care events detected yet.";
+    setText(empty, "No care events detected yet.");
     list.append(empty);
     return;
   }
@@ -1240,19 +1301,19 @@ function renderCareLog(items) {
     const heading = document.createElement("div");
     heading.className = "care-event-heading";
     const title = document.createElement("strong");
-    title.textContent = event.title;
+    setText(title, event.title);
     const confidence = document.createElement("span");
-    confidence.textContent = event.kind === "drainage_assessment"
+    setText(confidence, event.kind === "drainage_assessment"
       ? "Estimated response"
-      : event.confidence === "high" ? "High confidence" : "Confirm this event";
+      : event.confidence === "high" ? "High confidence" : "Confirm this event");
     heading.append(title, confidence);
     const summary = document.createElement("p");
-    summary.textContent = event.summary;
+    setText(summary, event.summary);
     const timestamp = document.createElement("time");
     timestamp.dateTime = event.detected_at;
-    timestamp.textContent = new Date(event.detected_at).toLocaleString([], {
+    setText(timestamp, new Date(event.detected_at).toLocaleString([], {
       month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
-    });
+    }));
     entry.append(timestamp, heading, summary);
     list.append(entry);
   }
@@ -1289,6 +1350,9 @@ function dailyMoistureColor(value, watering) {
 }
 
 function renderWateringCalendar(items, range, watering) {
+  if (!renderKeyChanged(document.getElementById("watering-calendar-grid"), [
+    items, range.year, range.todayStart, watering
+  ])) return;
   const activityByDay = new Map(items.map(item => [item.date, item]));
 
   const grid = document.getElementById("watering-calendar-grid");
@@ -1299,8 +1363,8 @@ function renderWateringCalendar(items, range, watering) {
   layout.style.gridTemplateColumns = `24px ${chartWidth}px`;
   months.style.gridTemplateColumns = `repeat(${range.weekCount}, 11px)`;
   grid.style.gridTemplateColumns = `repeat(${range.weekCount}, 11px)`;
-  grid.setAttribute("aria-label", `Watering events for ${range.year}`);
-  document.getElementById("watering-calendar-title").textContent = `${range.year} watering history`;
+  setAttr(grid, "aria-label", `Watering events for ${range.year}`);
+  setText(document.getElementById("watering-calendar-title"), `${range.year} watering history`);
   grid.replaceChildren();
   months.replaceChildren();
   let previousMonth = -1;
@@ -1314,11 +1378,11 @@ function renderWateringCalendar(items, range, watering) {
     const cell = document.createElement("span");
     const formattedDate = date.toLocaleDateString([], { timeZone: "UTC", month: "long", day: "numeric", year: "numeric" });
     cell.className = "watering-calendar-day";
-    cell.dataset.state = count ? "watered" : activity.drying_level ? "drying" : moisture != null ? "moisture" : "none";
-    cell.dataset.level = count ? Math.min(3, count) : activity.drying_level;
-    cell.dataset.future = date > range.todayStart ? "true" : "false";
-    cell.dataset.outsideYear = date < range.yearStart || date >= range.yearEnd ? "true" : "false";
-    cell.setAttribute("role", "gridcell");
+    setData(cell, "state", count ? "watered" : activity.drying_level ? "drying" : moisture != null ? "moisture" : "none");
+    setData(cell, "level", count ? Math.min(3, count) : activity.drying_level);
+    setData(cell, "future", date > range.todayStart ? "true" : "false");
+    setData(cell, "outsideYear", date < range.yearStart || date >= range.yearEnd ? "true" : "false");
+    setAttr(cell, "role", "gridcell");
     if (!count && !activity.drying_level && moisture != null) {
       const color = dailyMoistureColor(moisture, watering);
       cell.style.backgroundColor = color.background;
@@ -1332,13 +1396,13 @@ function renderWateringCalendar(items, range, watering) {
         : moisture != null
           ? `final soil moisture ${moisture.toFixed(1)}%`
           : "no reading";
-    cell.setAttribute("aria-label", `${formattedDate}: ${description}`);
+    setAttr(cell, "aria-label", `${formattedDate}: ${description}`);
     cell.title = cell.getAttribute("aria-label");
     grid.append(cell);
 
     if (date.getUTCFullYear() === range.year && date.getUTCMonth() !== previousMonth && date.getUTCDate() <= 7) {
       const label = document.createElement("span");
-      label.textContent = date.toLocaleDateString([], { timeZone: "UTC", month: "short" });
+      setText(label, date.toLocaleDateString([], { timeZone: "UTC", month: "short" }));
       label.style.gridColumn = String(Math.floor(index / 7) + 1);
       months.append(label);
     }
@@ -1346,8 +1410,8 @@ function renderWateringCalendar(items, range, watering) {
   }
 
   const total = items.reduce((sum, item) => sum + item.watering_count, 0);
-  document.getElementById("watering-calendar-summary").textContent =
-    `${total} watering event${total === 1 ? "" : "s"} in ${range.year}`;
+  setText(document.getElementById("watering-calendar-summary"),
+    `${total} watering event${total === 1 ? "" : "s"} in ${range.year}`);
 }
 
 async function refreshWateringCalendar() {
@@ -1380,7 +1444,7 @@ async function refreshWateringCalendar() {
   } catch (_error) {
     if (wateringCalendarRequestKey === requestKey) {
       wateringCalendarRequestKey = null;
-      document.getElementById("watering-calendar-summary").textContent = "History unavailable";
+      setText(document.getElementById("watering-calendar-summary"), "History unavailable");
     }
   }
 }
@@ -1408,13 +1472,13 @@ async function refreshPlantJourney() {
     const response = await fetch(`/api/plant-journey?${query}`);
     if (!response.ok) throw new Error("plant journey request failed");
     const journey = await response.json();
-    document.getElementById("journey-days").textContent = journey.monitored_days;
-    document.getElementById("journey-waterings").textContent = journey.watering_count;
-    document.getElementById("journey-fertilizing").textContent = journey.fertilizing_count;
-    document.getElementById("journey-missed").textContent = journey.missed_watering_count;
-    document.getElementById("journey-started").textContent = journey.started_at
+    setText(document.getElementById("journey-days"), journey.monitored_days);
+    setText(document.getElementById("journey-waterings"), journey.watering_count);
+    setText(document.getElementById("journey-fertilizing"), journey.fertilizing_count);
+    setText(document.getElementById("journey-missed"), journey.missed_watering_count);
+    setText(document.getElementById("journey-started"), journey.started_at
       ? `Since ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(journey.started_at))}`
-      : "No sensor history yet";
+      : "No sensor history yet");
   } catch (_error) {
     return;
   }
@@ -1430,8 +1494,8 @@ async function refresh() {
     }
     if (page !== "detail" && page !== "config") return;
     if (!selectedSensorId || !selectedSensor) {
-      document.getElementById("status").textContent = "Sensor not found";
-      document.getElementById("status-dot").classList.remove("live");
+      setText(document.getElementById("status"), "Sensor not found");
+      setClass(document.getElementById("status-dot"), "live", false);
       return;
     }
     const query = sensorQuery();
@@ -1455,8 +1519,8 @@ async function refresh() {
       refreshPotResponse(), refreshPlantJourney()
     ]);
   } catch (_error) {
-    document.getElementById("status").textContent = "Hub unavailable";
-    document.getElementById("status-dot").classList.remove("live");
+    setText(document.getElementById("status"), "Hub unavailable");
+    setClass(document.getElementById("status-dot"), "live", false);
   }
 }
 
@@ -1486,14 +1550,12 @@ async function refreshFirmwareImages() {
 function renderFirmwareImages() {
   const list = document.getElementById("firmware-list");
   if (list === null) return;
-  const renderKey = JSON.stringify(firmwareImages);
-  if (list.dataset.renderKey === renderKey) return;
-  list.dataset.renderKey = renderKey;
-  list.textContent = "";
+  if (!renderKeyChanged(list, firmwareImages)) return;
+  list.replaceChildren();
   if (!firmwareImages.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "No firmware images yet. Add the image you built above.";
+    setText(empty, "No firmware images yet. Add the image you built above.");
     list.append(empty);
     return;
   }
@@ -1504,17 +1566,17 @@ function renderFirmwareImages() {
     const heading = document.createElement("div");
     heading.className = "settings-sensor-heading";
     const name = document.createElement("strong");
-    name.textContent = image.version;
+    setText(name, image.version);
     const state = document.createElement("small");
-    state.textContent = image.available ? "Ready" : "File missing";
+    setText(state, image.available ? "Ready" : "File missing");
     heading.append(name, state);
 
     const identity = document.createElement("code");
-    identity.textContent =
+    setText(identity,
       formatBytes(image.size_bytes) +
       " · built " + (image.built_at || "at an unrecorded time") +
       " · " + image.idf_version +
-      " · " + image.digest.slice(0, 12);
+      " · " + image.digest.slice(0, 12));
 
     const body = document.createElement("div");
     body.className = "settings-sensor-body";
@@ -1523,7 +1585,7 @@ function renderFirmwareImages() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "danger";
-    remove.textContent = "Delete";
+    setText(remove, "Delete");
     remove.addEventListener("click", () => deleteFirmwareImage(image));
 
     const actions = document.createElement("div");
@@ -1536,17 +1598,17 @@ function renderFirmwareImages() {
 
 async function uploadFirmwareImage(file) {
   const message = document.getElementById("firmware-upload-message");
-  message.textContent = "Reading " + file.name + "…";
+  setText(message, "Reading " + file.name + "…");
   try {
     const response = await fetch("/api/firmware", { method: "POST", body: file });
     const payload = await response.json();
     if (!response.ok) {
-      message.textContent = payload.error || "Could not store that image";
+      setText(message, payload.error || "Could not store that image");
       return;
     }
-    message.textContent = "Stored firmware " + payload.version + ".";
+    setText(message, "Stored firmware " + payload.version + ".");
   } catch (_error) {
-    message.textContent = "Could not store that image";
+    setText(message, "Could not store that image");
     return;
   }
   await refreshFirmwareImages();
@@ -1597,29 +1659,29 @@ function firmwareUpdateIsRunning(sensor) {
 function renderSensorFirmware() {
   const choice = document.getElementById("firmware-choice");
   if (choice === null || !selectedSensor) return;
-  document.getElementById("firmware-current").textContent = selectedSensor.firmware_version
+  setText(document.getElementById("firmware-current"), selectedSensor.firmware_version
     ? "Running " + selectedSensor.firmware_version
-    : "Version not reported yet";
-  document.getElementById("firmware-update-state").textContent =
-    describeFirmwareUpdate(selectedSensor);
+    : "Version not reported yet");
+  setText(document.getElementById("firmware-update-state"),
+    describeFirmwareUpdate(selectedSensor));
 
   const running = firmwareUpdateIsRunning(selectedSensor);
   const progress = document.getElementById("firmware-progress");
-  progress.hidden = !running;
-  document.getElementById("firmware-progress-bar").style.width =
-    Math.max(2, selectedSensor.firmware_update_percent || 0) + "%";
-  document.getElementById("firmware-cancel").hidden = !running;
+  setHidden(progress, !running);
+  setStyle(document.getElementById("firmware-progress-bar"), "width",
+    Math.max(2, selectedSensor.firmware_update_percent || 0) + "%");
+  setHidden(document.getElementById("firmware-cancel"), !running);
 
   const renderKey = JSON.stringify(firmwareImages.map((image) => [image.version, image.digest]));
   if (choice.dataset.renderKey !== renderKey) {
-    choice.dataset.renderKey = renderKey;
-    choice.textContent = "";
+    setData(choice, "renderKey", renderKey);
+    choice.replaceChildren();
     firmwareImages
       .filter((image) => image.available)
       .forEach((image) => {
         const option = document.createElement("option");
         option.value = image.digest;
-        option.textContent = image.version + " · " + formatBytes(image.size_bytes);
+        setText(option, image.version + " · " + formatBytes(image.size_bytes));
         choice.append(option);
       });
   }
@@ -1631,18 +1693,18 @@ function renderSensorFirmware() {
   const note = document.getElementById("firmware-precondition");
   const install = document.getElementById("firmware-install");
   if (!firmwareImages.some((image) => image.available)) {
-    note.textContent =
-      "No firmware images are stored on this hub. Add one under Settings · Firmware.";
+    setText(note,
+      "No firmware images are stored on this hub. Add one under Settings · Firmware.");
   } else if (!onNetwork) {
-    note.textContent =
+    setText(note,
       "This sensor downloads firmware over the household network. Switch its web console on " +
-      "above and wait until it reports an address, then come back.";
+      "above and wait until it reports an address, then come back.");
   } else {
-    note.textContent =
+    setText(note,
       "The hub tells the sensor which image to fetch over Bluetooth; the sensor downloads it " +
-      "from the hub over Wi-Fi and restarts. It keeps its pairing, plant and settings.";
+      "from the hub over Wi-Fi and restarts. It keeps its pairing, plant and settings.");
   }
-  install.disabled = running || !onNetwork || choice.options.length === 0;
+  setDisabled(install, running || !onNetwork || choice.options.length === 0);
 }
 
 async function installFirmware() {
@@ -1682,7 +1744,7 @@ document.querySelectorAll("[data-history-range]").forEach((button) => {
     selectedHistoryRange = button.dataset.historyRange;
     historyRequestKey = null;
     document.querySelectorAll("[data-history-range]").forEach((option) => {
-      option.setAttribute("aria-pressed", String(option === button));
+      setAttr(option, "aria-pressed", String(option === button));
     });
     refreshClimateHistory();
   });
@@ -1713,7 +1775,7 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
   const payload = await response.json();
   if (submitSequence !== sensorSettingsSubmitSequence || selectedSensorId !== sensorId) return;
   if (!response.ok) {
-    message.textContent = payload.error || "Could not save sensor configuration";
+    setText(message, payload.error || "Could not save sensor configuration");
     return;
   }
   sensorSettingsDraftSensorId = null;
@@ -1724,9 +1786,9 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
   renderFleet();
   renderSensorSettings();
   renderPage();
-  message.textContent = payload.device_config_status === "applied"
+  setText(message, payload.device_config_status === "applied"
     ? "Sensor configuration is already applied."
-    : "Configuration saved. It will be sent when the sensor next reports.";
+    : "Configuration saved. It will be sent when the sensor next reports.");
 });
 document.getElementById("settings-link").addEventListener("click", (event) => {
   event.preventDefault();
@@ -1776,7 +1838,7 @@ document.getElementById("onboarding-candidates").addEventListener("click", (even
   const choice = event.target.closest(".onboarding-candidate");
   if (!choice) return;
   onboardingSensorId = choice.dataset.sensorId;
-  document.getElementById("onboarding-candidates").dataset.renderKey = "";
+  setData(document.getElementById("onboarding-candidates"), "renderKey", "");
   renderOnboarding();
 });
 ["onboarding-name", "onboarding-room"].forEach((id) => {
