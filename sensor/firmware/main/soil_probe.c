@@ -62,6 +62,39 @@ static SemaphoreHandle_t bus_lock(void)
     return lock;
 }
 
+/* Held for a whole power-on, read, power-off sequence.
+ *
+ * The bus lock covers one exchange; this covers the supply. Without it a debug
+ * read from the console could power the probe up while the monitor task was
+ * switching it off around its own read, and one of them would be talking to an
+ * unpowered probe. */
+static SemaphoreHandle_t power_lock(void)
+{
+    static StaticSemaphore_t storage;
+    static SemaphoreHandle_t lock;
+    static portMUX_TYPE create_lock = portMUX_INITIALIZER_UNLOCKED;
+    portENTER_CRITICAL(&create_lock);
+    if (lock == NULL) {
+        lock = xSemaphoreCreateMutexStatic(&storage);
+    }
+    portEXIT_CRITICAL(&create_lock);
+    return lock;
+}
+
+/* Put the probe back to sleep: the UART first, so no pin is left driving a
+ * transceiver that is about to lose its supply. */
+static void release_probe(void)
+{
+    const esp_err_t uart_error = opp_soil_probe_deinit();
+    if (uart_error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not release the RS485 UART: %s", esp_err_to_name(uart_error));
+    }
+    const esp_err_t power_error = opp_soil_probe_set_power(false);
+    if (power_error != ESP_OK) {
+        ESP_LOGW(TAG, "Could not switch probe power off: %s", esp_err_to_name(power_error));
+    }
+}
+
 static esp_err_t install_uart(void)
 {
     if (uart_installed) {
@@ -324,24 +357,36 @@ esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_registe
     if (values == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!probe_powered) {
-        return ESP_ERR_INVALID_STATE;
+    /* The probe is off between samples now, so this powers it up for the
+     * question and puts it back afterwards. Somebody hunting for a register on
+     * the console should not have to know that, or have to switch sampling on
+     * to be allowed to ask. */
+    xSemaphoreTake(power_lock(), portMAX_DELAY);
+    const bool was_powered = probe_powered;
+    esp_err_t error = ESP_OK;
+    if (!was_powered) {
+        error = opp_soil_probe_set_power(true);
     }
-    esp_err_t error = opp_soil_probe_init();
-    if (error != ESP_OK) {
-        return error;
+    if (error == ESP_OK) {
+        error = opp_soil_probe_init();
     }
-    xSemaphoreTake(bus_lock(), portMAX_DELAY);
-    for (int attempt = 1; attempt <= SOIL_PROBE_ATTEMPTS; ++attempt) {
-        error = read_registers_once(function, first_register, count, values);
-        if (is_final(error)) {
-            break;
+    if (error == ESP_OK) {
+        xSemaphoreTake(bus_lock(), portMAX_DELAY);
+        for (int attempt = 1; attempt <= SOIL_PROBE_ATTEMPTS; ++attempt) {
+            error = read_registers_once(function, first_register, count, values);
+            if (is_final(error)) {
+                break;
+            }
+            if (attempt < SOIL_PROBE_ATTEMPTS) {
+                vTaskDelay(pdMS_TO_TICKS(SOIL_PROBE_RETRY_DELAY_MS));
+            }
         }
-        if (attempt < SOIL_PROBE_ATTEMPTS) {
-            vTaskDelay(pdMS_TO_TICKS(SOIL_PROBE_RETRY_DELAY_MS));
-        }
+        xSemaphoreGive(bus_lock());
     }
-    xSemaphoreGive(bus_lock());
+    if (!was_powered) {
+        release_probe();
+    }
+    xSemaphoreGive(power_lock());
     return error;
 }
 
@@ -375,11 +420,9 @@ static void soil_probe_monitor_task(void *context)
 
     while (true) {
         if (!opp_soil_probe_monitor_is_enabled()) {
-            esp_err_t power_error = opp_soil_probe_set_power(false);
-            if (power_error != ESP_OK) {
-                ESP_LOGW(TAG, "Could not switch probe power off: %s",
-                         esp_err_to_name(power_error));
-            }
+            xSemaphoreTake(power_lock(), portMAX_DELAY);
+            release_probe();
+            xSemaphoreGive(power_lock());
             if (!disabled_logged) {
                 ESP_LOGI(TAG, "Soil probe sampling disabled");
                 disabled_logged = true;
@@ -390,6 +433,15 @@ static void soil_probe_monitor_task(void *context)
         }
         disabled_logged = false;
 
+        /* Powered for the reading and nothing else.
+         *
+         * The probe and its boost converter cost 28.5 mA, which is most of what
+         * a battery node spends between samples, and it has no use between
+         * them. The warm-up is paid once per sample instead of once per session:
+         * measured against the interval that is a good trade, but it is why the
+         * first pH after power-on has to be trustworthy before this number is
+         * believed. */
+        xSemaphoreTake(power_lock(), portMAX_DELAY);
         esp_err_t error = opp_soil_probe_set_power(true);
         if (error == ESP_OK) {
             error = opp_soil_probe_init();
@@ -398,6 +450,8 @@ static void soil_probe_monitor_task(void *context)
         if (error == ESP_OK) {
             error = opp_soil_probe_read(&reading);
         }
+        release_probe();
+        xSemaphoreGive(power_lock());
         record_result(error, &reading);
 
         if (error == ESP_OK) {

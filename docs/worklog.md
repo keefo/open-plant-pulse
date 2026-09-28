@@ -812,3 +812,23 @@
 - Home Assistant decoding the battery objects from the supplementary packet.
 - The flash progress bar against a real USB flash.
 
+### Probe power between samples (0.20.0)
+
+- The always-awake path powered the probe on before its first reading and left
+  it on for ever after; only switching sampling off at the console brought it
+  down. It now powers on, warms up, reads, and powers off around each sample, as
+  the production path has always done, so the probe's 28.5 mA is drawn for about
+  2.3 s of every 10 rather than continuously.
+- A power lock holds the supply for a whole on-read-off sequence, because the
+  console's debug register read and the monitor task can now want the probe at
+  the same time. That read powers the probe up for the question and puts it back
+  afterwards, rather than failing because sampling happened to be between
+  samples.
+- `sensor/sdkconfig` on this Mac was stale from 0.12.1 and predated every soil
+  probe option, with SHT45 still on GPIO6/7 where the RS485 pins now live. It
+  was regenerated from `sdkconfig.defaults` keeping only the Wi-Fi credentials,
+  which is why this build also moves SHT45 to GPIO3/5.
+- Built at 1,470,816 bytes. **Not flashed and not measured**: no board is on USB,
+  and the sensor's console is off so it cannot be reached over the air either.
+  The saving, and what the first pH after each power-on is worth, are both
+  unverified.

@@ -17,8 +17,11 @@ sleep. This path builds but is not physically validated. Modbus acquisition of
 the soil probe works in the always-awake development mode (firmware 0.13.3).
 Probe power is switched by an AO3400 MOSFET in the MT3608's ground, driven
 from GPIO10 (firmware 0.15.0). The MT3608 and probe draw 28.5 mA from the
-battery while on. pH needs a long warm-up after each power-on, which matters
-for the per-reading power cycle below. Complete
+battery while on. Since 0.20.0 the always-awake path also powers the probe only
+for each reading, as the production path always has: on, warm up, read, off,
+leaving it unpowered for the rest of the sampling interval. pH needs a long
+warm-up after each power-on, which is the open question for both paths: a
+per-reading cycle buys the current back and pays for it in the first pH. Complete
 assembled-node power measurements remain pending.
 
 ## Why deep sleep
