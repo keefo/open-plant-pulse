@@ -151,20 +151,10 @@ def _lighting_summary(source: str, wanted: bool, outcome: str) -> str:
 
 # How long after a watering was called for it is counted as missed.
 MISSED_WATERING_GRACE = timedelta(hours=24)
-
-
-def _union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
-    """Seconds covered by these intervals, counting overlap once."""
-    seconds = 0.0
-    finish: Optional[datetime] = None
-    for start, end in sorted(intervals):
-        if finish is None or start > finish:
-            seconds += (end - start).total_seconds()
-            finish = end
-        elif end > finish:
-            seconds += (end - finish).total_seconds()
-            finish = end
-    return max(0.0, seconds)
+# The longest believable stretch of light. Nobody leaves a grow light on over a
+# whole night, so a stretch that appears to run longer than a day is a switching
+# off that was never recorded, and the hours since are not hours of light.
+MAX_LIGHTING_STRETCH = timedelta(hours=24)
 
 
 def _timestamp(moment: datetime) -> str:
@@ -2500,7 +2490,7 @@ class ReadingStore:
                 # and it is kept from then on.
                 row = self._rebuild_journey(sensor_id)
                 self._database.commit()
-            first_at, last_at, waterings, fertilizings, settled_missed, lit_seconds, open_json = row
+            first_at, last_at, waterings, fertilizings, settled_missed, lit_seconds, _ = row
             open_missed = self._open_missed_windows(sensor_id, now)
 
         monitored_days = 0
@@ -2515,28 +2505,10 @@ class ReadingStore:
             "watering_count": waterings,
             "fertilizing_count": fertilizings,
             "missed_watering_count": settled_missed + open_missed,
-            # Whole hours: nobody waters a plant differently for six minutes of
-            # light, and a figure with a decimal invites reading it as precision
-            # this does not have.
-            "lighting_hours": round(
-                (lit_seconds + self._open_lighting_seconds(open_json, now)) / 3600.0
-            ),
+            # Whole hours, and only from stretches that closed: a lamp that is
+            # on right now earns its hours when it goes off.
+            "lighting_hours": round(lit_seconds / 3600.0),
         }
-
-    def _open_lighting_seconds(self, open_json: str, now: datetime) -> float:
-        """How long the lamps that are on have been on, counted once.
-
-        Two lamps over one plant overlap, and the plant is not twice as lit for
-        it, so the earliest of them is what this counts from.
-        """
-        try:
-            open_lights = json.loads(open_json)
-        except json.JSONDecodeError:
-            return 0.0
-        started = [self._observation_datetime(at, now) for at in open_lights.values()]
-        if not started:
-            return 0.0
-        return max(0.0, (now - min(started)).total_seconds())
 
     def _open_missed_windows(self, sensor_id: str, now: datetime) -> int:
         """Watering windows still open, and already a day overdue.
@@ -2588,8 +2560,8 @@ class ReadingStore:
 
         waterings = fertilizings = settled_missed = 0
         open_due: List[datetime] = []
-        lit_since: Dict[str, datetime] = {}
-        intervals: List[Tuple[datetime, datetime]] = []
+        lit: Dict[str, Any] = {}
+        lighting_seconds = 0
         now = datetime.now(timezone.utc)
         for kind, detected_at, changes_json in events:
             at = self._observation_datetime(detected_at, now)
@@ -2604,18 +2576,18 @@ class ReadingStore:
                 settled_missed += sum(1 for due_at in open_due if at > due_at + MISSED_WATERING_GRACE)
                 open_due = []
             elif kind == "lighting":
-                self._apply_lighting_event(changes_json, at, lit_since, intervals)
+                lighting_seconds += self._apply_lighting_event(changes_json, at, lit)
 
-        # A lamp still on is left open: the reader adds its time, because only
-        # the reader knows what time it is now.
+        # A stretch still running is carried, not counted: it earns its hours
+        # when it closes, like every other one.
         row = (
             reading_range[0],
             reading_range[1],
             waterings,
             fertilizings,
             settled_missed,
-            int(_union_seconds(intervals)),
-            json.dumps({light_id: _timestamp(at) for light_id, at in lit_since.items()}),
+            lighting_seconds,
+            json.dumps(lit),
         )
         self._database.execute(
             """
@@ -2640,28 +2612,60 @@ class ReadingStore:
 
     @staticmethod
     def _apply_lighting_event(
-        changes_json: str,
-        at: datetime,
-        lit_since: Dict[str, datetime],
-        intervals: List[Tuple[datetime, datetime]],
-    ) -> None:
-        """Fold one lighting event into the lamps that are on and the time they ran."""
+        changes_json: str, at: datetime, lit: Dict[str, Any]
+    ) -> int:
+        """Fold one lighting event into what is lit, and return seconds earned.
+
+        A stretch of light runs from the first lamp coming on to the last one
+        going off, so two lamps over one plant are one stretch: this is how long
+        the plant was lit, not how long lamps ran. Only a stretch that closes
+        counts, and only if it is a believable length — a close that never
+        arrived would otherwise be paid for at the next one, hours or days late.
+        """
         try:
             changes = json.loads(changes_json)
         except json.JSONDecodeError:
-            return
+            return 0
         # Only what a light confirmed: being told to come on is not being on.
         if changes.get("outcome") != "confirmed":
-            return
+            return 0
         light_id = str(changes.get("light_id", ""))
-        started = lit_since.get(light_id)
+        if not light_id:
+            return 0
+        lights = set(lit.get("lights") or ())
         if changes.get("wanted"):
-            # The watchdog holding a lamp where it already is changes nothing.
-            if started is None:
-                lit_since[light_id] = at
-        elif started is not None:
-            intervals.append((started, at))
-            del lit_since[light_id]
+            if not lights:
+                lit["since"] = _timestamp(at)
+            lights.add(light_id)
+            lit["lights"] = sorted(lights)
+            return 0
+        if light_id not in lights:
+            # Switched off something that was never recorded as on; there is no
+            # stretch to close and nothing honest to add.
+            return 0
+        lights.discard(light_id)
+        if lights:
+            # Another lamp is still on, so the plant is still lit.
+            lit["lights"] = sorted(lights)
+            return 0
+        since = lit.get("since")
+        # Nothing is lit, so nothing is carried: the column says so plainly.
+        lit.clear()
+        if since is None:
+            return 0
+        seconds = (at - ReadingStore._parse_timestamp(since, at)).total_seconds()
+        if seconds <= 0 or seconds > MAX_LIGHTING_STRETCH.total_seconds():
+            # Longer than any day's lighting: a close went missing somewhere in
+            # between, and the hours since are not hours of light.
+            return 0
+        return int(seconds)
+
+    @staticmethod
+    def _parse_timestamp(value: str, fallback: datetime) -> datetime:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return fallback
 
     def lighting_hours(self, sensor_id: str) -> int:
         """How long this plant has had a light on, over its whole life."""
@@ -2714,24 +2718,18 @@ class ReadingStore:
             )
             return
 
-        lit_since = {
-            light_id: self._observation_datetime(started, now)
-            for light_id, started in json.loads(open_json or "{}").items()
-        }
-        intervals: List[Tuple[datetime, datetime]] = []
-        self._apply_lighting_event(changes_json, at, lit_since, intervals)
+        try:
+            lit = json.loads(open_json or "{}")
+        except json.JSONDecodeError:
+            lit = {}
+        earned = self._apply_lighting_event(changes_json, at, lit)
         self._database.execute(
             """
             UPDATE plant_journey
             SET lighting_seconds = ?, lighting_open_json = ?, updated_at = ?
             WHERE sensor_id = ?
             """,
-            (
-                int(lit_seconds + _union_seconds(intervals)),
-                json.dumps({light: _timestamp(when) for light, when in lit_since.items()}),
-                _timestamp(now),
-                sensor_id,
-            ),
+            (lit_seconds + earned, json.dumps(lit), _timestamp(now), sensor_id),
         )
 
     def _open_missed_windows_before(self, sensor_id: str, watered_at: datetime) -> int:

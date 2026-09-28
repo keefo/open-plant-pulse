@@ -353,11 +353,48 @@ class LightingCareLogTests(unittest.TestCase):
 
         self.assertEqual(self.store.lighting_hours(self.sensor_id), 0)
 
-    def test_a_light_still_on_counts_up_to_now(self):
+    def test_a_lamp_still_on_earns_its_hours_when_it_goes_off(self):
         started = datetime.now(timezone.utc) - timedelta(hours=3)
         self.switch("light-a", started.strftime("%Y-%m-%dT%H:%M:%SZ"), True)
 
+        # Nothing yet: a stretch is worth counting once it has both ends.
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0)
+
+        self.switch("light-a", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), False)
+
         self.assertEqual(self.store.lighting_hours(self.sensor_id), 3)
+
+    def test_a_stretch_longer_than_a_day_is_a_missing_switch_off(self):
+        # Nobody leaves a grow light on across a whole night, so this is a close
+        # that never arrived rather than thirty hours of light.
+        self.switch("light-a", "2026-09-20T08:00:00Z", True)
+        self.switch("light-a", "2026-09-21T14:00:00Z", False)
+
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0)
+
+        # And the next stretch, which is a real one, still counts.
+        self.switch("light-a", "2026-09-22T08:00:00Z", True)
+        self.switch("light-a", "2026-09-22T18:00:00Z", False)
+
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 10)
+
+    def test_two_lamps_overlapping_are_one_stretch_kept_and_counted_alike(self):
+        # The bug this guards: adding each lamp's own hours as it goes off, so a
+        # plant under two lamps looked twice as lit as it was.
+        self.store.record_light_event("light-a", "schedule", True, "confirmed", None)
+        self.store.record_light_event("light-b", "schedule", True, "confirmed", None)
+        self.store.record_light_event("light-a", "schedule", False, "confirmed", None)
+        self.store.record_light_event("light-b", "schedule", False, "confirmed", None)
+
+        kept = self.store.plant_journey(self.sensor_id)
+        self.assertEqual(kept, self.store.rebuild_journey(self.sensor_id))
+        self.assertEqual(
+            self.store._database.execute(
+                "SELECT lighting_open_json FROM plant_journey WHERE sensor_id = ?",
+                (self.sensor_id,),
+            ).fetchone()[0],
+            "{}",
+        )
 
     def test_what_is_kept_is_what_a_fresh_count_would_say(self):
         """The one property that makes keeping these figures safe.
