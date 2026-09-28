@@ -1,0 +1,18 @@
+#!/bin/sh
+# Launcher for the Open Plant Pulse hub service, rendered by install.sh.
+# The app bundle exists to give the process a stable identity so macOS can
+# attribute Bluetooth (TCC) permission to it. A bare launchd process has no
+# such identity and CoreBluetooth never powers on.
+set -eu
+
+PROJECT_DIR="@PROJECT_DIR@"
+
+export PYTHONPATH="${PROJECT_DIR}/hub/src"
+export PYTHONUNBUFFERED=1
+
+cd "${PROJECT_DIR}"
+
+# Port 80 on every address, IPv4 and IPv6; the hub itself refuses other computers.
+exec "${PROJECT_DIR}/.venv/bin/python3" -m open_plant_pulse_hub.cli \
+    --host :: \
+    --port 80

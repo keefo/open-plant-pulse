@@ -737,9 +737,78 @@
   user confirmed the bolt on the hub page, gone when the charger was unplugged
   and back when it was plugged in again.
 
+### Packet names, protocol tables and CI (schema 20)
+
+- The two packets of a report are now packet 1 and packet 2 throughout the
+  documentation, firmware, hub and fixtures (migration 20 renamed the table to
+  `report_packet2`). The protocol README gained byte tables for both packets,
+  the device-info byte's bits, and how a report reaches the hub page.
+- CI on Ubuntu failed in the Wi-Fi credential codec, which used POSIX `strnlen`
+  under strict C11; it now bounds strings with `memchr`, reproduced and checked
+  on Debian in the vmpi VM before pushing.
+
+### Soil in the pot
+
+- The probe went into the bird of paradise's pot at 17:04 local time. All
+  earlier readings were bench tests in water and air and were deleted from the
+  hub (18,393 readings with their packets and advertisements, and 16 care
+  events; backup `~/.open-plant-pulse/backups/hub-before-test-data-cleanup-2026-09-27.sqlite3`).
+- The probe read EC 0 in dry soil (about 17 %). A half-cup watering at the
+  probe took moisture to 100 % and EC to 133 µS/cm, settling near 28 % and
+  about 50: EC 0 meant dry soil, not a fault.
+- The hub now estimates pore-water EC from bulk EC, moisture and soil
+  temperature (Hilhorst, with Topp for the bulk permittivity), and shows the
+  last valid estimate while the soil is too dry to measure (below 20 %). Estimates
+  so far are about 150-390 µS/cm against the 500-1500 target: nutrients low.
+- The strelitzia's moisture targets were lowered for an airy mix: water below
+  18 %, comfortable 18-55 %, after watering 35-55 %.
+  `docs/proposals/learned-watering-thresholds.md` proposes learning them per pot.
+
+### Hub page
+
+- The probe's bulk EC moved under soil chemistry; a 30-day soil moisture chart
+  sits beside soil temperature; the whole comfortable cycle is the green zone;
+  the air temperature and humidity cards gave way to ideal-range bands and a
+  status line on the air history charts.
+- The page rebuilt its lists and charts and rewrote every value every second:
+  1,150 DOM changes in ten seconds with unchanged data. Writes now skip
+  unchanged values and lists and charts rebuild only when their data changes:
+  0 changes on every page with unchanged data, and one update per affected
+  element when a report arrives (measured in headless Chrome).
+
+### Pot response
+
+- A pot counted as settled after three readings within 1.5 points, whatever
+  their spacing: at a 30-second interval that is one minute, and this watering
+  was called settled at 44 % after 10 minutes. It now needs 20 minutes within
+  1.5 points; replayed on the same readings it settles at 27.7 % after 46
+  minutes, keeping 13 % of the rise. That entry, from a partial test watering,
+  and a watering recommendation raised under the old 35 % refill line were
+  deleted (backups in `~/.open-plant-pulse/backups/`).
+
+### Hub address and remote access
+
+- The hub listened on 127.0.0.1:8080, so `imacpro.local`, which resolved to
+  IPv6 as well, was refused whenever a browser tried IPv6 first. It now listens
+  on port 80 on `::`, taking IPv4 and IPv6, and answers only requests from the
+  computer it runs on (403 otherwise, `--allow-network` to open it): macOS lets
+  an ordinary user bind port 80 only on the wildcard address. Checked from the
+  Mac on localhost, 127.0.0.1, ::1, the LAN address and the .local name over
+  both families. The refusal was not checked from a second computer: the Lima
+  VM's traffic reaches the Mac through a host-side relay and arrives as local.
+- The LaunchAgent and app bundle are now in `deploy/launchd/`, with an install
+  script; the installed launcher was re-signed and the scanner came back
+  `scanning`.
+- The Mac was renamed `imac`, and the page is served to the owner's devices at
+  `https://imac.<tailnet>.ts.net` through Tailscale Serve (tailnet only),
+  checked from the Mac and opened on the owner's iPhone.
+
 ### Not validated
 
 - A full queue on hardware, and a report surviving a power cut while queued.
+- The hub refusing a request from another computer on the household network.
+- `deploy/launchd/install.sh` run for real; it was rendered to a scratch
+  directory and matched the installed files, but not used to install.
 - Home Assistant decoding the battery objects from the supplementary packet.
 - The flash progress bar against a real USB flash.
 

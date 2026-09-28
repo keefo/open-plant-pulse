@@ -32,7 +32,7 @@ open-plant-pulse/
 │   ├── src/                 Domain and adapter packages
 │   └── tests/               Hub unit and integration tests
 ├── protocol/                Versioned sensor-to-hub contract and fixtures
-├── deploy/                  Future launchd/systemd and packaging assets
+├── deploy/                  macOS LaunchAgent; systemd and packaging to come
 ├── docs/                    System architecture, setup, roadmap, and proposals
 ├── examples/                Downstream integration examples
 └── scripts/                 Repository-wide validation commands

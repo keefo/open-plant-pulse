@@ -94,6 +94,7 @@ and more than one at a time are untested.
 ## M5: Service packaging and resilience
 
 - [ ] Package launchd and systemd services with native Bluetooth permissions.
+  launchd is done (`deploy/launchd/`, 2026-09-27); systemd is not.
 - [ ] Verify reboot startup, clean shutdown, database migration, backup, and rollback.
 - [ ] Test explicit household LAN access and firewall instructions on both hosts.
 - [ ] Add retention/export controls after representative database growth is measured.

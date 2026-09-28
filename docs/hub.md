@@ -99,7 +99,7 @@ PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
 Visit <http://localhost/>, or the computer's own name such as
-`http://imacpro.local/`. Readings arrive from BTHome sensors in range.
+`http://imac.local/`. Readings arrive from BTHome sensors in range.
 
 The interface listens on port 80 on every address, over IPv4 and IPv6, so either
 family a name resolves to reaches it. It answers only the computer it runs on and
@@ -113,6 +113,33 @@ downloads an update over the household network and cannot reach loopback. That
 server answers one shape of request — `GET /firmware/<sha256>.bin` — and holds
 nothing private. `--firmware-host`, `--firmware-port` and `--no-firmware-server`
 change or disable it.
+
+### Running as a macOS service
+
+`deploy/launchd/install.sh` installs the hub as a LaunchAgent that starts at
+login and restarts if it exits. It runs the checkout it sits in, through an
+ad-hoc signed app bundle, `~/Applications/Open Plant Pulse Hub.app`: a bare
+launchd process has no code identity for macOS to attribute Bluetooth
+permission to, and its scanner then stays `stopped` without an error. Run the
+script again after changing the launcher or moving the checkout, since that
+re-signs the bundle; `uninstall.sh` removes the agent and the bundle and keeps
+the database. Logs go to `~/Library/Logs/open-plant-pulse/`. Python changes
+need a restart, `launchctl kickstart -k gui/$(id -u)/com.openplantpulse.hub`;
+the page's own files are read from disk on every request and need none.
+
+### Reaching the hub away from home
+
+Use Tailscale Serve rather than opening a port on the router: the interface has
+no login, and anyone who reaches it can reconfigure sensors and install
+firmware. With Tailscale on the hub computer and on each phone or laptop that
+should reach it, `tailscale serve --bg 80` publishes the page at
+`https://<computer>.<tailnet>.ts.net` to those devices only, with a certificate
+Tailscale renews. Serve relays through the hub computer, so the hub counts every
+such request as local and Tailscale's sign-in is the only access control: never
+turn on Funnel or a public tunnel without an authentication layer in front, and
+never serve the firmware port. A Serve setting belongs to the computer's
+Tailscale name; after renaming the computer, run `tailscale serve reset` and
+serve again.
 
 The hub exposes these implementation endpoints for its current page:
 
@@ -570,7 +597,8 @@ production cycles, power, and 24-hour soak evidence remain pending.
 
 ### Phase 5: Service packaging and resilience
 
-- Add launchd and systemd definitions after native BLE permissions are understood.
+- macOS: done in `deploy/launchd/` (LaunchAgent and signed app bundle, 2026-09-27).
+  Linux: add a systemd definition once BlueZ permissions are understood.
 - Verify startup after reboot, clean shutdown, migration, backup, and rollback.
 - Test LAN dashboard access and firewall instructions on macOS and Linux.
 - Document Bluetooth permission and Linux BlueZ requirements.
