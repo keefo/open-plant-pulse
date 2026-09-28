@@ -149,6 +149,24 @@ def _lighting_summary(source: str, wanted: bool, outcome: str) -> str:
     return f"Asked to switch {state} {reason}; the light did not confirm."
 
 
+# How long after a watering was called for it is counted as missed.
+MISSED_WATERING_GRACE = timedelta(hours=24)
+
+
+def _union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
+    """Seconds covered by these intervals, counting overlap once."""
+    seconds = 0.0
+    finish: Optional[datetime] = None
+    for start, end in sorted(intervals):
+        if finish is None or start > finish:
+            seconds += (end - start).total_seconds()
+            finish = end
+        elif end > finish:
+            seconds += (end - finish).total_seconds()
+            finish = end
+    return max(0.0, seconds)
+
+
 def _timestamp(moment: datetime) -> str:
     # The form every stored time takes, so that text comparison orders them.
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1058,6 +1076,7 @@ class ReadingStore:
                     json.dumps(changes),
                 ),
             )
+            self._journey_apply_event(sensor_id, "lighting", detected_at, json.dumps(changes))
 
     def light_events(self, light_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         with self._condition:
@@ -1876,6 +1895,11 @@ class ReadingStore:
                         )
             except sqlite3.IntegrityError as error:
                 raise ValueError("history cannot be merged because readings overlap") from error
+            if merge_history:
+                # History that moved between sensors takes its figures with it,
+                # and the only honest way to move them is to count them again.
+                self._rebuild_journey(sensor_id)
+                self._rebuild_journey(replacement_sensor_id)
             if old[3] is not None:
                 self._sensor_refill_below[replacement_sensor_id] = self._sensor_refill_below.get(
                     sensor_id, self._default_refill_below
@@ -2440,112 +2464,315 @@ class ReadingStore:
         }
 
     def plant_journey(self, sensor_id: str) -> Dict[str, Any]:
+        """The lifetime figures, read rather than counted again.
+
+        Everything that only changes when something happens is kept in the
+        plant_journey row and updated as it happens. Everything whose answer is
+        the clock — a lamp that is on now, a watering window that becomes missed
+        because nothing came — is worked out here, from a handful of rows.
+        """
+        now = datetime.now(timezone.utc)
         with self._condition:
-            reading_range = self._database.execute(
+            row = self._database.execute(
                 """
-                SELECT MIN(COALESCE(observed_at, received_at)),
-                       MAX(COALESCE(observed_at, received_at))
-                FROM sensor_readings
-                WHERE sensor_id = ?
+                SELECT first_reading_at, last_reading_at, watering_count,
+                       fertilizing_count, settled_missed_count, lighting_seconds,
+                       lighting_open_json
+                FROM plant_journey WHERE sensor_id = ?
                 """,
                 (sensor_id,),
             ).fetchone()
-            event_rows = self._database.execute(
-                """
-                SELECT kind, detected_at
-                FROM care_events
-                WHERE sensor_id = ?
-                  AND kind IN ('watering', 'watering_due', 'fertilizing')
-                ORDER BY detected_at
-                """,
-                (sensor_id,),
-            ).fetchall()
+            if row is None:
+                if self._database.execute(
+                    "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
+                ).fetchone() is None:
+                    # Asking about a sensor this hub has never heard of is not an
+                    # error; it is a plant with no journey.
+                    return {
+                        "started_at": None,
+                        "monitored_days": 0,
+                        "watering_count": 0,
+                        "fertilizing_count": 0,
+                        "missed_watering_count": 0,
+                        "lighting_hours": 0.0,
+                    }
+                # A sensor from before these figures were kept: count it once,
+                # and it is kept from then on.
+                row = self._rebuild_journey(sensor_id)
+                self._database.commit()
+            first_at, last_at, waterings, fertilizings, settled_missed, lit_seconds, open_json = row
+            open_missed = self._open_missed_windows(sensor_id, now)
 
-        first_at, latest_at = reading_range
         monitored_days = 0
-        latest = None
-        if first_at and latest_at:
-            first = datetime.fromisoformat(first_at.replace("Z", "+00:00"))
-            latest = datetime.fromisoformat(latest_at.replace("Z", "+00:00"))
-            monitored_days = (latest.date() - first.date()).days + 1
-
-        events = [
-            (kind, datetime.fromisoformat(detected_at.replace("Z", "+00:00")))
-            for kind, detected_at in event_rows
-        ]
-        missed_waterings = 0
-        for index, (kind, due_at) in enumerate(events):
-            if kind != "watering_due":
-                continue
-            next_watering = next(
-                (event_at for event_kind, event_at in events[index + 1:] if event_kind == "watering"),
-                None,
-            )
-            if next_watering is not None:
-                missed_waterings += int(next_watering > due_at + timedelta(hours=24))
-            elif latest is not None:
-                missed_waterings += int(latest > due_at + timedelta(hours=24))
+        if first_at and last_at:
+            first = self._observation_datetime(first_at, now)
+            last = self._observation_datetime(last_at, now)
+            monitored_days = (last.date() - first.date()).days + 1
 
         return {
             "started_at": first_at,
             "monitored_days": monitored_days,
-            "watering_count": sum(kind == "watering" for kind, _ in events),
-            "fertilizing_count": sum(kind == "fertilizing" for kind, _ in events),
-            "missed_watering_count": missed_waterings,
-            "lighting_hours": self.lighting_hours(sensor_id),
+            "watering_count": waterings,
+            "fertilizing_count": fertilizings,
+            "missed_watering_count": settled_missed + open_missed,
+            # Whole hours: nobody waters a plant differently for six minutes of
+            # light, and a figure with a decimal invites reading it as precision
+            # this does not have.
+            "lighting_hours": round(
+                (lit_seconds + self._open_lighting_seconds(open_json, now)) / 3600.0
+            ),
         }
 
-    def lighting_hours(self, sensor_id: str) -> float:
-        """How long this plant has had a light on, over its whole life.
+    def _open_lighting_seconds(self, open_json: str, now: datetime) -> float:
+        """How long the lamps that are on have been on, counted once.
 
-        Counted from the care log, which is never trimmed, and only from what a
-        light confirmed: an instruction that went unanswered says nothing about
-        whether the lamp was lit. Two lamps over one plant are counted once,
-        because this is how long the plant was lit, not how long lamps ran.
+        Two lamps over one plant overlap, and the plant is not twice as lit for
+        it, so the earliest of them is what this counts from.
         """
-        with self._condition:
-            rows = self._database.execute(
-                """
-                SELECT detected_at, changes_json FROM care_events
-                WHERE sensor_id = ? AND kind = 'lighting'
-                ORDER BY detected_at
-                """,
-                (sensor_id,),
-            ).fetchall()
-        now = datetime.now(timezone.utc)
+        try:
+            open_lights = json.loads(open_json)
+        except json.JSONDecodeError:
+            return 0.0
+        started = [self._observation_datetime(at, now) for at in open_lights.values()]
+        if not started:
+            return 0.0
+        return max(0.0, (now - min(started)).total_seconds())
+
+    def _open_missed_windows(self, sensor_id: str, now: datetime) -> int:
+        """Watering windows still open, and already a day overdue.
+
+        Only the windows since the last watering can still be open, so this
+        reads those rather than the whole history.
+        """
+        rows = self._database.execute(
+            """
+            SELECT detected_at FROM care_events
+            WHERE sensor_id = ? AND kind = 'watering_due'
+              AND detected_at > COALESCE(
+                  (SELECT MAX(detected_at) FROM care_events
+                   WHERE sensor_id = ? AND kind = 'watering'), '')
+            """,
+            (sensor_id, sensor_id),
+        ).fetchall()
+        deadline = now - MISSED_WATERING_GRACE
+        return sum(1 for (due_at,) in rows if self._observation_datetime(due_at, now) < deadline)
+
+    def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
+        """Count a plant's journey again from its readings and care events.
+
+        The stored row is a cache, never a second truth: anything it holds can
+        be worked out again from what it was derived from. This is what the
+        migration runs, and what to run if a figure is ever doubted.
+        """
+        with self._condition, self._database:
+            self._rebuild_journey(sensor_id)
+        return self.plant_journey(sensor_id)
+
+    def _rebuild_journey(self, sensor_id: str) -> Tuple[Any, ...]:
+        reading_range = self._database.execute(
+            """
+            SELECT MIN(COALESCE(observed_at, received_at)),
+                   MAX(COALESCE(observed_at, received_at))
+            FROM sensor_readings WHERE sensor_id = ?
+            """,
+            (sensor_id,),
+        ).fetchone()
+        events = self._database.execute(
+            """
+            SELECT kind, detected_at, changes_json FROM care_events
+            WHERE sensor_id = ? AND kind IN ('watering', 'watering_due', 'fertilizing', 'lighting')
+            ORDER BY detected_at
+            """,
+            (sensor_id,),
+        ).fetchall()
+
+        waterings = fertilizings = settled_missed = 0
+        open_due: List[datetime] = []
         lit_since: Dict[str, datetime] = {}
         intervals: List[Tuple[datetime, datetime]] = []
-        for detected_at, changes_json in rows:
-            try:
-                changes = json.loads(changes_json)
-            except json.JSONDecodeError:
-                continue
-            if changes.get("outcome") != "confirmed":
-                continue
-            light_id = str(changes.get("light_id", ""))
+        now = datetime.now(timezone.utc)
+        for kind, detected_at, changes_json in events:
             at = self._observation_datetime(detected_at, now)
-            started = lit_since.get(light_id)
-            if changes.get("wanted"):
-                # A light told to come on while it is already on is the watchdog
-                # holding it there, which changes nothing about when it started.
-                if started is None:
-                    lit_since[light_id] = at
-            elif started is not None:
-                intervals.append((started, at))
-                del lit_since[light_id]
-        for started in lit_since.values():
-            intervals.append((started, now))
+            if kind == "fertilizing":
+                fertilizings += 1
+            elif kind == "watering_due":
+                open_due.append(at)
+            elif kind == "watering":
+                waterings += 1
+                # Every window still open is answered by this watering, late or
+                # in time, and is never revisited afterwards.
+                settled_missed += sum(1 for due_at in open_due if at > due_at + MISSED_WATERING_GRACE)
+                open_due = []
+            elif kind == "lighting":
+                self._apply_lighting_event(changes_json, at, lit_since, intervals)
 
-        seconds = 0.0
-        finish: Optional[datetime] = None
-        for start, end in sorted(intervals):
-            if finish is None or start > finish:
-                seconds += (end - start).total_seconds()
-                finish = end
-            elif end > finish:
-                seconds += (end - finish).total_seconds()
-                finish = end
-        return round(max(0.0, seconds) / 3600.0, 1)
+        # A lamp still on is left open: the reader adds its time, because only
+        # the reader knows what time it is now.
+        row = (
+            reading_range[0],
+            reading_range[1],
+            waterings,
+            fertilizings,
+            settled_missed,
+            int(_union_seconds(intervals)),
+            json.dumps({light_id: _timestamp(at) for light_id, at in lit_since.items()}),
+        )
+        self._database.execute(
+            """
+            INSERT INTO plant_journey (
+                sensor_id, first_reading_at, last_reading_at, watering_count,
+                fertilizing_count, settled_missed_count, lighting_seconds,
+                lighting_open_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sensor_id) DO UPDATE SET
+                first_reading_at = excluded.first_reading_at,
+                last_reading_at = excluded.last_reading_at,
+                watering_count = excluded.watering_count,
+                fertilizing_count = excluded.fertilizing_count,
+                settled_missed_count = excluded.settled_missed_count,
+                lighting_seconds = excluded.lighting_seconds,
+                lighting_open_json = excluded.lighting_open_json,
+                updated_at = excluded.updated_at
+            """,
+            (sensor_id,) + row + (_timestamp(now),),
+        )
+        return row
+
+    @staticmethod
+    def _apply_lighting_event(
+        changes_json: str,
+        at: datetime,
+        lit_since: Dict[str, datetime],
+        intervals: List[Tuple[datetime, datetime]],
+    ) -> None:
+        """Fold one lighting event into the lamps that are on and the time they ran."""
+        try:
+            changes = json.loads(changes_json)
+        except json.JSONDecodeError:
+            return
+        # Only what a light confirmed: being told to come on is not being on.
+        if changes.get("outcome") != "confirmed":
+            return
+        light_id = str(changes.get("light_id", ""))
+        started = lit_since.get(light_id)
+        if changes.get("wanted"):
+            # The watchdog holding a lamp where it already is changes nothing.
+            if started is None:
+                lit_since[light_id] = at
+        elif started is not None:
+            intervals.append((started, at))
+            del lit_since[light_id]
+
+    def lighting_hours(self, sensor_id: str) -> int:
+        """How long this plant has had a light on, over its whole life."""
+        return int(self.plant_journey(sensor_id)["lighting_hours"])
+
+    def _journey_apply_event(
+        self, sensor_id: str, kind: str, detected_at: str, changes_json: str
+    ) -> None:
+        """Fold one care event into the plant's kept figures as it happens.
+
+        The alternative is counting the whole history on every poll, which is a
+        page that grows slower for as long as a plant is looked after.
+        """
+        if kind not in ("watering", "watering_due", "fertilizing", "lighting"):
+            return
+        row = self._database.execute(
+            """
+            SELECT settled_missed_count, lighting_seconds, lighting_open_json
+            FROM plant_journey WHERE sensor_id = ?
+            """,
+            (sensor_id,),
+        ).fetchone()
+        if row is None:
+            # Nothing kept for this sensor yet, so there is nothing to add to:
+            # counting it from scratch is both the fix and the update.
+            self._rebuild_journey(sensor_id)
+            return
+        settled_missed, lit_seconds, open_json = row
+        now = datetime.now(timezone.utc)
+        at = self._observation_datetime(detected_at, now)
+
+        if kind == "fertilizing":
+            self._database.execute(
+                "UPDATE plant_journey SET fertilizing_count = fertilizing_count + 1, "
+                "updated_at = ? WHERE sensor_id = ?",
+                (_timestamp(now), sensor_id),
+            )
+            return
+        if kind == "watering_due":
+            # Nothing is settled by a window opening. Whether it was missed is
+            # the clock's answer, and the reader asks it.
+            return
+        if kind == "watering":
+            settled = self._open_missed_windows_before(sensor_id, at)
+            self._database.execute(
+                "UPDATE plant_journey SET watering_count = watering_count + 1, "
+                "settled_missed_count = settled_missed_count + ?, updated_at = ? "
+                "WHERE sensor_id = ?",
+                (settled, _timestamp(now), sensor_id),
+            )
+            return
+
+        lit_since = {
+            light_id: self._observation_datetime(started, now)
+            for light_id, started in json.loads(open_json or "{}").items()
+        }
+        intervals: List[Tuple[datetime, datetime]] = []
+        self._apply_lighting_event(changes_json, at, lit_since, intervals)
+        self._database.execute(
+            """
+            UPDATE plant_journey
+            SET lighting_seconds = ?, lighting_open_json = ?, updated_at = ?
+            WHERE sensor_id = ?
+            """,
+            (
+                int(lit_seconds + _union_seconds(intervals)),
+                json.dumps({light: _timestamp(when) for light, when in lit_since.items()}),
+                _timestamp(now),
+                sensor_id,
+            ),
+        )
+
+    def _open_missed_windows_before(self, sensor_id: str, watered_at: datetime) -> int:
+        """Windows this watering answers, and how many of them it answers late."""
+        rows = self._database.execute(
+            """
+            SELECT detected_at FROM care_events
+            WHERE sensor_id = ? AND kind = 'watering_due'
+              AND detected_at > COALESCE(
+                  (SELECT MAX(detected_at) FROM care_events
+                   WHERE sensor_id = ? AND kind = 'watering' AND detected_at < ?), '')
+              AND detected_at < ?
+            """,
+            (sensor_id, sensor_id, _timestamp(watered_at), _timestamp(watered_at)),
+        ).fetchall()
+        return sum(
+            1
+            for (due_at,) in rows
+            if watered_at > self._observation_datetime(due_at, watered_at) + MISSED_WATERING_GRACE
+        )
+
+    def _journey_note_reading(self, sensor_id: str, observed_at: str, received_at: str) -> None:
+        """Keep the first and last time this plant reported.
+
+        Taken from each reading as it lands, so the page never scans a lifetime
+        of readings to draw one number.
+        """
+        at = observed_at or received_at
+        self._database.execute(
+            """
+            INSERT INTO plant_journey (sensor_id, first_reading_at, last_reading_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(sensor_id) DO UPDATE SET
+                first_reading_at = MIN(COALESCE(plant_journey.first_reading_at, excluded.first_reading_at),
+                                       excluded.first_reading_at),
+                last_reading_at = MAX(COALESCE(plant_journey.last_reading_at, excluded.last_reading_at),
+                                      excluded.last_reading_at),
+                updated_at = excluded.updated_at
+            """,
+            (sensor_id, at, at, _timestamp(datetime.now(timezone.utc))),
+        )
 
     def wait_for_reading(self, timeout: float) -> bool:
         with self._condition:
@@ -2573,6 +2800,12 @@ class ReadingStore:
                 json.dumps(event.changes, separators=(",", ":")),
             ),
         )
+        self._journey_apply_event(
+            event.sensor_id,
+            event.kind,
+            event.detected_at,
+            json.dumps(event.changes, separators=(",", ":")),
+        )
         self._database.commit()
 
     def _save_reading(self, reading: SensorReading, received_at: str) -> bool:
@@ -2586,6 +2819,7 @@ class ReadingStore:
         received_at: str,
         advertisement_id: Optional[int] = None,
     ) -> sqlite3.Cursor:
+        self._journey_note_reading(reading.sensor_id, reading.observed_at, received_at)
         return self._database.execute(
             """
             INSERT OR IGNORE INTO sensor_readings (

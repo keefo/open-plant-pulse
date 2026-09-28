@@ -281,7 +281,13 @@ class LightingCareLogTests(unittest.TestCase):
         self.store.close()
 
     def switch(self, light_id, at, wanted, outcome="confirmed", source="schedule"):
-        """Write the event the hub writes, dated, so hours can be checked."""
+        """Write the event the hub writes, dated, so hours can be checked.
+
+        Written straight into the log rather than through the hub, which can
+        only switch a light now: dated history is what makes a lifetime figure
+        checkable. The kept figures are then rebuilt from it, which is the same
+        path a doubted number takes.
+        """
         self.store._database.execute(
             """
             INSERT INTO care_events (event_id, sensor_id, kind, detected_at, title,
@@ -293,6 +299,7 @@ class LightingCareLogTests(unittest.TestCase):
                          "source": source, "outcome": outcome})),
         )
         self.store._database.commit()
+        self.store.rebuild_journey(self.sensor_id)
 
     def test_a_switched_light_appears_in_the_plants_care_log(self):
         self.store.record_light_event("light-a", "schedule", True, "confirmed", None)
@@ -328,15 +335,15 @@ class LightingCareLogTests(unittest.TestCase):
         self.switch("light-a", "2026-09-20T12:00:00Z", False)
         self.switch("light-b", "2026-09-20T14:00:00Z", False)
 
-        self.assertEqual(self.store.lighting_hours(self.sensor_id), 6.0)
-        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 6.0)
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 6)
+        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 6)
 
     def test_the_watchdog_holding_a_light_on_does_not_restart_the_clock(self):
         self.switch("light-a", "2026-09-21T08:00:00Z", True)
         self.switch("light-a", "2026-09-21T09:00:00Z", True, source="watchdog")
         self.switch("light-a", "2026-09-21T10:00:00Z", False)
 
-        self.assertEqual(self.store.lighting_hours(self.sensor_id), 2.0)
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 2)
 
     def test_an_instruction_the_light_never_answered_counts_for_nothing(self):
         # Being told to come on is not being on, and counting it would inflate
@@ -344,17 +351,34 @@ class LightingCareLogTests(unittest.TestCase):
         self.switch("light-a", "2026-09-22T08:00:00Z", True, outcome="unreachable")
         self.switch("light-a", "2026-09-22T12:00:00Z", False, outcome="unreachable")
 
-        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0.0)
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0)
 
     def test_a_light_still_on_counts_up_to_now(self):
         started = datetime.now(timezone.utc) - timedelta(hours=3)
         self.switch("light-a", started.strftime("%Y-%m-%dT%H:%M:%SZ"), True)
 
-        self.assertAlmostEqual(self.store.lighting_hours(self.sensor_id), 3.0, delta=0.2)
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 3)
+
+    def test_what_is_kept_is_what_a_fresh_count_would_say(self):
+        """The one property that makes keeping these figures safe.
+
+        A kept number that can drift from the events it came from is a bug
+        waiting to be believed, so the figures updated as things happen must
+        agree with the figures counted from scratch.
+        """
+        self.store.record_light_event("light-a", "schedule", True, "confirmed", None)
+        self.store.record_light_event("light-b", "manual", True, "confirmed", None)
+        self.store.record_light_event("light-a", "schedule", False, "confirmed", None)
+        self.store.record_light_event("light-b", "watchdog", True, "unreachable", "no answer")
+
+        kept = self.store.plant_journey(self.sensor_id)
+        counted_again = self.store.rebuild_journey(self.sensor_id)
+
+        self.assertEqual(kept, counted_again)
 
     def test_a_plant_that_has_never_had_a_light_reports_none(self):
-        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0.0)
-        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 0.0)
+        self.assertEqual(self.store.lighting_hours(self.sensor_id), 0)
+        self.assertEqual(self.store.plant_journey(self.sensor_id)["lighting_hours"], 0)
 
 
 class SchedulerTests(unittest.TestCase):

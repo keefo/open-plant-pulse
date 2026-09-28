@@ -1514,10 +1514,8 @@ async function refreshPlantJourney() {
     setText(document.getElementById("journey-waterings"), journey.watering_count);
     setText(document.getElementById("journey-fertilizing"), journey.fertilizing_count);
     setText(document.getElementById("journey-missed"), journey.missed_watering_count);
-    /* Hours, to one decimal, because a plant lit for twenty minutes today has
-       had light and "0" would say it had none. */
     setText(document.getElementById("journey-light-hours"),
-      journey.lighting_hours != null ? journey.lighting_hours.toFixed(1) : "--");
+      journey.lighting_hours != null ? String(journey.lighting_hours) : "--");
     setText(document.getElementById("journey-started"), journey.started_at
       ? `Since ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(journey.started_at))}`
       : "No sensor history yet");

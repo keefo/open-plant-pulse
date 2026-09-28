@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 21
+DATABASE_SCHEMA_VERSION = 22
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -732,6 +732,34 @@ MIGRATIONS: Dict[int, str] = {
             detail TEXT
         );
         CREATE INDEX light_events_by_light ON light_events(light_id, event_id DESC);
+    """,
+    22: """
+        /* The plant journey's figures, kept rather than counted again on every
+           poll. Nothing here is a second source of truth: every column can be
+           rebuilt from the readings and care events it was derived from, which
+           is how a plant from before this table gets its first row.
+
+           What depends on the passing of time is deliberately absent. A light
+           that is on now, and a watering window that becomes missed twenty-four
+           hours after nothing happened, are worked out when the page asks. A
+           stored number cannot become true by itself. */
+        CREATE TABLE plant_journey (
+            sensor_id TEXT PRIMARY KEY REFERENCES sensors(sensor_id) ON DELETE CASCADE,
+            first_reading_at TEXT,
+            last_reading_at TEXT,
+            watering_count INTEGER NOT NULL DEFAULT 0,
+            fertilizing_count INTEGER NOT NULL DEFAULT 0,
+            /* Windows already answered: a watering came, late or not. The ones
+               still open are counted at read time, because their answer is the
+               clock. */
+            settled_missed_count INTEGER NOT NULL DEFAULT 0,
+            /* Light the plant has had, in whole seconds, from intervals that
+               have closed. A lamp on right now is added when the page asks. */
+            lighting_seconds INTEGER NOT NULL DEFAULT 0,
+            /* Which lamps are on, and since when: {"light-a": "2026-09-28T08:00:00Z"} */
+            lighting_open_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        );
     """,
 }
 

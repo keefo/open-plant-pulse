@@ -491,7 +491,7 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];", app)
         self.assertIn('id="setting-reporting-interval"', page)
         self.assertIn('id="journey-light-hours"', page)
-        self.assertIn("Hours of light given", page)
+        self.assertIn("Total lighting hours", page)
         self.assertIn('id="detail-setting-reporting-interval"', page)
         self.assertIn("Hub reporting interval", page)
         self.assertIn("Sensor reporting interval", page)

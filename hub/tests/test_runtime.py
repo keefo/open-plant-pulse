@@ -54,17 +54,18 @@ class CareLogTests(unittest.TestCase):
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
 
-        self.assertEqual(
-            store.plant_journey(reading.sensor_id),
-            {
-                "started_at": "2027-01-01T00:00:00Z",
-                "monitored_days": 4,
-                "watering_count": 2,
-                "fertilizing_count": 0,
-                "missed_watering_count": 1,
-                "lighting_hours": 0.0,
-            },
-        )
+        expected = {
+            "started_at": "2027-01-01T00:00:00Z",
+            "monitored_days": 4,
+            "watering_count": 2,
+            "fertilizing_count": 0,
+            "missed_watering_count": 1,
+            "lighting_hours": 0,
+        }
+        self.assertEqual(store.plant_journey(reading.sensor_id), expected)
+        # The figures are kept as they happen rather than counted on every poll,
+        # so what was kept has to agree with counting the history again.
+        self.assertEqual(store.rebuild_journey(reading.sensor_id), expected)
 
     def test_queries_drainage_history_independently_for_sensor(self) -> None:
         reading = sample_reading()
@@ -349,7 +350,7 @@ class WebApiTests(unittest.TestCase):
                     "watering_count": 0,
                     "fertilizing_count": 0,
                     "missed_watering_count": 0,
-                    "lighting_hours": 0.0,
+                    "lighting_hours": 0,
                 },
             )
         finally:
