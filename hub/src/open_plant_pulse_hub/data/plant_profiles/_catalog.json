@@ -9,6 +9,6 @@
       {"status": "Critical", "max_deviation": null}
     ]
   },
-  "guidance": "Starter comparison ranges, not fertilization instructions. NPK values depend on substrate and test method; validate against a suitable lab test.",
+  "guidance": "Starter comparison ranges, not fertilization instructions. The conductivity target is pore-water EC, held against the hub's estimate from the probe's bulk reading: approximate, and most useful as a trend. The probe derives N/P/K from EC rather than measuring them, and its pH is unverified until checked once against a strip or kit.",
   "climate_guidance": "Comfort ranges are broad starter guidance. Brief excursions are not automatically harmful; airflow, light, season, and acclimation also affect plant response."
 }

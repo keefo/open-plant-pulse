@@ -7,16 +7,16 @@
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Conductivity", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
   },
   "watering": {
     "strategy": "partial_dry_back",
-    "label": "Let the upper soil partly dry",
-    "refill_below": 35,
-    "post_water_target": [55, 70],
-    "comfortable_cycle": [35, 70],
-    "concern_below": 20,
-    "concern_above": 85
+    "label": "Let the soil dry well between waterings",
+    "refill_below": 18,
+    "post_water_target": [35, 55],
+    "comfortable_cycle": [18, 55],
+    "concern_below": 10,
+    "concern_above": 65
   },
   "drainage": {
     "label": "Free draining with moderate moisture retention",

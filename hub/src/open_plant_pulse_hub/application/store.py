@@ -13,6 +13,13 @@ from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
 from open_plant_pulse_hub.domain.plant_profiles import load_plant_profiles
+from open_plant_pulse_hub.domain.soil_chemistry import (
+    MIN_MOISTURE_PERCENT,
+    PoreWaterEstimate,
+    estimate_pore_water_ec,
+    is_too_dry,
+    nutrient_level,
+)
 
 from .migrations import migrate_database
 
@@ -41,6 +48,16 @@ PACKET2_CONTENT_COLUMNS = """
     phosphorus_mg_kg, potassium_mg_kg, battery_charging
 """
 RAW_REPORT_LOG_LIMIT = 50
+# A reading a pore-water estimate rests on: the serialized reading, when it was
+# received, and the estimate it yields.
+ChemistryBasis = Tuple[Dict[str, Any], str, PoreWaterEstimate]
+# How far back a pore-water estimate may come from while the soil is too dry
+# for a current one. Older than this it no longer describes the pot.
+CHEMISTRY_LOOKBACK = timedelta(days=30)
+# A reading this long after a detected watering has settled from the pour but
+# not yet dried back, so it is the most comparable basis for an estimate.
+POST_WATERING_BASIS_START = timedelta(minutes=30)
+POST_WATERING_BASIS_END = timedelta(minutes=60)
 DEVICE_CONFIG_TEXT_MAX_BYTES = 80
 MIN_REPORTING_INTERVAL_MINUTES = 5
 MAX_REPORTING_INTERVAL_MINUTES = 1440
@@ -94,6 +111,11 @@ WIFI_FAILURES = (
 )
 
 
+def _timestamp(moment: datetime) -> str:
+    # The form every stored time takes, so that text comparison orders them.
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _charging_column(charging: Optional[bool]) -> Optional[int]:
     # SQLite has no boolean; charging is stored as 0 or 1, null when not said.
     return None if charging is None else int(charging)
@@ -110,6 +132,7 @@ class ReadingStore:
         self._history: Deque[Tuple[SensorReading, str]] = deque(maxlen=history_size)
         self._event_detector = CareEventDetector()
         catalog = load_plant_profiles()
+        self._catalog = catalog
         default_profile = catalog["profiles"][catalog["default_profile"]]
         self._default_refill_below = float(default_profile["watering"]["refill_below"])
         self._sensor_refill_below: Dict[str, float] = {}
@@ -1530,7 +1553,9 @@ class ReadingStore:
             "refill_below": refill_below,
         }
 
-    def latest(self, sensor_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def latest(
+        self, sensor_id: Optional[str] = None, now: Optional[datetime] = None
+    ) -> Optional[Dict[str, Any]]:
         """Return the newest complete reading, for one sensor or any.
 
         A contract-v3 report is complete once its packet 2 is
@@ -1560,7 +1585,209 @@ class ReadingStore:
                 """,
                 (sensor_id, sensor_id),
             ).fetchone()
-            return self._serialize_row(row) if row is not None else None
+            if row is None:
+                return None
+            payload = self._serialize_row(row)
+            payload["chemistry"] = self._chemistry(
+                payload, now or datetime.now(timezone.utc)
+            )
+            return payload
+
+    def _chemistry(self, latest: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+        """Estimate pore-water conductivity for the latest reading, or the last one that had it.
+
+        The latest reading is the basis when it yields an estimate. When it
+        does not, usually because the soil is too dry for the probe, the basis
+        is the most recent reading within CHEMISTRY_LOOKBACK that does,
+        preferring one taken shortly after a detected watering.
+        """
+        reading = latest["reading"]
+        sensor_id = reading["sensor_id"]
+        latest_at = self._observation_datetime(
+            reading["observed_at"], self._observation_datetime(latest["received_at"], now)
+        )
+        estimate = estimate_pore_water_ec(
+            reading["conductivity_us_cm"],
+            reading["moisture_percent"],
+            reading["soil_temperature_c"],
+        )
+        # The probe's EC reads zero once the soil dries, a little either side of
+        # MIN_MOISTURE_PERCENT, so zero is dryness too.
+        too_dry = estimate is None and (
+            is_too_dry(reading["moisture_percent"])
+            or (
+                reading["moisture_percent"] is not None
+                and reading["conductivity_us_cm"] == 0
+            )
+        )
+        if estimate is not None:
+            status = "current"
+            basis: Optional[ChemistryBasis] = (reading, latest["received_at"], estimate)
+            basis_at = latest_at
+            post_watering = self._follows_watering(sensor_id, latest_at)
+        else:
+            status = "last_valid"
+            basis, post_watering = self._last_valid_chemistry_basis(sensor_id, now)
+            if basis is None:
+                return {
+                    "status": "none",
+                    "too_dry": too_dry,
+                    "pore_water_ec_us_cm": None,
+                    "ec25_us_cm": None,
+                    "nutrient_level": None,
+                    "basis": None,
+                    "age_seconds": None,
+                }
+            basis_at = self._observation_datetime(
+                basis[0]["observed_at"], self._observation_datetime(basis[1], now)
+            )
+        basis_reading, basis_received_at, estimate = basis
+        return {
+            "status": status,
+            "too_dry": too_dry,
+            "pore_water_ec_us_cm": round(estimate.pore_water_ec_us_cm),
+            "ec25_us_cm": round(estimate.ec25_us_cm, 1),
+            "nutrient_level": nutrient_level(
+                estimate.pore_water_ec_us_cm, self._conductivity_ideal(sensor_id)
+            ),
+            "basis": {
+                "report_id": basis_reading["report_id"],
+                "observed_at": basis_reading["observed_at"],
+                "received_at": basis_received_at,
+                "conductivity_us_cm": basis_reading["conductivity_us_cm"],
+                "moisture_percent": basis_reading["moisture_percent"],
+                "soil_temperature_c": basis_reading["soil_temperature_c"],
+                "post_watering": post_watering,
+            },
+            "age_seconds": max(0, int((now - basis_at).total_seconds())),
+        }
+
+    def _conductivity_ideal(self, sensor_id: str) -> Optional[List[float]]:
+        row = self._database.execute(
+            "SELECT profile_id FROM sensors WHERE sensor_id = ?", (sensor_id,)
+        ).fetchone()
+        profiles = self._catalog["profiles"]
+        profile = profiles.get(row[0]) if row is not None and row[0] else None
+        if profile is None:
+            profile = profiles[self._catalog["default_profile"]]
+        return profile.get("root_zone", {}).get("conductivity_us_cm", {}).get("ideal")
+
+    def _follows_watering(self, sensor_id: str, observed: datetime) -> bool:
+        """Return whether a reading taken at observed falls in a post-watering window."""
+        return (
+            self._database.execute(
+                """
+                SELECT 1
+                FROM care_events
+                WHERE sensor_id = ? AND kind = 'watering'
+                  AND julianday(detected_at) >= julianday(?)
+                  AND julianday(detected_at) <= julianday(?)
+                LIMIT 1
+                """,
+                (
+                    sensor_id,
+                    _timestamp(observed - POST_WATERING_BASIS_END),
+                    _timestamp(observed - POST_WATERING_BASIS_START),
+                ),
+            ).fetchone()
+            is not None
+        )
+
+    def _last_valid_chemistry_basis(
+        self, sensor_id: str, now: datetime
+    ) -> Tuple[Optional[ChemistryBasis], bool]:
+        """Return the reading a last-valid estimate rests on, and whether it follows watering.
+
+        Every lookup is bounded by the lookback window and walks the
+        (sensor_id, observed_at) index newest first, stopping at the first
+        reading that yields an estimate.
+        """
+        window_start = now - CHEMISTRY_LOOKBACK
+        waterings = self._database.execute(
+            """
+            SELECT detected_at
+            FROM care_events
+            WHERE sensor_id = ? AND kind = 'watering'
+              AND detected_at >= ?
+            ORDER BY detected_at DESC
+            """,
+            (sensor_id, _timestamp(window_start - POST_WATERING_BASIS_END)),
+        ).fetchall()
+        for (detected_at,) in waterings:
+            watered = self._observation_datetime(detected_at, now)
+            basis = self._newest_estimable_reading(
+                sensor_id,
+                max(window_start, watered + POST_WATERING_BASIS_START),
+                min(now, watered + POST_WATERING_BASIS_END),
+            )
+            if basis is not None:
+                return basis, True
+        basis = self._newest_estimable_reading(sensor_id, window_start, now)
+        if basis is None:
+            return None, False
+        return basis, self._follows_watering(
+            sensor_id,
+            self._observation_datetime(
+                basis[0]["observed_at"], self._observation_datetime(basis[1], now)
+            ),
+        )
+
+    def _newest_estimable_reading(
+        self, sensor_id: str, start: datetime, end: datetime
+    ) -> Optional[ChemistryBasis]:
+        """Return the newest reading in [start, end] that yields a pore-water estimate.
+
+        A reading is placed by observed_at, or by received_at when the sensor
+        did not know the time, as everywhere else in the store. The two are
+        looked up separately so each walks an index range rather than every
+        reading the sensor ever sent.
+        """
+        if start > end:
+            return None
+        start_at, end_at = _timestamp(start), _timestamp(end)
+        estimable = """
+            AND conductivity_us_cm > 0
+            AND moisture_percent >= ?
+            AND soil_temperature_c IS NOT NULL
+        """
+        newest: Optional[Tuple[datetime, ChemistryBasis]] = None
+        for time_filter, order in (
+            # Walking the index backwards already puts equal times newest
+            # row first, and saves sorting the whole window before the first.
+            ("observed_at >= ? AND observed_at <= ?", "observed_at DESC"),
+            (
+                "observed_at IS NULL AND received_at >= ? AND received_at <= ?",
+                "received_at DESC, reading_id DESC",
+            ),
+        ):
+            cursor = self._database.execute(
+                f"""
+                SELECT {READING_COLUMNS}
+                FROM sensor_readings
+                WHERE sensor_id = ? AND {time_filter} {estimable}
+                ORDER BY {order}
+                """,
+                (sensor_id, start_at, end_at, MIN_MOISTURE_PERCENT),
+            )
+            for row in cursor:
+                item = self._serialize_row(row)
+                candidate = item["reading"]
+                estimate = estimate_pore_water_ec(
+                    candidate["conductivity_us_cm"],
+                    candidate["moisture_percent"],
+                    candidate["soil_temperature_c"],
+                )
+                if estimate is None:
+                    continue
+                observed = self._observation_datetime(
+                    candidate["observed_at"],
+                    self._observation_datetime(item["received_at"], end),
+                )
+                if newest is None or observed > newest[0]:
+                    newest = (observed, (candidate, item["received_at"], estimate))
+                break
+            cursor.close()
+        return newest[1] if newest is not None else None
 
     def history(self, sensor_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._condition:

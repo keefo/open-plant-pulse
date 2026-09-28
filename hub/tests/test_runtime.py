@@ -42,13 +42,14 @@ class CareLogTests(unittest.TestCase):
     def test_builds_lifetime_plant_journey(self) -> None:
         reading = sample_reading()
         store = ReadingStore()
+        # Around the default profile's refill marker (18 %, bird of paradise).
         samples = [
-            (1, "2027-01-01T00:00:00Z", 40.0),
-            (2, "2027-01-01T01:00:00Z", 34.0),
-            (3, "2027-01-02T00:00:00Z", 55.0),
-            (4, "2027-01-03T00:00:00Z", 40.0),
-            (5, "2027-01-03T01:00:00Z", 34.0),
-            (6, "2027-01-04T02:00:00Z", 55.0),
+            (1, "2027-01-01T00:00:00Z", 24.0),
+            (2, "2027-01-01T01:00:00Z", 17.0),
+            (3, "2027-01-02T00:00:00Z", 40.0),
+            (4, "2027-01-03T00:00:00Z", 24.0),
+            (5, "2027-01-03T01:00:00Z", 17.0),
+            (6, "2027-01-04T02:00:00Z", 40.0),
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
@@ -150,14 +151,15 @@ class CareLogTests(unittest.TestCase):
     def test_builds_watering_and_escalating_drying_calendar(self) -> None:
         reading = sample_reading()
         store = ReadingStore()
+        # Around the default profile's refill marker (18 %, bird of paradise).
         samples = [
-            (1, "2027-01-01T00:00:00Z", 40.0),
-            (2, "2027-01-01T01:00:00Z", 34.0),
-            (3, "2027-01-01T02:00:00Z", 36.0),
-            (4, "2027-01-02T02:00:00Z", 33.0),
-            (5, "2027-01-03T02:00:00Z", 30.0),
-            (6, "2027-01-04T02:00:00Z", 25.0),
-            (7, "2027-01-05T00:00:00Z", 50.0),
+            (1, "2027-01-01T00:00:00Z", 24.0),
+            (2, "2027-01-01T01:00:00Z", 17.0),
+            (3, "2027-01-01T02:00:00Z", 19.0),
+            (4, "2027-01-02T02:00:00Z", 16.0),
+            (5, "2027-01-03T02:00:00Z", 13.0),
+            (6, "2027-01-04T02:00:00Z", 8.0),
+            (7, "2027-01-05T00:00:00Z", 40.0),
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
@@ -171,11 +173,11 @@ class CareLogTests(unittest.TestCase):
         self.assertEqual(
             activity,
             [
-                {"date": "2027-01-01", "watering_count": 0, "drying_level": 0, "final_moisture_percent": 36.0},
-                {"date": "2027-01-02", "watering_count": 0, "drying_level": 1, "final_moisture_percent": 33.0},
-                {"date": "2027-01-03", "watering_count": 0, "drying_level": 2, "final_moisture_percent": 30.0},
-                {"date": "2027-01-04", "watering_count": 0, "drying_level": 3, "final_moisture_percent": 25.0},
-                {"date": "2027-01-05", "watering_count": 1, "drying_level": 0, "final_moisture_percent": 50.0},
+                {"date": "2027-01-01", "watering_count": 0, "drying_level": 0, "final_moisture_percent": 19.0},
+                {"date": "2027-01-02", "watering_count": 0, "drying_level": 1, "final_moisture_percent": 16.0},
+                {"date": "2027-01-03", "watering_count": 0, "drying_level": 2, "final_moisture_percent": 13.0},
+                {"date": "2027-01-04", "watering_count": 0, "drying_level": 3, "final_moisture_percent": 8.0},
+                {"date": "2027-01-05", "watering_count": 1, "drying_level": 0, "final_moisture_percent": 40.0},
             ],
         )
 
@@ -533,8 +535,8 @@ class WebApiTests(unittest.TestCase):
                 payload["profiles"]["strelitzia"]["root_zone"]["moisture_percent"]["scale"],
                 [0, 100],
             )
-            self.assertEqual(payload["profiles"]["strelitzia"]["watering"]["refill_below"], 35)
-            self.assertEqual(payload["profiles"]["strelitzia"]["watering"]["post_water_target"], [55, 70])
+            self.assertEqual(payload["profiles"]["strelitzia"]["watering"]["refill_below"], 18)
+            self.assertEqual(payload["profiles"]["strelitzia"]["watering"]["post_water_target"], [35, 55])
             self.assertEqual(
                 [level["status"] for level in payload["assessment_policy"]["levels"]],
                 ["Thriving", "Watch", "Stressed", "Critical"],

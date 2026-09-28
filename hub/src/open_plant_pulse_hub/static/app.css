@@ -147,7 +147,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .conductivity { border-top: 4px solid var(--sun); }
 .air-temp { border-top: 4px solid var(--water); }
 .humidity { border-top: 4px solid #5196a8; }
-.climate-gauge, .root-zone-gauge { min-height: 190px; gap: 9px; }
+.climate-gauge, .root-zone-gauge, .bulk-ec { min-height: 190px; gap: 9px; }
 .climate-gauge .range-track, .root-zone-gauge .range-track { margin-top: 3px; }
 .climate-gauge .range-status, .root-zone-gauge .range-status { min-height: 17px; }
 .care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
@@ -259,6 +259,16 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .range-status { margin: 0; color: var(--muted); font-size: 13px; }
 .range-status.in-range { color: var(--leaf); font-weight: 700; }
 .range-status.out-range { color: #a34831; font-weight: 700; }
+.pore-ec-gauge { min-height: 0; margin-bottom: 12px; gap: 10px; }
+.pore-ec-gauge .chemistry-value strong { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; white-space: normal; }
+.pore-ec-gauge .chemistry-value small { margin-left: 6px; white-space: nowrap; }
+.pore-ec-gauge[data-level="low"] #nutrient-level, .pore-ec-gauge[data-level="high"] #nutrient-level { color: #a34831; }
+.pore-ec-gauge[data-level="ok"] #nutrient-level { color: var(--leaf); }
+.pore-ec-gauge[data-status="last_valid"] .value-marker { opacity: .55; }
+.pore-ec-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.pore-ec-note:empty { display: none; }
+.pore-ec-dry-note { color: #796019; font-weight: 600; }
+.probe-chemistry { min-height: 0; }
 .chemistry-guidance { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .sensor-settings { padding: 24px; display: grid; gap: 20px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf6; }
 .sensor-settings .section-heading { margin-bottom: 0; }

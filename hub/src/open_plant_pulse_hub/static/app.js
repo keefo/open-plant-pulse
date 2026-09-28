@@ -23,6 +23,9 @@ const historyRanges = {
 };
 let profiles = null;
 let latestReading = null;
+// The hub's pore-water estimate that came with the latest reading: current,
+// the last valid one while the soil is too dry, or none.
+let latestChemistry = null;
 // When the latest reading was taken, or when it was received if the sensor did
 // not know the time. Ranges and calendars need a time either way; the reading
 // itself keeps saying the time was unknown.
@@ -135,12 +138,15 @@ function sensorState(sensor) {
   const profile = profiles?.profiles?.[profileId];
   const moistureLow = profile?.watering?.refill_below;
   const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];
+  // The profile's conductivity range is pore-water EC, so it is held against
+  // the hub's estimate of that; the probe's bulk EC always reads lower.
+  const poreWaterEc = sensor.latest?.chemistry?.pore_water_ec_us_cm;
   const alerts = [];
   if (moistureLow != null && latest?.moisture_percent < moistureLow) {
     alerts.push("moisture low");
   }
-  if (conductivityHigh != null && latest?.conductivity_us_cm > conductivityHigh) {
-    alerts.push("conductivity high");
+  if (conductivityHigh != null && poreWaterEc > conductivityHigh) {
+    alerts.push("nutrients high");
   }
   // Not hearing a sensor and hearing one that measures nothing are different
   // faults with different fixes, so they must not share a word.
@@ -608,12 +614,21 @@ function renderMoistureVessel(profile) {
   document.getElementById("moisture-strategy").textContent = watering.label;
 }
 
+// The value a profile metric is judged on. Conductivity targets describe the
+// soil water, so they are held against the pore-water estimate, never the
+// probe's bulk EC. pH and N/P/K are not judged at all: the probe derives N/P/K
+// from EC, and its pH is unverified.
+function assessedValue(metricName) {
+  if (metricName === "conductivity_us_cm") return latestChemistry?.pore_water_ec_us_cm ?? null;
+  return latestReading[metricName];
+}
+
 function renderPlantAssessment(profile) {
-  const metrics = ["root_zone", "climate", "chemistry"]
+  const metrics = ["root_zone", "climate"]
     .flatMap(section => Object.entries(profile[section] || {}))
     .filter(([metricName]) => metricName !== "moisture_percent");
   const assessments = metrics
-    .map(([metricName, metric]) => assessMetric(metricName, metric, latestReading[metricName]))
+    .map(([metricName, metric]) => assessMetric(metricName, metric, assessedValue(metricName)))
     .filter(Boolean);
   const moistureAssessment = assessWatering(profile.watering, latestReading.moisture_percent);
   if (moistureAssessment) assessments.push(moistureAssessment);
@@ -700,12 +715,65 @@ function renderProfileRanges() {
     const metricName = card.dataset.metric;
     renderGauge(card, metricName, profile.climate[metricName], latestReading[metricName]);
   }
-  for (const card of document.querySelectorAll(".chemistry-gauge")) {
-    const metricName = card.dataset.metric;
+  // The probe's pH and N/P/K are shown as it reports them, with no target
+  // band: they are labelled in the page as unverified and trend-only.
+  for (const [metricName, id] of Object.entries(chemistryValueIds)) {
     const value = latestReading[metricName];
-    document.getElementById(chemistryValueIds[metricName]).textContent = value == null ? "--" : formatValue(value, metricName);
-    renderGauge(card, metricName, profile.chemistry[metricName], latestReading[metricName]);
+    document.getElementById(id).textContent = value == null ? "--" : formatValue(value, metricName);
   }
+  renderPoreWaterEc(profile);
+}
+
+function formatAge(seconds) {
+  if (seconds == null) return "";
+  if (seconds < 120) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return `${Math.round(seconds / 86400)} days ago`;
+}
+
+/**
+ * Nutrient level and the pore-water EC it comes from. The estimate is the
+ * latest reading's when it has one; while the soil is too dry the hub sends the
+ * last valid one instead, which is shown with what it was worked out from and
+ * how old it is, so it is never mistaken for a live value.
+ */
+function renderPoreWaterEc(profile) {
+  const card = document.getElementById("pore-ec-card");
+  const metric = profile.root_zone.conductivity_us_cm;
+  const chemistry = latestChemistry;
+  const status = chemistry?.status || "none";
+  const estimate = status === "none" ? null : chemistry.pore_water_ec_us_cm;
+  card.dataset.status = status;
+  card.dataset.level = chemistry?.nutrient_level || "none";
+  renderGauge(card, "conductivity_us_cm", metric, estimate);
+
+  const level = { low: "Low", ok: "OK", high: "High" }[chemistry?.nutrient_level];
+  document.getElementById("nutrient-level").textContent = level || "--";
+  document.getElementById("nutrient-level-basis").textContent =
+    status === "last_valid" ? "· last estimate" : "";
+  document.getElementById("pore-ec").textContent = estimate == null ? "--" : String(estimate);
+  document.getElementById("pore-ec-target").textContent = `(target ${metric.ideal[0]}–${metric.ideal[1]})`;
+
+  const basisText = document.getElementById("pore-ec-basis");
+  const dryNote = document.getElementById("pore-ec-dry-note");
+  if (status === "none") {
+    card.querySelector(".range-status").textContent = "No recent estimate — water the plant to get one";
+    basisText.textContent = "";
+  } else {
+    const basis = chemistry.basis;
+    const afterWatering = basis.post_watering ? " after watering" : "";
+    basisText.textContent =
+      `from EC ${basis.conductivity_us_cm} µS/cm at ${Math.round(basis.moisture_percent)} % moisture, ` +
+      `${Number(basis.soil_temperature_c).toFixed(1)} °C${afterWatering} · ${formatAge(chemistry.age_seconds)}`;
+  }
+  const moisture = latestReading.moisture_percent;
+  dryNote.hidden = !chemistry?.too_dry;
+  dryNote.textContent = chemistry?.too_dry
+    ? `Now too dry to estimate (moisture ${moisture == null ? "--" : Math.round(moisture)} %) — updates after the next watering`
+    : "";
 }
 
 function drainageResponseClass(retainedFraction) {
@@ -808,6 +876,7 @@ function renderBattery(element, reading) {
 function renderReading(payload) {
   const reading = payload.reading;
   latestReading = reading;
+  latestChemistry = payload.chemistry || null;
   for (const [id, [key, precision]] of Object.entries(fields)) {
     const value = reading[key];
     document.getElementById(id).textContent = value == null ? "--" : Number(value).toFixed(precision);

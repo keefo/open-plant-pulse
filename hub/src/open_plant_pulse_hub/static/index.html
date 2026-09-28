@@ -285,11 +285,9 @@
         <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
         <p class="range-status">Waiting for reading</p>
       </article>
-      <article class="metric conductivity root-zone-gauge" data-metric="conductivity_us_cm">
-        <span>Conductivity</span><strong><b id="conductivity">--</b><small>µS/cm</small></strong>
-        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-        <p class="range-status">Waiting for reading</p>
+      <article class="metric conductivity bulk-ec">
+        <span>Measured EC (bulk)</span><strong><b id="conductivity">--</b><small>µS/cm</small></strong>
+        <p class="range-status">Soil, water and air between the probe's needles together. Not comparable to the plant's target; see pore-water EC under soil chemistry.</p>
       </article>
       <article class="metric air-temp climate-gauge" data-metric="air_temperature_c">
         <span>Air temperature</span><strong><b id="air-temp">--</b><small>°C</small></strong>
@@ -342,30 +340,31 @@
 
     <section class="chemistry" data-page="detail" aria-label="Soil chemistry measurements" hidden>
       <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
+      <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
+        <div class="chemistry-value"><span>Nutrient level</span><strong><b id="nutrient-level">--</b><small id="nutrient-level-basis"></small></strong></div>
+        <div class="chemistry-value"><span>Pore-water EC</span><strong><b id="pore-ec">--</b><small> µS/cm</small><small id="pore-ec-target"></small></strong></div>
+        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
+        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
+        <p class="range-status">Waiting for reading</p>
+        <p id="pore-ec-basis" class="pore-ec-note"></p>
+        <p id="pore-ec-dry-note" class="pore-ec-note pore-ec-dry-note" hidden></p>
+      </article>
       <div class="chemistry-grid">
-        <article class="chemistry-gauge" data-metric="soil_ph">
+        <article class="chemistry-gauge probe-chemistry" data-metric="soil_ph">
           <div class="chemistry-value"><span>pH</span><strong><b id="ph">--</b></strong></div>
-          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-          <p class="range-status">Waiting for reading</p>
+          <p class="range-status">Unverified · trustworthy after a one-time check against a pH strip or kit</p>
         </article>
-        <article class="chemistry-gauge" data-metric="nitrogen_mg_kg">
+        <article class="chemistry-gauge probe-chemistry" data-metric="nitrogen_mg_kg">
           <div class="chemistry-value"><span>Nitrogen</span><strong><b id="nitrogen">--</b><small> mg/kg</small></strong></div>
-          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-          <p class="range-status">Waiting for reading</p>
+          <p class="range-status">Probe estimate, trend only</p>
         </article>
-        <article class="chemistry-gauge" data-metric="phosphorus_mg_kg">
+        <article class="chemistry-gauge probe-chemistry" data-metric="phosphorus_mg_kg">
           <div class="chemistry-value"><span>Phosphorus</span><strong><b id="phosphorus">--</b><small> mg/kg</small></strong></div>
-          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-          <p class="range-status">Waiting for reading</p>
+          <p class="range-status">Probe estimate, trend only</p>
         </article>
-        <article class="chemistry-gauge" data-metric="potassium_mg_kg">
+        <article class="chemistry-gauge probe-chemistry" data-metric="potassium_mg_kg">
           <div class="chemistry-value"><span>Potassium</span><strong><b id="potassium">--</b><small> mg/kg</small></strong></div>
-          <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-          <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-          <p class="range-status">Waiting for reading</p>
+          <p class="range-status">Probe estimate, trend only</p>
         </article>
       </div>
       <p id="chemistry-guidance" class="chemistry-guidance"></p>

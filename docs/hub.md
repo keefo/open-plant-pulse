@@ -391,6 +391,47 @@ reports. Until read-back confirms the desired revision, the UI and freshness log
 continue to use the last confirmed sensor interval. Profile and alert settings remain
 hub-only.
 
+### Normalized soil chemistry
+
+The soil probe (ComWinTop NPKPHCTH-S) measures **bulk** electrical conductivity:
+the soil, water, and air between its needles together. Plant profile conductivity
+ranges describe **pore-water** EC, the soil water on its own, as a drainage or
+pour-through test measures it. An airy potting mix reads far lower in bulk than in
+its water, so the raw reading cannot be held against the profile range. The hub
+therefore estimates pore-water EC from each reading
+(`domain/soil_chemistry.py`):
+
+1. compensate the bulk EC to 25 °C at 2 % per °C;
+2. find bulk permittivity from the moisture reading by inverting Topp et al.
+   (1980);
+3. take the permittivity of water at the soil temperature; and
+4. apply Hilhorst (2000) with an offset permittivity of 4.1.
+
+The estimate is approximate, roughly ±30–50 % in absolute terms, and reliable as a
+trend. Below 20 % moisture the probe's EC reads zero or close to it and there is no
+estimate. The probe does not measure nitrogen, phosphorus, and potassium; it derives
+them from EC in a fixed ratio, so the page shows them as probe estimates for trend
+only, without a target band. Its pH is shown unjudged until it has been checked once
+against a strip or kit.
+
+`GET /api/readings/latest` and each sensor's `latest` carry a `chemistry` object
+beside the unchanged reading. Its `status` is:
+
+- `current`: the latest complete reading yields an estimate;
+- `last_valid`: it does not, usually because the soil is too dry (`too_dry`), so
+  the estimate comes from the most recent reading within 30 days that yields one,
+  preferring a reading taken 30–60 minutes after a watering the hub detected; or
+- `none`: nothing in the last 30 days yields an estimate.
+
+It also gives the rounded `pore_water_ec_us_cm`, the compensated `ec25_us_cm`,
+`nutrient_level` (`low`, `ok`, or `high` against the profile's conductivity ideal
+range), the `basis` reading (report ID, times, conductivity, moisture, soil
+temperature, and whether it followed a watering), and `age_seconds` since that
+reading, dated by `observed_at` or, failing that, `received_at`. The page shows the
+nutrient level and pore-water EC with the profile's band under soil chemistry, says
+what an estimate was worked out from and how old it is, and keeps the measured bulk
+EC with the live readings without a band.
+
 The server binds to loopback by default. LAN exposure for household access must be
 explicit and documented with host firewall guidance. State-changing browser
 routes require same-origin checks and CSRF protection before LAN mode is treated

@@ -31,6 +31,18 @@ Thresholds use the sensor's calibrated 0–100 moisture index, not volumetric
 water content. Pot, substrate, placement, and individual plant history can
 require instance-specific adjustments in a future plant registry.
 
+## Chemistry fields
+
+- `root_zone.conductivity_us_cm.ideal`: target **pore-water** EC in µS/cm, the
+  conductivity of the soil water itself as a drainage or pour-through test
+  measures it. The probe measures bulk EC, which reads far lower in an airy mix,
+  so the hub holds this range against its pore-water estimate and reports the
+  result as the nutrient level. Take values from pore-water or pour-through
+  guidance, not from bulk soil-probe figures.
+- `chemistry.*`: pH and nitrogen/phosphorus/potassium ranges are kept as reference
+  data. The page shows the probe's pH as unverified and its N/P/K, which the probe
+  derives from EC, as trend-only estimates, and judges neither against these ranges.
+
 ## Drainage fields
 
 - `preferred_response`: ideal learned pot response: `fast`, `balanced`, or

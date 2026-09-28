@@ -7,7 +7,7 @@
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Conductivity", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
   },
   "watering": {
     "strategy": "partial_dry_back",
