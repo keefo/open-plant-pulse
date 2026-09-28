@@ -49,7 +49,7 @@ Start the local hub from the repository root:
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-Open <http://127.0.0.1:8080>. The hub listens for BTHome advertisements from
+Open <http://localhost/>. The hub listens for BTHome advertisements from
 sensors in range; add one from Settings, and its soil, air, and nutrient readings
 appear as they arrive.
 

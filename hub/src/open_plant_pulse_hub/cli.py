@@ -13,8 +13,16 @@ from open_plant_pulse_hub.web import create_server, server_address
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Open Plant Pulse development hub")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=8080, type=int)
+    # Every address, over IPv4 and IPv6, so http://localhost/ and the
+    # computer's .local name both reach it; requests from other computers are
+    # refused unless --allow-network is given.
+    parser.add_argument("--host", default="::")
+    parser.add_argument("--port", default=80, type=int)
+    parser.add_argument(
+        "--allow-network",
+        action="store_true",
+        help="answer other computers too; the interface has no login",
+    )
     parser.add_argument("--no-ble", action="store_true", help="disable BTHome BLE collection")
     parser.add_argument(
         "--database",
@@ -80,9 +88,13 @@ def main() -> None:
         args.port,
         subscriber.health if subscriber else None,
         firmware,
+        allow_network=args.allow_network,
     )
     host, port = server_address(server)
-    print(f"Open Plant Pulse hub listening at http://{host}:{port}")
+    shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host
+    shown_port = "" if port == 80 else f":{port}"
+    reach = "any computer on the network" if args.allow_network else "this computer only"
+    print(f"Open Plant Pulse hub listening at http://{shown_host}{shown_port} ({reach})")
     print("BTHome BLE collection enabled" if subscriber else "BTHome BLE collection disabled")
     if firmware_server is not None:
         firmware_host, firmware_port = firmware_server_address(firmware_server)

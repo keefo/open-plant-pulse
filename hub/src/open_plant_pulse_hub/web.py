@@ -1,8 +1,10 @@
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timedelta, timezone
+import ipaddress
 import json
 from pathlib import Path
+import socket
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -20,16 +22,66 @@ APPLICATION_PAGES = ("/sensors", "/settings", "/onboarding")
 MAX_FIRMWARE_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
+class DashboardServer(ThreadingHTTPServer):
+    """The management interface's HTTP server.
+
+    An IPv6 host is served over IPv6, and "::" over IPv4 as well, so a name that
+    resolves to either family reaches it. Unless the network is allowed in, it
+    answers only the computer it runs on: macOS lets an ordinary user take port
+    80 only on every address at once, so the limit is kept per request instead
+    of by binding to loopback.
+    """
+
+    def __init__(self, address: Tuple[str, int], handler: Any, allow_network: bool) -> None:
+        self.allow_network = allow_network
+        self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
+        super().__init__(address, handler)
+
+    def server_bind(self) -> None:
+        if self.address_family == socket.AF_INET6 and self.server_address[0] == "::":
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+def _plain_address(text: str) -> Any:
+    address = ipaddress.ip_address(text.split("%", 1)[0])
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
+
+
+def is_this_computer(peer: str, local: str) -> bool:
+    """Whether a connection came from the computer that accepted it.
+
+    A browser on this computer may connect through loopback or through one of
+    the computer's own network addresses, depending on how the name resolved;
+    either way both ends of the connection carry the same address.
+    """
+    peer_address = _plain_address(peer)
+    return peer_address.is_loopback or peer_address == _plain_address(local)
+
+
 def create_server(
     store: ReadingStore,
     host: str,
     port: int,
     scanner_health: Optional[Callable[[], Dict[str, Optional[str]]]] = None,
     firmware: Optional[Any] = None,
+    allow_network: bool = False,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     class DashboardHandler(BaseHTTPRequestHandler):
+        def parse_request(self) -> bool:
+            if not super().parse_request():
+                return False
+            if self.server.allow_network or is_this_computer(
+                self.client_address[0], self.connection.getsockname()[0]
+            ):
+                return True
+            self.send_error(HTTPStatus.FORBIDDEN, "This hub answers only the computer it runs on")
+            return False
+
         def do_GET(self) -> None:
             request = urlparse(self.path)
             path = request.path
@@ -421,7 +473,7 @@ def create_server(
         def log_message(self, format_string: str, *args: Any) -> None:
             return
 
-    return ThreadingHTTPServer((host, port), DashboardHandler)
+    return DashboardServer((host, port), DashboardHandler, allow_network)
 
 
 def server_address(server: ThreadingHTTPServer) -> Tuple[str, int]:

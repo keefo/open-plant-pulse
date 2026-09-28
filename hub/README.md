@@ -38,7 +38,7 @@ Run the development hub from the repository root:
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-Then open the fleet at <http://127.0.0.1:8080>. Sensor monitoring is available at
+Then open the fleet at <http://localhost/>. Sensor monitoring is available at
 `/sensors/<sensor-id>`, where that sensor's configuration is also managed. The hub
 scans for BTHome advertisements as it runs, so a sensor in range appears under
 Settings and can be added from there. Readings and care events persist in SQLite;

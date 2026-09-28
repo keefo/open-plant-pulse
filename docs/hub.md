@@ -98,7 +98,15 @@ Run the existing vertical slice:
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-Visit <http://127.0.0.1:8080>. Readings arrive from BTHome sensors in range.
+Visit <http://localhost/>, or the computer's own name such as
+`http://imacpro.local/`. Readings arrive from BTHome sensors in range.
+
+The interface listens on port 80 on every address, over IPv4 and IPv6, so either
+family a name resolves to reaches it. It answers only the computer it runs on and
+refuses other computers with 403: it has no login, and macOS lets an ordinary
+user take port 80 only on every address at once, so the limit is kept per
+request rather than by binding to loopback. `--allow-network` lets the household
+network in; `--host` and `--port` choose another address or port.
 
 Firmware images are served separately on `0.0.0.0:8081`, because a sensor
 downloads an update over the household network and cannot reach loopback. That
@@ -164,7 +172,7 @@ Start the hub and inspect scanner/database state independently:
 
 ```sh
 open-plant-pulse-hub
-curl --fail --silent http://127.0.0.1:8080/api/health
+curl --fail --silent http://localhost/api/health
 ```
 
 `scanner.status` should become `scanning`; permission or adapter failures appear as
