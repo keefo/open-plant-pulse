@@ -610,6 +610,7 @@ function renderMoistureVessel(profile) {
   vessel.style.setProperty("--refill", `${clamp(watering.refill_below)}%`);
   vessel.setAttribute("aria-label", `Soil moisture ${value.toFixed(1)} percent. ${wateringPhase(watering, value)}.`);
   vessel.dataset.phase = wateringPhase(watering, value).toLowerCase().replaceAll(" ", "-");
+  document.getElementById("moisture-cycle-label").textContent = `Comfortable ${cycleLow}–${cycleHigh}%`;
   document.getElementById("moisture-target-label").textContent = `After watering ${targetLow}–${targetHigh}%`;
   document.getElementById("moisture-refill-label").textContent = `Water below ${watering.refill_below}%`;
   document.getElementById("moisture-phase").textContent = wateringPhase(watering, value);
@@ -1121,6 +1122,12 @@ function renderMoistureTrend(profile) {
         class: "trend-cycle", x: plot.left, width: plotWidth,
         y: y(cycleHigh), height: y(cycleLow) - y(cycleHigh)
       }),
+      svgElement("line", {
+        class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right, y1: y(cycleHigh), y2: y(cycleHigh)
+      }),
+      svgElement("text", {
+        class: "trend-cycle-label", x: plot.left + 4, y: y(cycleHigh) + 12, "text-anchor": "start"
+      }, `Comfortable ${cycleLow}–${cycleHigh}%`),
       svgElement("line", {
         class: "trend-refill", x1: plot.left, x2: width - plot.right,
         y1: y(watering.refill_below), y2: y(watering.refill_below)

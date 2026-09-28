@@ -130,10 +130,16 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-vessel { --fill: 0%; --target-low: 55%; --target-size: 15%; --cycle-low: 35%; --cycle-size: 35%; --refill: 35%; position: relative; min-height: 238px; overflow: hidden; border: 4px solid #506c62; background: #edf3f3; box-shadow: inset 0 0 0 4px #ffffffaa; clip-path: polygon(2% 0, 98% 0, 91% 91%, 89% 96%, 85% 100%, 15% 100%, 11% 96%, 9% 91%); }
 .moisture-fill { position: absolute; z-index: 1; inset-inline: 0; bottom: 0; height: var(--fill); background: linear-gradient(180deg, #4aa9c8, #277b9d); transition: height 700ms ease; }
 .moisture-fill::before { content: ""; position: absolute; left: -5%; top: -8px; width: 110%; height: 16px; border-radius: 48%; background: #72bdd3; animation: water-surface 6s ease-in-out infinite alternate; }
-.moisture-cycle-band { position: absolute; z-index: 2; inset-inline: 7px; bottom: var(--cycle-low); height: var(--cycle-size); border-inline: 1px dashed #426e54; background: #d6eadb55; }
-.moisture-target-band { position: absolute; z-index: 3; inset-inline: 7px; bottom: var(--target-low); height: var(--target-size); border-block: 2px solid #2a754a; background: #d9eedf77; }
-.moisture-target-band span, .moisture-refill-line span { position: absolute; right: 7px; padding: 2px 5px; color: #214b34; background: #f8fcfdee; font-size: 10px; font-weight: 700; white-space: nowrap; }
-.moisture-target-band span { top: 2px; }
+/* The comfortable cycle is the green zone: anywhere in it the plant is fine.
+   The after-watering target is only a bracket at its edge, what a watering
+   should reach, not where the soil has to stay. */
+.moisture-cycle-band { position: absolute; z-index: 2; inset-inline: 7px; bottom: var(--cycle-low); height: var(--cycle-size); border-block: 2px solid #2a754a; background: #bfe2c9a6; }
+.moisture-target-band { position: absolute; z-index: 3; right: 11%; width: 8px; bottom: var(--target-low); height: var(--target-size); border: 2px solid #2a754a; border-left: 0; }
+.moisture-cycle-band span, .moisture-target-band span, .moisture-refill-line span { position: absolute; padding: 2px 5px; color: #214b34; background: #f8fcfdee; font-size: 10px; font-weight: 700; white-space: nowrap; }
+/* The pot narrows toward its base, so labels keep clear of the slanted walls. */
+.moisture-cycle-band span { top: 3px; left: 10%; }
+.moisture-target-band span { top: 3px; right: 14px; font-weight: 600; }
+.moisture-refill-line span { right: 10%; }
 .moisture-refill-line { position: absolute; z-index: 4; inset-inline: 7px; bottom: var(--refill); border-top: 2px dashed #b46e18; }
 .moisture-refill-line span { bottom: 3px; color: #7a4a0e; }
 .moisture-vessel[data-phase="critically-dry"] { border-color: #9e3d2d; }
@@ -151,7 +157,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--water); }
 .moisture-trend-chart { margin-top: 0; }
 .moisture-trend-empty { min-height: 110px; }
-.moisture-trend-chart .trend-cycle { fill: #d6eadb88; }
+.moisture-trend-chart .trend-cycle { fill: #bfe2c9a6; }
+.moisture-trend-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.moisture-trend-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 .moisture-trend-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .moisture-trend-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 .moisture-trend-chart .history-line { stroke-width: 2; }
