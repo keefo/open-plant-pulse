@@ -20,11 +20,26 @@ from open_plant_pulse_hub.domain.soil_chemistry import (
     is_too_dry,
     nutrient_level,
 )
+from open_plant_pulse_hub.lighting.schedule import DEFAULT_SCHEDULE, validate_schedule
 
 from .migrations import migrate_database
 
 
 RECEIVE_DIAGNOSTIC_LIMIT = 1000
+# Enough of a light's recent history to see what it did overnight.
+LIGHT_EVENT_LIMIT = 200
+# A light, and the plant it belongs to if any, in the order _light_payload reads.
+LIGHT_QUERY = """
+    SELECT lights.light_id, lights.display_name, lights.driver, lights.config,
+           lights.created_at, plants.plant_id, plants.display_name, plants.archived,
+           (SELECT sensors.sensor_id FROM sensors
+            WHERE sensors.plant_id = plants.plant_id
+              AND sensors.enrollment_status = 'enrolled'
+            ORDER BY sensors.last_seen_at DESC LIMIT 1)
+    FROM lights
+    LEFT JOIN plant_lights ON plant_lights.light_id = lights.light_id
+    LEFT JOIN plants ON plants.plant_id = plant_lights.plant_id
+"""
 # Everything a stored reading is rebuilt from, in the order _deserialize_row
 # expects.
 READING_COLUMNS = """
@@ -756,6 +771,285 @@ class ReadingStore:
             self._database.execute(
                 "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,)
             )
+
+    # --- grow lights ------------------------------------------------------
+    # A light's settings belong to its driver; the store keeps them as JSON and
+    # never looks inside. Which lights a plant uses, and when they are lit, belong
+    # to the plant: they are keyed by plant, and reached by the plant's sensor
+    # only because that is how every page addresses a plant.
+
+    def lights(self) -> List[Dict[str, Any]]:
+        with self._condition:
+            return [
+                self._light_payload(row)
+                for row in self._database.execute(
+                    LIGHT_QUERY + " ORDER BY lights.display_name COLLATE NOCASE, lights.light_id"
+                )
+            ]
+
+    def light(self, light_id: str) -> Optional[Dict[str, Any]]:
+        with self._condition:
+            row = self._database.execute(
+                LIGHT_QUERY + " WHERE lights.light_id = ?", (light_id,)
+            ).fetchone()
+        return self._light_payload(row) if row is not None else None
+
+    def create_light(
+        self, light_id: str, display_name: str, driver: str, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        display_name = self._validate_light_name(display_name)
+        with self._condition, self._database:
+            self._refuse_light_name_clash(display_name, light_id)
+            self._database.execute(
+                "INSERT INTO lights (light_id, display_name, driver, config) VALUES (?, ?, ?, ?)",
+                (light_id, display_name, driver, json.dumps(config, sort_keys=True)),
+            )
+        light = self.light(light_id)
+        assert light is not None
+        return light
+
+    def update_light(
+        self, light_id: str, display_name: str, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        display_name = self._validate_light_name(display_name)
+        with self._condition, self._database:
+            self._refuse_light_name_clash(display_name, light_id)
+            updated = self._database.execute(
+                "UPDATE lights SET display_name = ?, config = ? WHERE light_id = ?",
+                (display_name, json.dumps(config, sort_keys=True), light_id),
+            ).rowcount
+            if updated == 0:
+                raise ValueError("light not found")
+        light = self.light(light_id)
+        assert light is not None
+        return light
+
+    def remember_light_facts(self, light_id: str, facts: Dict[str, Any]) -> None:
+        """Keep what a driver found out, such as the light's new address."""
+        with self._condition, self._database:
+            row = self._database.execute(
+                "SELECT config FROM lights WHERE light_id = ?", (light_id,)
+            ).fetchone()
+            if row is None:
+                return
+            config = json.loads(row[0])
+            config.update(facts)
+            self._database.execute(
+                "UPDATE lights SET config = ? WHERE light_id = ?",
+                (json.dumps(config, sort_keys=True), light_id),
+            )
+
+    def delete_light(self, light_id: str) -> None:
+        with self._condition, self._database:
+            deleted = self._database.execute(
+                "DELETE FROM lights WHERE light_id = ?", (light_id,)
+            ).rowcount
+        if deleted == 0:
+            raise ValueError("light not found")
+
+    def plant_lighting(self, sensor_id: str) -> Dict[str, Any]:
+        """The lights a plant uses and when they are lit.
+
+        A plant that has never been given a schedule is shown the default one,
+        marked unsaved; it takes effect only once saved.
+        """
+        with self._condition:
+            plant_id = self._plant_of_sensor(sensor_id)
+            light_ids = [
+                row[0]
+                for row in self._database.execute(
+                    "SELECT light_id FROM plant_lights WHERE plant_id = ? ORDER BY light_id",
+                    (plant_id,),
+                )
+            ]
+            row = self._database.execute(
+                """
+                SELECT enabled, on_time, off_time FROM plant_light_schedules
+                WHERE plant_id = ?
+                """,
+                (plant_id,),
+            ).fetchone()
+        schedule = (
+            {"enabled": bool(row[0]), "on": row[1], "off": row[2]}
+            if row is not None
+            else dict(DEFAULT_SCHEDULE)
+        )
+        return {
+            "sensor_id": sensor_id,
+            "plant_id": plant_id,
+            "light_ids": light_ids,
+            "schedule": schedule,
+            "schedule_saved": row is not None,
+        }
+
+    def set_plant_lighting(
+        self, sensor_id: str, light_ids: List[str], schedule: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        schedule = validate_schedule(schedule)
+        if not isinstance(light_ids, list) or not all(isinstance(i, str) for i in light_ids):
+            raise ValueError("light_ids must be a list of light IDs")
+        light_ids = list(dict.fromkeys(light_ids))
+        with self._condition, self._database:
+            plant_id = self._plant_of_sensor(sensor_id)
+            for light_id in light_ids:
+                owner = self._database.execute(
+                    """
+                    SELECT lights.display_name, plant_lights.plant_id, plants.display_name
+                    FROM lights
+                    LEFT JOIN plant_lights ON plant_lights.light_id = lights.light_id
+                    LEFT JOIN plants ON plants.plant_id = plant_lights.plant_id
+                    WHERE lights.light_id = ?
+                    """,
+                    (light_id,),
+                ).fetchone()
+                if owner is None:
+                    raise ValueError(f"light {light_id} not found")
+                if owner[1] is not None and owner[1] != plant_id:
+                    raise ValueError(f"{owner[0]} already lights {owner[2]}")
+            self._database.execute("DELETE FROM plant_lights WHERE plant_id = ?", (plant_id,))
+            self._database.executemany(
+                "INSERT INTO plant_lights (light_id, plant_id) VALUES (?, ?)",
+                [(light_id, plant_id) for light_id in light_ids],
+            )
+            self._database.execute(
+                """
+                INSERT INTO plant_light_schedules (plant_id, enabled, on_time, off_time, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (plant_id) DO UPDATE SET
+                    enabled = excluded.enabled, on_time = excluded.on_time,
+                    off_time = excluded.off_time, updated_at = excluded.updated_at
+                """,
+                (
+                    plant_id,
+                    int(schedule["enabled"]),
+                    schedule["on"],
+                    schedule["off"],
+                    _timestamp(datetime.now(timezone.utc)),
+                ),
+            )
+        return self.plant_lighting(sensor_id)
+
+    def light_assignments(self) -> Dict[str, Dict[str, Any]]:
+        """For each light that belongs to a plant: that plant and its schedule."""
+        with self._condition:
+            return {
+                row[0]: {
+                    "plant_id": row[1],
+                    "archived": bool(row[2]),
+                    "schedule": (
+                        {"enabled": bool(row[3]), "on": row[4], "off": row[5]}
+                        if row[3] is not None
+                        else None
+                    ),
+                }
+                for row in self._database.execute(
+                    """
+                    SELECT plant_lights.light_id, plants.plant_id, plants.archived,
+                           schedules.enabled, schedules.on_time, schedules.off_time
+                    FROM plant_lights
+                    JOIN plants ON plants.plant_id = plant_lights.plant_id
+                    LEFT JOIN plant_light_schedules AS schedules
+                        ON schedules.plant_id = plants.plant_id
+                    """
+                )
+            }
+
+    def record_light_event(
+        self, light_id: str, source: str, wanted: bool, outcome: str, detail: Optional[str]
+    ) -> None:
+        with self._condition, self._database:
+            if self._database.execute(
+                "SELECT 1 FROM lights WHERE light_id = ?", (light_id,)
+            ).fetchone() is None:
+                return
+            self._database.execute(
+                """
+                INSERT INTO light_events (light_id, at, source, wanted, outcome, detail)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    light_id,
+                    _timestamp(datetime.now(timezone.utc)),
+                    source,
+                    int(wanted),
+                    outcome,
+                    detail,
+                ),
+            )
+            self._database.execute(
+                """
+                DELETE FROM light_events
+                WHERE light_id = ? AND event_id NOT IN (
+                    SELECT event_id FROM light_events WHERE light_id = ?
+                    ORDER BY event_id DESC LIMIT ?
+                )
+                """,
+                (light_id, light_id, LIGHT_EVENT_LIMIT),
+            )
+
+    def light_events(self, light_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        with self._condition:
+            return [
+                {
+                    "at": row[0],
+                    "source": row[1],
+                    "wanted": bool(row[2]),
+                    "outcome": row[3],
+                    "detail": row[4],
+                }
+                for row in self._database.execute(
+                    """
+                    SELECT at, source, wanted, outcome, detail FROM light_events
+                    WHERE light_id = ? ORDER BY event_id DESC LIMIT ?
+                    """,
+                    (light_id, limit),
+                )
+            ]
+
+    def _plant_of_sensor(self, sensor_id: str) -> int:
+        row = self._database.execute(
+            """
+            SELECT plant_id FROM sensors
+            WHERE sensor_id = ? AND enrollment_status = 'enrolled' AND plant_id IS NOT NULL
+            """,
+            (sensor_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("only an enrolled plant can have lights")
+        return int(row[0])
+
+    def _validate_light_name(self, display_name: str) -> str:
+        display_name = display_name.strip()
+        self._validate_device_text(display_name, "display_name", required=True)
+        return display_name
+
+    def _refuse_light_name_clash(self, display_name: str, light_id: str) -> None:
+        clash = self._database.execute(
+            "SELECT 1 FROM lights WHERE display_name = ? AND light_id != ?",
+            (display_name, light_id),
+        ).fetchone()
+        if clash is not None:
+            raise ValueError("a light with that name already exists")
+
+    @staticmethod
+    def _light_payload(row: Tuple[Any, ...]) -> Dict[str, Any]:
+        return {
+            "light_id": row[0],
+            "display_name": row[1],
+            "driver": row[2],
+            "config": json.loads(row[3]),
+            "created_at": row[4],
+            "plant": (
+                {
+                    "plant_id": row[5],
+                    "display_name": row[6],
+                    "archived": bool(row[7]),
+                    "sensor_id": row[8],
+                }
+                if row[5] is not None
+                else None
+            ),
+        }
 
     def record_station_report(
         self, sensor_id: str, firmware_version: Optional[str]

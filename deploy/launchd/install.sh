@@ -2,9 +2,11 @@
 # Install the hub as a macOS LaunchAgent that starts at login.
 #
 # Builds "Open Plant Pulse Hub.app" around a launcher that runs this checkout,
-# signs it ad hoc so macOS can attribute Bluetooth permission to it, and loads
-# the agent. Run it again after changing the launcher or moving the checkout;
-# the first run asks for Bluetooth permission.
+# signs it ad hoc so macOS can attribute Bluetooth and local network permission
+# to it, and loads the agent. Run it again after changing the launcher or moving
+# the checkout; the first run asks for Bluetooth permission, and the first grow
+# light command for local network permission. Needs a C compiler (the Xcode
+# command line tools).
 #
 #   deploy/launchd/install.sh            install and (re)start the hub
 #   deploy/launchd/install.sh --no-load  write the files only
@@ -32,10 +34,13 @@ render() {
         -e "s|@LOG_DIR@|$LOG_DIR|g" "$1"
 }
 
-mkdir -p "$APP_DIR/Contents/MacOS" "$AGENT_DIR" "$LOG_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$AGENT_DIR" "$LOG_DIR"
 cp "$HERE/Info.plist" "$APP_DIR/Contents/Info.plist"
-render "$HERE/hub.sh.in" > "$APP_DIR/Contents/MacOS/hub"
-chmod 755 "$APP_DIR/Contents/MacOS/hub"
+render "$HERE/hub.sh.in" > "$APP_DIR/Contents/Resources/hub.sh"
+chmod 755 "$APP_DIR/Contents/Resources/hub.sh"
+# The main executable must be a binary, not the script: local network privacy
+# silently refuses a launchd agent whose app has a script there.
+cc -O2 -o "$APP_DIR/Contents/MacOS/hub" "$HERE/launcher.c"
 # Editing the launcher invalidates the old signature; without a valid one the
 # scanner silently stays stopped.
 codesign --force --sign - "$APP_DIR"

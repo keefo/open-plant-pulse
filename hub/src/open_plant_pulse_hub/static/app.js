@@ -122,6 +122,7 @@ function settingsTabFromLocation() {
   const path = window.location.pathname;
   if (path === "/settings/wifi") return "wifi";
   if (path === "/settings/rooms") return "rooms";
+  if (path === "/settings/lights") return "lights";
   if (path === "/settings/firmware") return "firmware";
   return "sensors";
 }
@@ -149,6 +150,7 @@ function renderPage() {
   if (selectedSensorId) {
     setAttr(document.getElementById("detail-config-link"), "href", sensorPath(selectedSensorId, "/settings"));
     setAttr(document.getElementById("config-back-link"), "href", sensorPath(selectedSensorId));
+    setAttr(document.getElementById("plant-lighting-change"), "href", sensorPath(selectedSensorId, "/settings"));
   }
   if (page === "config") {
     setText(document.getElementById("config-plant-name"), selectedSensor
@@ -1522,6 +1524,7 @@ async function refresh() {
     const page = pageFromLocation();
     if (page === "settings") {
       if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
+      if (settingsTabFromLocation() === "lights") await refreshLights();
       return;
     }
     if (page !== "detail" && page !== "config") return;
@@ -1537,7 +1540,7 @@ async function refresh() {
     if (page === "config") {
       const rawReportsResponse = await fetch(`/api/raw-reports${query}`);
       if (rawReportsResponse.ok) renderRawReports((await rawReportsResponse.json()).items);
-      await refreshFirmwareImages();
+      await Promise.all([refreshFirmwareImages(), refreshPlantLighting()]);
       return;
     }
     const [latestResponse, careLogResponse] = await Promise.all([
@@ -1548,7 +1551,7 @@ async function refresh() {
     if (careLogResponse.ok) renderCareLog((await careLogResponse.json()).items);
     await Promise.all([
       refreshClimateHistory(), refreshMoistureTrend(), refreshWateringCalendar(),
-      refreshPotResponse(), refreshPlantJourney()
+      refreshPotResponse(), refreshPlantJourney(), refreshPlantLighting()
     ]);
   } catch (_error) {
     setText(document.getElementById("status"), "Hub unavailable");
@@ -1914,6 +1917,7 @@ document.getElementById("onboarding-next").addEventListener("click", async () =>
 });
 window.addEventListener("popstate", () => {
   sensorSettingsDraftSensorId = null;
+  plantLightingDraftSensorId = null;
   selectedSensorId = sensorIdFromLocation();
   refresh();
 });
@@ -1929,4 +1933,5 @@ document.getElementById("firmware-file").addEventListener("change", (event) => {
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 trackRawReportsDisclosure();
-loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(refreshFirmwareImages).then(poll);
+loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(refreshLightDrivers)
+  .then(refreshFirmwareImages).then(poll);

@@ -101,6 +101,7 @@ commands.
 | Hub BLE subscriber and multi-sensor storage | Implemented and replay tested; macOS physical reception verified, Linux pending |
 | Direct BTHome Home Assistant path | Encoder/decoder host tested; hardware pending |
 | ESP-IDF target application | Firmware 0.5.0 adds a tracked manual report with exact Hub acknowledgment to the always-awake bench UI; build/flash/live results are recorded in the worklog, while production sleep/power/soak validation remains pending |
+| Grow light control (Neewer GL1C, Wemo-switched light) | Running on the hub: both lights confirmed on and off, schedule edge and restart checked; GL1C colour and off edge unverified |
 | Multi-plant management UI | Fleet-to-detail navigation, enrollment, per-sensor configuration delivery state, rename/delete, and sensor-specific freshness are host tested |
 | Public HTTP API, sensor Wi-Fi/HTTP, MQTT, notifications | Lower priority |
 | Electrical design and enclosure | Needs prototype validation |

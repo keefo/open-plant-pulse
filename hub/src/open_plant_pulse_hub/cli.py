@@ -8,6 +8,7 @@ from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
 from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
+from open_plant_pulse_hub.lighting.service import DRIVERS, SIMULATED_DRIVERS, LightService
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -42,6 +43,16 @@ def main() -> None:
         "--no-firmware-server",
         action="store_true",
         help="keep firmware images but do not serve them to sensors",
+    )
+    parser.add_argument(
+        "--no-lights",
+        action="store_true",
+        help="do not drive grow lights; another controller has them",
+    )
+    parser.add_argument(
+        "--simulated-lights",
+        action="store_true",
+        help="offer a simulated light type, to try the lights pages without hardware",
     )
     args = parser.parse_args()
 
@@ -82,6 +93,10 @@ def main() -> None:
             ),
         )
         subscriber.start()
+    lights = None
+    if not args.no_lights:
+        lights = LightService(store, SIMULATED_DRIVERS if args.simulated_lights else DRIVERS)
+        lights.start()
     server = create_server(
         store,
         args.host,
@@ -89,6 +104,7 @@ def main() -> None:
         subscriber.health if subscriber else None,
         firmware,
         allow_network=args.allow_network,
+        lights=lights,
     )
     host, port = server_address(server)
     shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host
@@ -101,6 +117,7 @@ def main() -> None:
         print(f"Firmware images served at http://{firmware_host}:{firmware_port}/firmware/")
     else:
         print("Firmware images are not being served; sensors cannot update over the air")
+    print("Grow light control enabled" if lights else "Grow light control disabled")
 
     try:
         server.serve_forever(poll_interval=0.25)
@@ -113,6 +130,8 @@ def main() -> None:
             firmware_server.server_close()
         if subscriber is not None:
             subscriber.close()
+        if lights is not None:
+            lights.stop()
         store.close()
 
 

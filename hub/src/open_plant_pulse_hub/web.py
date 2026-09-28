@@ -68,6 +68,7 @@ def create_server(
     scanner_health: Optional[Callable[[], Dict[str, Optional[str]]]] = None,
     firmware: Optional[Any] = None,
     allow_network: bool = False,
+    lights: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -114,6 +115,14 @@ def create_server(
                 )
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
+            elif path == "/api/light-drivers":
+                self._send_json({"items": lights.driver_kinds() if lights is not None else []})
+            elif path == "/api/lights":
+                self._send_json({"items": lights.lights() if lights is not None else []})
+            elif path.startswith("/api/lights/"):
+                self._send_light(unquote(path[len("/api/lights/") :]))
+            elif path.startswith("/api/sensors/") and path.endswith("/lighting"):
+                self._send_plant_lighting(unquote(path[len("/api/sensors/") : -len("/lighting")]))
             elif path.startswith("/api/sensors/"):
                 sensor_id = unquote(path[len("/api/sensors/") :])
                 sensor = store.sensor(sensor_id)
@@ -151,6 +160,8 @@ def create_server(
                 self._send_file("app.js", "text/javascript; charset=utf-8")
             elif path == "/onboarding.js":
                 self._send_file("onboarding.js", "text/javascript; charset=utf-8")
+            elif path == "/lights.js":
+                self._send_file("lights.js", "text/javascript; charset=utf-8")
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -161,13 +172,28 @@ def create_server(
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
+                and not path.startswith("/api/lights/")
             ):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path == "/api/sensors/profile":
+                if path.startswith("/api/lights/"):
+                    result = self._light_service().update_light(
+                        unquote(path[len("/api/lights/") :]),
+                        str(payload.get("display_name", "")),
+                        payload.get("config", {}),
+                    )
+                elif path.startswith("/api/sensors/") and path.endswith("/lighting"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/lighting")])
+                    store.set_plant_lighting(
+                        sensor_id, payload.get("light_ids", []), payload.get("schedule")
+                    )
+                    if lights is not None:
+                        lights.lighting_changed()
+                    result = self._plant_lighting(sensor_id)
+                elif path == "/api/sensors/profile":
                     result = store.set_sensor_profile(
                         str(payload.get("sensor_id", "")),
                         str(payload.get("profile_id", "")),
@@ -204,6 +230,9 @@ def create_server(
                         int(payload.get("expected_interval_seconds", 1800)),
                         self._optional_int(payload.get("room_id")),
                     )
+            except LookupError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+                return
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                 return
@@ -211,6 +240,21 @@ def create_server(
 
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/lights/"):
+                try:
+                    self._require_same_origin()
+                    self._light_service().remove_light(unquote(path[len("/api/lights/") :]))
+                except LookupError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+                    return
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/api/rooms/"):
                 try:
                     self._require_same_origin()
@@ -275,6 +319,19 @@ def create_server(
                         str(payload.get("replacement_sensor_id", "")),
                         merge_history,
                     )
+                elif path == "/api/lights":
+                    result = self._light_service().add_light(
+                        str(payload.get("display_name", "")),
+                        str(payload.get("driver", "")),
+                        payload.get("config", {}),
+                    )
+                elif path.startswith("/api/lights/") and path.endswith("/power"):
+                    on = payload.get("on")
+                    if not isinstance(on, bool):
+                        raise ValueError("on must be a boolean")
+                    result = self._light_service().set_power(
+                        unquote(path[len("/api/lights/") : -len("/power")]), on
+                    )
                 elif path == "/api/rooms":
                     result = store.create_room(
                         str(payload.get("name", "")),
@@ -317,10 +374,40 @@ def create_server(
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)
                     return
+            except LookupError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+                return
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(result)
+
+        def _light_service(self) -> Any:
+            if lights is None:
+                raise ValueError("this hub is not controlling lights")
+            return lights
+
+        def _send_light(self, light_id: str) -> None:
+            try:
+                self._send_json(self._light_service().light(light_id))
+            except LookupError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _plant_lighting(self, sensor_id: str) -> Dict[str, Any]:
+            # The picker needs every light, and which plant each one already
+            # lights, to show which it can take.
+            return {
+                **store.plant_lighting(sensor_id),
+                "lights": lights.lights() if lights is not None else [],
+            }
+
+        def _send_plant_lighting(self, sensor_id: str) -> None:
+            try:
+                self._send_json(self._plant_lighting(sensor_id))
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
 
         def _send_sensors(self, query_string: str) -> None:
             status = parse_qs(query_string).get("status", [None])[0]

@@ -94,6 +94,7 @@
       <div class="settings-tabs" role="tablist">
         <a id="settings-tab-sensors" class="settings-tab" href="/settings" role="tab">Sensors</a>
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
+        <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
         <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
       </div>
@@ -140,6 +141,25 @@
           </div>
         </form>
         <div id="room-list" class="settings-sensor-list"></div>
+      </div>
+
+      <div id="settings-lights-panel" class="settings-panel-group" hidden>
+        <form id="light-form" class="settings-panel">
+          <h2 id="light-form-title">Add a light</h2>
+          <p>The hub switches each light in whatever way its type needs. Which plant a light serves, and when it is lit, is set on that plant's configuration page.</p>
+          <input type="hidden" id="light-id" value="">
+          <label for="light-name">Name</label>
+          <input id="light-name" maxlength="80" required placeholder="Grow panel">
+          <label for="light-driver">Type</label>
+          <select id="light-driver" required></select>
+          <div id="light-fields" class="light-fields"></div>
+          <div class="inline-control">
+            <button id="save-light" type="submit">Add light</button>
+            <button id="cancel-light-edit" type="button" hidden>Cancel</button>
+            <output id="light-message" aria-live="polite"></output>
+          </div>
+        </form>
+        <div id="light-list" class="settings-sensor-list"></div>
       </div>
 
       <div id="settings-wifi-panel" class="settings-panel-group" hidden>
@@ -382,6 +402,15 @@
       <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span></div>
     </section>
 
+    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="detail" aria-labelledby="plant-lighting-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">GROW LIGHTS</p><h2 id="plant-lighting-title">Lighting</h2></div>
+        <a id="plant-lighting-change" class="secondary-action" href="/settings">Change lighting</a>
+      </div>
+      <p id="plant-lighting-window" class="lighting-window"></p>
+      <div id="plant-lighting-lights" class="lighting-lights"></div>
+    </section>
+
     <section class="care-log" data-page="detail" aria-label="Plant care history" hidden>
       <div class="section-heading"><div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div><span>Detected automatically</span></div>
       <div id="care-log-list" class="care-log-list">
@@ -438,6 +467,30 @@
       </form>
     </section>
 
+    <section class="sensor-settings plant-lighting" data-page="config" aria-labelledby="plant-lighting-config-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">PLANT</p><h2 id="plant-lighting-config-title">Lighting</h2></div>
+        <a class="secondary-action" href="/settings/lights">Manage lights</a>
+      </div>
+      <form id="plant-lighting-form" class="sensor-settings-form">
+        <fieldset id="lighting-light-choices" class="lighting-choices">
+          <legend>Lights for this plant</legend>
+        </fieldset>
+        <label class="switch-row" for="lighting-enabled">
+          <input id="lighting-enabled" class="switch" type="checkbox">
+          <div>
+            <strong>Follow a daily schedule</strong>
+            <small>When off, this plant's lights are only switched by hand.</small>
+          </div>
+        </label>
+        <label>Lights on<input id="lighting-on" type="time" required></label>
+        <label>Lights off<input id="lighting-off" type="time" required></label>
+        <p id="lighting-note" class="lighting-note"></p>
+        <div class="settings-actions"><button type="submit">Save lighting</button></div>
+        <output id="plant-lighting-message"></output>
+      </form>
+    </section>
+
     <section class="sensor-firmware" data-page="config" aria-labelledby="sensor-firmware-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-firmware-title">Firmware</h2></div>
@@ -470,6 +523,7 @@
     </details>
   </main>
   <script src="/onboarding.js"></script>
+  <script src="/lights.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

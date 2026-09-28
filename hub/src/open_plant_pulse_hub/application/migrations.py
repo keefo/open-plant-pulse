@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 20
+DATABASE_SCHEMA_VERSION = 21
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -696,6 +696,42 @@ MIGRATIONS: Dict[int, str] = {
         /* Nothing references the packet-2 table and it has no CHECK naming a
            packet, so a rename carries every row and its primary key along. */
         ALTER TABLE report_supplements RENAME TO report_packet2;
+    """,
+    21: """
+        /* Grow lights. A light's settings belong to its driver and are kept as
+           JSON the hub never looks inside. A light belongs to at most one plant,
+           so two schedules never compete for it, and the schedule belongs to the
+           plant, so it survives the plant's sensor being replaced. */
+        CREATE TABLE lights (
+            light_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            driver TEXT NOT NULL,
+            config TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        CREATE TABLE plant_lights (
+            light_id TEXT PRIMARY KEY REFERENCES lights(light_id) ON DELETE CASCADE,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE
+        );
+        CREATE INDEX plant_lights_by_plant ON plant_lights(plant_id);
+        CREATE TABLE plant_light_schedules (
+            plant_id INTEGER PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            on_time TEXT NOT NULL,
+            off_time TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (on_time != off_time)
+        );
+        CREATE TABLE light_events (
+            event_id INTEGER PRIMARY KEY,
+            light_id TEXT NOT NULL REFERENCES lights(light_id) ON DELETE CASCADE,
+            at TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('schedule', 'watchdog', 'manual')),
+            wanted INTEGER NOT NULL CHECK (wanted IN (0, 1)),
+            outcome TEXT NOT NULL CHECK (outcome IN ('confirmed', 'unconfirmed', 'unreachable')),
+            detail TEXT
+        );
+        CREATE INDEX light_events_by_light ON light_events(light_id, event_id DESC);
     """,
 }
 

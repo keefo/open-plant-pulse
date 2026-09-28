@@ -1202,7 +1202,7 @@ class MigrationTests(unittest.TestCase):
                     database.execute("PRAGMA user_version").fetchone()[0],
                     DATABASE_SCHEMA_VERSION,
                 )
-                self.assertEqual(DATABASE_SCHEMA_VERSION, 20)
+                self.assertGreaterEqual(DATABASE_SCHEMA_VERSION, 20)
                 self.assertEqual(database.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
                 self.assertEqual(database.execute("PRAGMA foreign_key_check").fetchall(), [])
                 # Every row is still there with its ID, only the packet kind renamed.

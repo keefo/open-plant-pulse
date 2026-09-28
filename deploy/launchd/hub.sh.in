@@ -1,8 +1,9 @@
 #!/bin/sh
-# Launcher for the Open Plant Pulse hub service, rendered by install.sh.
-# The app bundle exists to give the process a stable identity so macOS can
-# attribute Bluetooth (TCC) permission to it. A bare launchd process has no
-# such identity and CoreBluetooth never powers on.
+# Runs the Open Plant Pulse hub service; rendered by install.sh and started by
+# the app bundle's compiled launcher (launcher.c). The app bundle exists to give
+# the process a stable identity so macOS can attribute Bluetooth and local
+# network permission to it. A bare launchd process has no such identity:
+# CoreBluetooth never powers on, and every LAN connection is refused.
 set -eu
 
 PROJECT_DIR="@PROJECT_DIR@"

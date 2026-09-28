@@ -803,8 +803,63 @@
   `https://imac.<tailnet>.ts.net` through Tailscale Serve (tailnet only),
   checked from the Mac and opened on the owner's iPhone.
 
+### Grow light control
+
+- Read the Grow Light Control technical specification extracted from the
+  glowlight project and wrote `docs/proposals/grow-light-control.md`. Decisions:
+  lights are managed in Settings › Lights, a light belongs to at most one plant,
+  the GL1C's colour is a setting on the light, and a plant's first schedule is
+  08:00 to 21:30, the window gl1cd runs today.
+- Added schema version 21 (`lights`, `plant_lights`, `plant_light_schedules`,
+  `light_events`) and the `lighting` package: a driver interface, the
+  `neewer-gl1c` and `wemo-switch` drivers ported from `gl1cd.py`, and a light
+  service that runs gl1cd's schedule, watchdog and manual-override rules per
+  light, each light on its own worker.
+- Added `/api/light-drivers`, `/api/lights` and `/api/sensors/<id>/lighting`,
+  the Settings › Lights tab, a Lighting card on the plant page, and a Lighting
+  section on the plant's configuration page. `sh scripts/check.sh` passes, 301
+  tests, 49 of them new.
+- Walked the pages in Chrome against the preview hub with a simulated light:
+  added it, switched it on by hand, gave it to a plant with the 08:00 to 21:30
+  window at 23:29, and the scheduler switched it off on its next pass, logged as
+  a confirmed schedule action; no console errors.
+
+### Grow light cut-over and hardware checks
+
+- Backed up the database as `hub-backup-2026-09-27-schema20.sqlite3` (integrity
+  ok), stopped and disabled `com.keefo.gl1cd` and `com.keefo.gl1cmenu` (left
+  installed), and reinstalled the hub service from the `keefo/grow_light_support`
+  worktree. The database migrated to schema 21; the scanner kept `scanning`.
+- The hub then got `[Errno 65] No route to host` for every LAN address while
+  `curl` from Terminal reached the Wemo. One-shot launchd probes showed why:
+  Apple's `python3` (exempt) reached it and the venv's Homebrew Python did not,
+  with no prompt and no entry in Local Network settings. Local network privacy
+  cannot attribute a connection to an app whose main executable is a shell
+  script. The bundle now has a compiled launcher (`deploy/launchd/launcher.c`)
+  that runs `Contents/Resources/hub.sh` as its child, and `Info.plist` carries
+  `NSLocalNetworkUsageDescription`. A throwaway bundle built the same way
+  prompted, and once allowed connected; the hub then appeared in System
+  Settings › Privacy & Security › Local Network, switched on by the owner.
+- Added both lights: Neewer GL1C (beacon MAC `f3:6c:5e:cf:f6:9e`) and Sansi 36W
+  (Wemo at 192.168.0.208). Both came online reporting off, as gl1cd had left them.
+- Manual on, then off, for each light: all four confirmed by the device (GL1C
+  0x07 report, Wemo read-back), 0.17 s and 0.38 s for the two ons. The owner saw
+  both lights come on.
+- Linked both lights to white bird with a 23:40 to 23:44 window at 23:41: both
+  switched on at 23:41:37 and 23:41:38, confirmed. Restarting the hub at 23:42
+  left both on with no new command. Both were switched off by hand from the page
+  at 23:43, so the 23:44 edge found them off and sent nothing.
+- White bird's window is now 08:00 to 21:30, enabled; both lights off.
+
 ### Not validated
 
+- The GL1C's colour: its own display was not read after a hub power-on, so
+  brightness 100 % and 4200 K are unconfirmed on the light.
+- A window edge that switches a light off (the only off edge found the lights
+  already off), and the first real 08:00 on.
+- Recovery after the hub computer's network drops for a minute.
+- Moving the service back to the main checkout: it needs this branch merged,
+  or the schema-20 backup restored, since the main code refuses schema 21.
 - A full queue on hardware, and a report surviving a power cut while queued.
 - The hub refusing a request from another computer on the household network.
 - `deploy/launchd/install.sh` run for real; it was rendered to a scratch

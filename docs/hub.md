@@ -120,7 +120,13 @@ change or disable it.
 login and restarts if it exits. It runs the checkout it sits in, through an
 ad-hoc signed app bundle, `~/Applications/Open Plant Pulse Hub.app`: a bare
 launchd process has no code identity for macOS to attribute Bluetooth
-permission to, and its scanner then stays `stopped` without an error. Run the
+permission to, and its scanner then stays `stopped` without an error. The
+bundle's main executable is a small compiled launcher (`launcher.c`, built by
+the script, so it needs the Xcode command line tools) that runs the hub as its
+child: local network privacy, which grow light control needs, refuses every LAN
+connection from an app whose main executable is a script, with `No route to
+host` and no prompt. The first light command asks for Local Network permission;
+it is under System Settings › Privacy & Security › Local Network. Run the
 script again after changing the launcher or moving the checkout, since that
 re-signs the bundle; `uninstall.sh` removes the agent and the bundle and keeps
 the database. Logs go to `~/Library/Logs/open-plant-pulse/`. Python changes
@@ -391,6 +397,20 @@ needs at least:
 
 - stable event ID and sensor ID;
 - type, time, confidence, summary, and bounded changes.
+
+### Grow lights
+
+- `lights`: ID, name, driver kind, and the driver's own settings as JSON;
+- `plant_lights`: which plant each light belongs to, at most one;
+- `plant_light_schedules`: one daily window per plant, keyed by plant so it
+  survives the plant's sensor being replaced;
+- `light_events`: the last 200 commands per light and whether each was confirmed.
+
+The hub drives the lights itself, one driver and one worker per light; see
+[the grow light proposal](proposals/grow-light-control.md). Only one program may
+hold the Neewer GL1C's UDP port 5052, so start the hub with `--no-lights` while
+another controller (gl1cd, Neewer Control Center) still has the light, and
+`--simulated-lights` to try the pages without hardware.
 
 Retention is indefinite for the prototype. Add backup, export, aggregation, and
 retention controls only after representative database growth is measured.

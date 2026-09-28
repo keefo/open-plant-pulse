@@ -24,5 +24,7 @@
 	<string>Open Plant Pulse Hub listens for BTHome advertisements from your plant sensors.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Open Plant Pulse Hub listens for BTHome advertisements from your plant sensors.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Open Plant Pulse Hub switches your grow lights over the household network.</string>
 </dict>
 </plist>

@@ -165,7 +165,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
-.care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
+.care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log, .plant-lighting-summary { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
 .climate-history-heading { align-items: center; }
 .history-range-selector { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #edf2ec; }
 .history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -468,4 +468,34 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .settings-page, .onboarding-page { padding: 20px; }
   .onboarding-card { padding: 20px; }
   .onboarding-footer { flex-wrap: wrap; }
+}
+/* Grow lights. A light's state is what the light last confirmed; unknown and
+   unreachable are said as such, never shown as off. */
+.light-fields { display: grid; gap: 10px; }
+.light-fields label { font-weight: 700; }
+.light-state { font-weight: 700; }
+.light-state[data-level="on"] { color: var(--leaf); }
+.light-state[data-level="off"] { color: var(--ink); }
+.light-state[data-level="unknown"] { color: var(--muted); }
+.light-state[data-level="alert"] { color: #a34831; }
+.light-alert { padding: 8px 10px; border-left: 4px solid #a34831; color: #a34831; background: #fbefeb; font-size: 13px; }
+.light-card small { color: var(--muted); }
+.light-actions { flex-wrap: wrap; justify-content: flex-end; }
+.light-actions button:disabled { opacity: .55; cursor: progress; }
+.plant-lighting-summary { display: grid; gap: 12px; }
+.plant-lighting-summary .section-heading { margin-bottom: 0; }
+.lighting-window { margin: 0; font-size: 18px; font-weight: 700; }
+.lighting-lights { display: grid; gap: 8px; }
+.lighting-light { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.lighting-choices { grid-column: 1 / -1; display: grid; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.lighting-choices legend { padding: 0 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.sensor-settings-form label.lighting-choice { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 14px; font-weight: 400; }
+.sensor-settings-form .lighting-choice input { width: auto; }
+.lighting-choice input:disabled + span { color: var(--muted); }
+.lighting-empty { margin: 0; color: var(--muted); }
+.lighting-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 440px) {
+  .plant-lighting-summary { padding: 16px; }
+  .lighting-light { flex-direction: column; gap: 4px; }
 }
