@@ -1,7 +1,6 @@
 const fields = {
   "moisture": ["moisture_percent", 1], "soil-temp": ["soil_temperature_c", 1],
-  "conductivity": ["conductivity_us_cm", 0], "air-temp": ["air_temperature_c", 1],
-  "humidity": ["air_humidity_percent", 1]
+  "conductivity": ["conductivity_us_cm", 0]
 };
 const chemistryValueIds = {
   soil_ph: "ph", nitrogen_mg_kg: "nitrogen",
@@ -537,6 +536,7 @@ async function selectSensor(sensorId) {
   latestReading = null;
   latestReadingAt = null;
   historyRequestKey = null;
+  climateHistory = null;
   moistureTrendItems = [];
   moistureTrendSensorId = null;
   wateringCalendarRequestKey = null;
@@ -730,11 +730,19 @@ function renderGauge(card, metricName, metric, value) {
   setText(card.querySelector(".scale-high"), scaleHigh);
   setText(card.querySelector(".ideal-label"), `Ideal ${idealLow}–${idealHigh}`);
 
-  const status = card.querySelector(".range-status");
   const valueMarker = card.querySelector(".value-marker");
   // A value the sensor did not send is not a value of zero, which is where a
   // missing number would otherwise put the marker.
   setHidden(valueMarker, value == null);
+  if (value != null) {
+    setStyle(valueMarker, "left", `${Math.max(0, Math.min(100, percentage(value)))}%`);
+  }
+  renderRangeStatus(card.querySelector(".range-status"), metricName, metric, value);
+}
+
+// Where a value sits against a profile's ideal range, in words.
+function renderRangeStatus(status, metricName, metric, value) {
+  const [idealLow, idealHigh] = metric.ideal;
   const inRange = value != null && value >= idealLow && value <= idealHigh;
   setClass(status, "in-range", inRange);
   setClass(status, "out-range", value != null && !inRange);
@@ -742,7 +750,6 @@ function renderGauge(card, metricName, metric, value) {
     setText(status, "Not in the latest report");
     return;
   }
-  setStyle(valueMarker, "left", `${Math.max(0, Math.min(100, percentage(value)))}%`);
   const suffix = metric.unit ? ` ${metric.unit}` : "";
   if (value < idealLow) {
     setText(status, `${formatDifference(idealLow - value, metricName)}${suffix} below ideal`);
@@ -769,10 +776,13 @@ function renderProfileRanges() {
     const metricName = card.dataset.metric;
     renderGauge(card, metricName, profile.root_zone[metricName], latestReading[metricName]);
   }
-  for (const card of document.querySelectorAll(".climate-gauge")) {
-    const metricName = card.dataset.metric;
-    renderGauge(card, metricName, profile.climate[metricName], latestReading[metricName]);
+  // Air conditions are judged under their charts, which draw the same range.
+  for (const [metricName, id] of [
+    ["air_temperature_c", "temperature-history-range"], ["air_humidity_percent", "humidity-history-range"]
+  ]) {
+    renderRangeStatus(document.getElementById(id), metricName, profile.climate[metricName], latestReading[metricName]);
   }
+  if (climateHistory) renderClimateHistory(...climateHistory);
   // The probe's pH and N/P/K are shown as it reports them, with no target
   // band: they are labelled in the page as unverified and trend-only.
   for (const [metricName, id] of Object.entries(chemistryValueIds)) {
@@ -972,14 +982,14 @@ function historyTickLabel(timestamp) {
   return new Intl.DateTimeFormat(undefined, options).format(new Date(timestamp));
 }
 
-function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, endTime) {
+function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, endTime, ideal) {
   const chart = document.getElementById(chartId);
   const empty = document.getElementById(emptyId);
   const points = items.map((item) => ({
     timestamp: Date.parse(item.reading.observed_at || item.received_at),
     value: item.reading[metric] == null ? null : Number(item.reading[metric])
   })).filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value));
-  if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange])) return;
+  if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;
   chart.replaceChildren();
   setHidden(chart, points.length === 0);
   setHidden(empty, points.length !== 0);
@@ -993,8 +1003,9 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
   const values = points.map((point) => point.value);
   const observedMinimum = Math.min(...values);
   const observedMaximum = Math.max(...values);
-  let minimum = observedMinimum;
-  let maximum = observedMaximum;
+  // The plant's ideal range is always in view, so the line is read against it.
+  let minimum = ideal ? Math.min(observedMinimum, ideal[0]) : observedMinimum;
+  let maximum = ideal ? Math.max(observedMaximum, ideal[1]) : observedMaximum;
   const padding = Math.max((maximum - minimum) * 0.12, metric === "air_temperature_c" ? 0.5 : 2);
   minimum -= padding;
   maximum += padding;
@@ -1005,6 +1016,19 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
   const x = timestamp => plot.left + ((timestamp - startTime) / (endTime - startTime)) * plotWidth;
   const y = value => plot.top + ((maximum - value) / (maximum - minimum)) * plotHeight;
 
+  if (ideal) {
+    const [idealLow, idealHigh] = ideal;
+    chart.append(
+      svgElement("rect", {
+        class: "ideal-band", x: plot.left, width: plotWidth, y: y(idealHigh), height: y(idealLow) - y(idealHigh)
+      }),
+      svgElement("line", { class: "ideal-edge", x1: plot.left, x2: width - plot.right, y1: y(idealHigh), y2: y(idealHigh) }),
+      svgElement("line", { class: "ideal-edge", x1: plot.left, x2: width - plot.right, y1: y(idealLow), y2: y(idealLow) }),
+      svgElement("text", {
+        class: "ideal-band-label", x: plot.left + 6, y: y(idealHigh) + 14
+      }, `Ideal ${idealLow}–${idealHigh}`)
+    );
+  }
   for (let index = 0; index <= 4; index += 1) {
     const yPosition = plot.top + (plotHeight * index) / 4;
     const value = maximum - ((maximum - minimum) * index) / 4;
@@ -1045,7 +1069,13 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
   );
 }
 
+// The air history last fetched, kept so a change of plant profile redraws its
+// ideal bands without waiting for the next report.
+let climateHistory = null;
+
 function renderClimateHistory(items, startTime, endTime) {
+  climateHistory = [items, startTime, endTime];
+  const profile = profiles?.profiles?.[selectedSensor?.profile_id || profiles?.default_profile];
   const sampleTimes = items
     .map(item => Date.parse(item.reading.observed_at || item.received_at))
     .filter(Number.isFinite);
@@ -1073,11 +1103,13 @@ function renderClimateHistory(items, startTime, endTime) {
     ? humidities[humidities.length - 1].toFixed(1) : "--");
   renderHistoryChart(
     "temperature-history-chart", "temperature-history-empty", items,
-    "air_temperature_c", "degrees Celsius", chartStartTime, chartEndTime
+    "air_temperature_c", "degrees Celsius", chartStartTime, chartEndTime,
+    profile?.climate.air_temperature_c.ideal
   );
   renderHistoryChart(
     "humidity-history-chart", "humidity-history-empty", items,
-    "air_humidity_percent", "percent relative humidity", chartStartTime, chartEndTime
+    "air_humidity_percent", "percent relative humidity", chartStartTime, chartEndTime,
+    profile?.climate.air_humidity_percent.ideal
   );
   const status = document.getElementById("climate-history-status");
   setClass(status, "error", false);

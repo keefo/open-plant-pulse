@@ -437,6 +437,19 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn('element.toggleAttribute("hidden", Boolean(hidden))', app)
         self.assertNotIn('chart.hidden = points.length === 0;', app)
 
+    def test_air_conditions_are_judged_on_their_charts(self) -> None:
+        page = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "index.html").read_text()
+        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
+        # The air history charts carry the plant's ideal range and say where the
+        # latest value sits, so there are no separate air cards.
+        self.assertNotIn('data-metric="air_temperature_c"', page)
+        self.assertNotIn('data-metric="air_humidity_percent"', page)
+        self.assertIn('id="temperature-history-range"', page)
+        self.assertIn('id="humidity-history-range"', page)
+        self.assertIn('class: "ideal-band"', app)
+        self.assertIn("profile?.climate.air_temperature_c.ideal", app)
+        self.assertIn("profile?.climate.air_humidity_percent.ideal", app)
+
     def test_dashboard_polling_leaves_unchanged_elements_alone(self) -> None:
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
         # A write that would put back the value already shown is skipped.
@@ -448,7 +461,7 @@ class SensorManagementWebTests(unittest.TestCase):
             ("function renderInbox(", "if (!renderKeyChanged(list, unclaimedSensors.map("),
             ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
             ("function renderBattery(", "if (!renderKeyChanged(element, [known, percent, charging, voltage])) return;"),
-            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange])) return;"),
+            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;"),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
         ]:
             body = app[app.index(renderer):]

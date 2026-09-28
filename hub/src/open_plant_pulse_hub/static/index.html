@@ -291,18 +291,6 @@
         <p id="moisture-trend-empty" class="history-chart-empty moisture-trend-empty">Waiting for moisture readings</p>
         <p id="moisture-trend-summary" class="range-status"></p>
       </article>
-      <article class="metric air-temp climate-gauge" data-metric="air_temperature_c">
-        <span>Air temperature</span><strong><b id="air-temp">--</b><small>°C</small></strong>
-        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-        <p class="range-status">Waiting for reading</p>
-      </article>
-      <article class="metric humidity climate-gauge" data-metric="air_humidity_percent">
-        <span>Air humidity</span><strong><b id="humidity">--</b><small>%</small></strong>
-        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-        <p class="range-status">Waiting for reading</p>
-      </article>
     </section>
 
     <section class="climate-history" data-page="detail" aria-labelledby="climate-history-title" hidden>
@@ -322,11 +310,13 @@
           <header><span>Temperature</span><strong><b id="history-temperature">--</b><small>°C</small></strong></header>
           <svg id="temperature-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Air temperature history" hidden></svg>
           <p id="temperature-history-empty" class="history-chart-empty">No temperature readings in this range.</p>
+          <p id="temperature-history-range" class="range-status history-range-status">Waiting for reading</p>
         </article>
         <article class="climate-chart-card">
           <header><span>Relative humidity</span><strong><b id="history-humidity">--</b><small>% RH</small></strong></header>
           <svg id="humidity-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Relative humidity history" hidden></svg>
           <p id="humidity-history-empty" class="history-chart-empty">No humidity readings in this range.</p>
+          <p id="humidity-history-range" class="range-status history-range-status">Waiting for reading</p>
         </article>
       </div>
     </section>

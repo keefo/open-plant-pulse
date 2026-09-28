@@ -151,9 +151,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 @media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .care-event.new { animation: none; transition: none; } }
 .soil-temp { border-top: 4px solid var(--coral); }
 .conductivity { border-top: 4px solid var(--sun); }
-.air-temp { border-top: 4px solid var(--water); }
-.humidity { border-top: 4px solid #5196a8; }
-.climate-gauge, .root-zone-gauge { min-height: 190px; gap: 9px; }
+.root-zone-gauge { min-height: 190px; gap: 9px; }
+/* Beside the pot: soil temperature above, the moisture month below. */
+.primary-grid .soil-temp, .primary-grid .moisture-trend { grid-column: span 2; }
 .moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--water); }
 .moisture-trend-chart { margin-top: 0; }
 .moisture-trend-empty { min-height: 110px; }
@@ -163,8 +163,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .moisture-trend-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 .moisture-trend-chart .history-line { stroke-width: 2; }
-.climate-gauge .range-track, .root-zone-gauge .range-track { margin-top: 3px; }
-.climate-gauge .range-status, .root-zone-gauge .range-status { min-height: 17px; }
+.root-zone-gauge .range-track { margin-top: 3px; }
+.root-zone-gauge .range-status { min-height: 17px; }
 .care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
 .climate-history-heading { align-items: center; }
 .history-range-selector { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #edf2ec; }
@@ -182,10 +182,14 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .climate-chart-card header small { margin-left: 4px; color: var(--muted); font-size: 11px; }
 .history-chart { width: 100%; height: auto; margin-top: 10px; overflow: visible; }
 .history-chart .grid-line { stroke: #e5ebe3; stroke-width: 1; }
+.history-chart .ideal-band { fill: #bfe2c9a6; }
+.history-chart .ideal-edge { stroke: #57956a; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.history-chart .ideal-band-label { fill: #214b34; font: 700 11px "Avenir Next", "Gill Sans", sans-serif; }
+.history-range-status { margin-top: 10px; }
 .history-chart .axis-label { fill: var(--muted); font: 11px "Avenir Next", "Gill Sans", sans-serif; }
 .history-chart .history-line { fill: none; stroke: var(--water); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 #humidity-history-chart .history-line { stroke: #5196a8; }
-.history-chart .history-point { fill: var(--water); stroke: white; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.history-chart .history-point { fill: var(--water); stroke: none; }
 .history-chart .latest-point { fill: white; stroke: var(--water); stroke-width: 3; }
 #humidity-history-chart .history-point { fill: #5196a8; }
 #humidity-history-chart .latest-point { fill: white; stroke: #5196a8; }
@@ -309,7 +313,6 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .topbar-aside { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
   .primary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-metric { grid-column: span 2; grid-row: auto; min-height: 360px; }
-  .primary-grid .soil-temp, .moisture-trend { grid-column: span 2; }
   .chemistry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey-stats > div:nth-child(2) { border-right: 0; }
