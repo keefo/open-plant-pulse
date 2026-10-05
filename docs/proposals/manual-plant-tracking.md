@@ -66,19 +66,30 @@ from the weight recorded just before.
 Weights are a time series, not a pair of settings, so the ceiling can be
 re-recorded when the plant is repotted or grows, and the history stays.
 
+**Stored in grams, entered in kilograms.** A 17 kg pot typed as `17.4` is
+kinder than `17400`, and a seedling on a kitchen scale is still exact to the
+gram underneath.
+
 ## What the page shows
 
 One page for every plant, at `/plants/<plant_id>`, with less on it when there is
 less to show. Not a second page that drifts from the first.
 
-A plant with no sensor shows: its name, room and profile; the weight panel and
-its three numbers; **Watered today** / **Fertilized today** / **Add a note**;
+A plant with no sensor shows: its name and room; the weight panel and its
+three numbers; **Watered today** / **Fertilized today** / **Add a note**;
 its lights, if it has any; the care log; and the journey. No readings, no
 charts, no pot response, no firmware, no raw reports — those sections simply
 have nothing to render and stay absent.
 
-A plant with a sensor shows all of that plus what it measures. `/sensors/<id>`
-redirects to the plant it belongs to, so existing links keep working.
+A plant with a sensor shows all of that plus what it measures, and keeps its
+`/sensors/<id>` address for now — unifying the two is phase 5, deliberately
+last, because it touches every existing link and nothing else waits on it.
+
+**No plant profile without a sensor.** A profile carries thresholds for
+readings a manual plant will never have. What it otherwise gives is a species
+name and a watering cadence, and both belong on the plant itself:
+`expected_watering_days` covers the cadence until there is enough weight
+history to do better.
 
 ## Schema
 
@@ -130,12 +141,15 @@ does, so a manual plant's journey counts missed windows like any other.
 2. **Plants that stand alone.** Create, name, place and archive a plant with no
    sensor. It appears on the household page beside the instrumented ones, with
    *watered 3 days ago* where the others show a reading.
-3. **The page.** `/plants/<id>` for every plant, sections present only when
-   they have something to say; `/sensors/<id>` redirects.
-4. **Weight.** The table, the three numbers, the buttons, and water-used in
+3. **The page.** `/plants/<id>` for a plant with no sensor, sections present
+   only when they have something to say.
+4. **Weight.** The table, the three numbers, the buttons, and water used in
    millilitres. Watering due from weight where there is weight, from the
    cadence where there is not.
-5. **Later, not now.** A load cell writing `source = 'scale'` rows into the
+5. **Unify the routes.** Every plant at `/plants/<id>`, with `/sensors/<id>`
+   redirecting. Deferred on purpose: it touches every existing link, and the
+   four phases above do not wait on it.
+6. **Later, not now.** A load cell writing `source = 'scale'` rows into the
    same table, which is why the table is not called `manual_weights`.
 
 ## Validation
@@ -150,17 +164,13 @@ does, so a manual plant's journey counts missed windows like any other.
 - [ ] A manual watering closes a watering-due window.
 - [ ] Nothing on the page claims a measurement the plant does not have.
 
-## Open questions
+## Decided
 
-- **Units.** Grams stored; entry in kilograms with one decimal is friendlier
-  for a 17 kg pot, but a kitchen scale for a small plant reads grams. Accept
-  both and store grams?
-- **Does a manual plant need a profile?** The thresholds a profile carries are
-  about readings it will not have. It still names the species and sets the
-  watering cadence, so probably yes.
-- **Route change now or later.** Unifying on `/plants/<id>` is the right shape
-  but touches every existing link; phase 3 could be deferred without blocking
-  the rest.
+- **Grams stored, kilograms entered** (2026-10-05).
+- **No profile on a plant without a sensor** — species and cadence live on the
+  plant itself (2026-10-05).
+- **Routes unify last**, as phase 5, rather than alongside the feature
+  (2026-10-05).
 
 ## Not in this proposal
 
