@@ -1939,6 +1939,8 @@ function restoreWeightUnit() {
       /* The selector still works; it just forgets. */
     }
     applyWeightUnit();
+    document.getElementById("plant-weight-full").value = "";
+    document.getElementById("plant-weight-dry").value = "";
     renderPlantPage();
   });
 }
@@ -2024,6 +2026,8 @@ function renderPlantPage() {
           undefined, { dateStyle: "medium" })
       : "Waiting for its first day");
 
+  renderPlantWeightChart();
+  fillPlantAnchorFields();
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
 
   const today = new Date().toDateString();
@@ -2035,6 +2039,180 @@ function renderPlantPage() {
       ? (kind === "watering" ? "Watered today ✓" : "Fertilized today ✓")
       : (kind === "watering" ? "Watered today" : "Fertilized today"));
     setDisabled(button, done);
+  }
+}
+
+/* The pot's weight over a month, which is this plant's moisture history.
+ *
+ * The sensored page plots what the probe read; here the pot itself is the
+ * instrument. Full and dry are drawn as the band between them, so a glance
+ * says where in its cycle the plant is without reading a number. */
+const plantWeightTrendMs = 30 * 24 * 60 * 60 * 1000;
+
+function plantWeightPoints() {
+  const weights = (selectedPlant && selectedPlant.weights) || [];
+  const since = Date.now() - plantWeightTrendMs;
+  return weights
+    .map((weighing) => ({ timestamp: Date.parse(weighing.at), grams: weighing.grams }))
+    .filter((point) => Number.isFinite(point.timestamp) && point.timestamp >= since)
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function renderPlantWeightChart() {
+  const chart = document.getElementById("plant-weight-chart");
+  const empty = document.getElementById("plant-weight-chart-empty");
+  const summary = document.getElementById("plant-weight-chart-summary");
+  if (chart === null) return;
+  const points = plantWeightPoints();
+  const weight = (selectedPlant && selectedPlant.weight) || {};
+  setHidden(chart, points.length < 2);
+  setHidden(empty, points.length >= 2);
+  if (points.length < 2) {
+    setText(summary, points.length === 1 ? "One weighing so far." : "");
+    chart.replaceChildren();
+    return;
+  }
+
+  const width = Math.max(320, Math.round(chart.getBoundingClientRect().width) || 640);
+  const height = 170;
+  if (!renderKeyChanged(chart, [points, weight.watered, weight.thirsty, width, weightUnit()])) return;
+  chart.replaceChildren();
+  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
+
+  /* A month of history, or the time there is: a pot weighed for a week should
+   * not be a sliver at the right edge. */
+  const endTime = points[points.length - 1].timestamp;
+  const firstTime = points[0].timestamp;
+  const startTime = endTime - firstTime < plantWeightTrendMs
+    ? Math.min(firstTime, endTime - 24 * 60 * 60 * 1000)
+    : endTime - plantWeightTrendMs;
+
+  /* The scale always holds both anchors, so the band they make is visible
+   * even when every weighing sits above or below it. */
+  const anchors = [weight.watered?.grams, weight.thirsty?.grams].filter((g) => g != null);
+  const values = points.map((point) => point.grams).concat(anchors);
+  const lowest = Math.min(...values);
+  const highest = Math.max(...values);
+  const padding = Math.max(40, (highest - lowest) * 0.15);
+  const bottom = lowest - padding;
+  const top = highest + padding;
+
+  const plot = { left: 46, right: 10, top: 10, bottom: 22 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const x = (timestamp) =>
+    plot.left + ((timestamp - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
+  const y = (grams) => plot.top + ((top - grams) / Math.max(1, top - bottom)) * plotHeight;
+
+  if (weight.watered && weight.thirsty && weight.watered.grams > weight.thirsty.grams) {
+    chart.append(
+      svgElement("rect", {
+        class: "trend-cycle", x: plot.left, width: plotWidth,
+        y: y(weight.watered.grams), height: y(weight.thirsty.grams) - y(weight.watered.grams),
+      }),
+      svgElement("line", {
+        class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right,
+        y1: y(weight.watered.grams), y2: y(weight.watered.grams),
+      }),
+      svgElement("text", {
+        class: "trend-cycle-label", x: plot.left + 4, y: y(weight.watered.grams) + 12,
+        "text-anchor": "start",
+      }, `Full at ${showWeight(weight.watered.grams)} ${weightUnit()}`),
+      svgElement("line", {
+        class: "trend-refill", x1: plot.left, x2: width - plot.right,
+        y1: y(weight.thirsty.grams), y2: y(weight.thirsty.grams),
+      }),
+      svgElement("text", {
+        class: "trend-refill-label", x: plot.left + 4, y: y(weight.thirsty.grams) - 4,
+        "text-anchor": "start",
+      }, `Dry at ${showWeight(weight.thirsty.grams)} ${weightUnit()}`)
+    );
+  } else if (weight.watered) {
+    chart.append(
+      svgElement("line", {
+        class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right,
+        y1: y(weight.watered.grams), y2: y(weight.watered.grams),
+      }),
+      svgElement("text", {
+        class: "trend-cycle-label", x: plot.left + 4, y: y(weight.watered.grams) + 12,
+        "text-anchor": "start",
+      }, `Full at ${showWeight(weight.watered.grams)} ${weightUnit()}`)
+    );
+  }
+
+  for (const grams of [bottom, (bottom + top) / 2, top]) {
+    chart.append(
+      svgElement("line", {
+        class: "grid-line", x1: plot.left, x2: width - plot.right, y1: y(grams), y2: y(grams),
+      }),
+      svgElement("text", {
+        class: "axis-label", x: plot.left - 6, y: y(grams) + 4, "text-anchor": "end",
+      }, showWeight(Math.round(grams)))
+    );
+  }
+  [startTime, endTime].forEach((timestamp, index) => {
+    chart.append(svgElement("text", {
+      class: "axis-label", x: x(timestamp), y: height - 5,
+      "text-anchor": index === 0 ? "start" : "end",
+    }, new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
+      .format(new Date(timestamp))));
+  });
+
+  chart.append(svgElement("polyline", {
+    class: "history-line",
+    points: points.map((point) => `${x(point.timestamp).toFixed(2)},${y(point.grams).toFixed(2)}`).join(" "),
+  }));
+  for (const point of points) {
+    chart.append(svgElement("circle", {
+      class: "history-point", cx: x(point.timestamp), cy: y(point.grams), r: 2.5,
+    }));
+  }
+  const latest = points[points.length - 1];
+  chart.append(svgElement("circle", {
+    class: "history-point latest-point", cx: x(latest.timestamp), cy: y(latest.grams), r: 3.5,
+  }));
+
+  const unit = weightUnit();
+  setText(summary,
+    `${points.length} weighings · ${showWeight(Math.min(...points.map((p) => p.grams)))}` +
+    `–${showWeight(Math.max(...points.map((p) => p.grams)))} ${unit}`);
+}
+
+/* Setting an anchor is a correction, not an event: saying the full pot weighs
+ * 17.4 kg is not the same as watering it, so no watering is recorded. */
+async function setPlantAnchor(kind) {
+  const plantId = plantIdFromLocation();
+  const field = document.getElementById(kind === "watered" ? "plant-weight-full" : "plant-weight-dry");
+  const message = document.getElementById("plant-weight-anchor-message");
+  const typed = Number(field.value);
+  if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
+    setText(message, `Type the weight in ${weightUnit() === "g" ? "grams" : "kilograms"}.`);
+    return;
+  }
+  const grams = weightUnit() === "g" ? Math.round(typed) : Math.round(typed * 1000);
+  const response = await fetch(`/api/plants/${plantId}/weight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grams, kind, record_watering: false }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That weight could not be recorded.");
+    return;
+  }
+  setText(message, kind === "watered" ? "Full weight set." : "Dry weight set.");
+  await refreshPlant();
+}
+
+/* The anchor fields show what the plant currently believes, so correcting one
+ * means editing a number rather than remembering it. */
+function fillPlantAnchorFields() {
+  const weight = (selectedPlant && selectedPlant.weight) || {};
+  for (const [id, anchor] of [["plant-weight-full", weight.watered], ["plant-weight-dry", weight.thirsty]]) {
+    const field = document.getElementById(id);
+    if (field === null || field === document.activeElement) continue;
+    const shown = anchor ? showWeight(anchor.grams) : "";
+    if (field.value !== shown) field.value = shown;
   }
 }
 
@@ -2266,6 +2444,8 @@ document.getElementById("plant-note").addEventListener("click", () => recordPlan
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight("reading"));
 document.getElementById("plant-weight-watered").addEventListener("click", () => recordPlantWeight("watered"));
 document.getElementById("plant-weight-thirsty").addEventListener("click", () => recordPlantWeight("thirsty"));
+document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
+document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnit();

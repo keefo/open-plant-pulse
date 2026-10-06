@@ -203,6 +203,30 @@ class PlantWeightTests(unittest.TestCase):
             self.store.plant_journey_of(self.plant_id)["watering_count"], 1
         )
 
+    def test_correcting_an_anchor_is_not_a_second_watering(self) -> None:
+        # Saying the full pot weighs 17.4 kg is a calibration, not an event.
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", record_watering=False)
+        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty")
+
+        self.assertEqual(self.store.care_log(10, plant_id=self.plant_id), [])
+        status = self.store.plant_weight_status(self.plant_id)
+        self.assertEqual(status["watered"]["grams"], 17_400)
+        self.assertEqual(status["thirsty"]["grams"], 16_200)
+        self.assertEqual(status["capacity_grams"], 1_200)
+
+    def test_the_newest_anchor_is_the_one_that_counts(self) -> None:
+        # A repot or a season's growth gives a new full weight; the old one
+        # stays in the history rather than being overwritten.
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(30),
+                                       record_watering=False)
+        self.store.record_plant_weight(self.plant_id, 19_000, "watered", at=ago(1),
+                                       record_watering=False)
+
+        self.assertEqual(
+            self.store.plant_weight_status(self.plant_id)["watered"]["grams"], 19_000
+        )
+        self.assertEqual(len(self.store.plant_weights(self.plant_id)), 2)
+
     def test_it_refuses_a_weight_no_pot_has(self) -> None:
         for description, grams in (("nothing", 0), ("half a tonne", 600_000)):
             with self.subTest(description), self.assertRaises(ValueError):
@@ -278,6 +302,23 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(read["weights"][0]["grams"], 17_400)
         # The ceiling is taken after watering, so the watering is on record.
         self.assertEqual(read["journey"]["watering_count"], 1)
+
+    def test_the_pot_has_a_month_of_its_own_history(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        # The same question the probe's chart answers, by another instrument.
+        self.assertIn('id="plant-weight-chart"', page)
+        self.assertIn("Pot weight · last 30 days", page)
+        self.assertIn("plantWeightTrendMs", script)
+        # Full and dry are drawn as the band between them.
+        self.assertIn('class: "trend-cycle"', script)
+        self.assertIn("Full at ${showWeight(weight.watered.grams)}", script)
+        self.assertIn("Dry at ${showWeight(weight.thirsty.grams)}", script)
+        # And both can be typed in, which does not invent a watering.
+        self.assertIn('id="plant-weight-full"', page)
+        self.assertIn('id="plant-weight-dry"', page)
+        self.assertIn("record_watering: false", script)
 
     def test_a_pot_can_be_weighed_in_either_unit(self) -> None:
         page = self.call_text("/")

@@ -2705,12 +2705,15 @@ class ReadingStore:
         note: Optional[str] = None,
         at: Optional[str] = None,
         source: str = "manual",
+        record_watering: bool = True,
     ) -> Dict[str, Any]:
         """Write down what the pot weighs.
 
         Recording the watered weight also records the watering: that weighing
         is taken because the plant has just been watered and drained, and
-        making somebody say so twice invites the two to disagree.
+        making somebody say so twice invites the two to disagree. Correcting
+        the figure afterwards is not a second watering, so that passes
+        record_watering=False and the care log is left alone.
         """
         if kind not in WEIGHT_KINDS:
             raise ValueError(f"unknown weight kind: {kind}")
@@ -2730,7 +2733,7 @@ class ReadingStore:
                 """,
                 (plant_id, at, grams, source, kind, (note or "").strip() or None),
             )
-        if kind == "watered":
+        if kind == "watered" and record_watering:
             self.record_plant_care(plant_id, "watering", at)
         return self.plant_weight_status(plant_id)
 

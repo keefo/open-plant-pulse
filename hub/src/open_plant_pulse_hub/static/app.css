@@ -162,12 +162,12 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--water); }
 .moisture-trend-chart { margin-top: 0; }
 .moisture-trend-empty { min-height: 110px; }
-.moisture-trend-chart .trend-cycle { fill: #bfe2c9a6; }
-.moisture-trend-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.moisture-trend-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
-.moisture-trend-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
-.moisture-trend-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
-.moisture-trend-chart .history-line { stroke-width: 2; }
+#plant-weight-chart .trend-cycle, .moisture-trend-chart .trend-cycle { fill: #bfe2c9a6; }
+#plant-weight-chart .trend-cycle-edge, .moisture-trend-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#plant-weight-chart .trend-cycle-label, .moisture-trend-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+#plant-weight-chart .trend-refill, .moisture-trend-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+#plant-weight-chart .trend-refill-label, .moisture-trend-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+#plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
 .care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight, .climate-history, .raw-report-log, .plant-lighting-summary { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
@@ -426,6 +426,17 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .firmware-progress { height: 8px; border-radius: 4px; background: #e5eae3; overflow: hidden; }
 .firmware-progress i { display: block; height: 100%; background: var(--leaf); transition: width 400ms ease; }
 .plant-weight .journey-stats { margin-bottom: 18px; }
+/* The pot's own history, in the shape the probe's chart uses, because it is
+   the same question answered by a different instrument. */
+.weight-trend { margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.weight-trend > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.weight-trend .history-chart { width: 100%; height: auto; }
+.weight-trend .history-chart-empty { margin: 0; color: var(--muted); font-size: 13px; }
+.weight-trend .range-status { margin-top: 6px; }
+.plant-weight-anchors { flex-wrap: wrap; margin-bottom: 16px; }
+.plant-weight-anchors label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.plant-weight-anchors output { color: var(--muted); font-size: 13px; }
+
 .plant-weight-entry { flex-wrap: wrap; margin-bottom: 16px; }
 .plant-weight-entry label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .plant-weight-entry button { color: white; background: var(--leaf); border-color: var(--leaf); }

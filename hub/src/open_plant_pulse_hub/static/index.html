@@ -457,6 +457,12 @@
         <div><strong id="plant-weight-daily">--</strong><span>Used a day</span></div>
         <div><strong id="plant-weight-days">--</strong><span>Days of water left</span></div>
       </div>
+      <div class="weight-trend">
+        <span>Pot weight · last 30 days</span>
+        <svg id="plant-weight-chart" class="history-chart" viewBox="0 0 640 170" role="img" aria-label="Pot weight over the last 30 days" hidden></svg>
+        <p id="plant-weight-chart-empty" class="history-chart-empty">Weigh the pot twice and its drying shows here.</p>
+        <p id="plant-weight-chart-summary" class="range-status"></p>
+      </div>
       <div class="inline-control plant-weight-entry">
         <label for="plant-weight-input">Weighs</label>
         <input id="plant-weight-input" type="number" step="0.01" min="0" max="500" placeholder="17.40">
@@ -468,6 +474,15 @@
         <button id="plant-weight-watered" type="button">Just watered</button>
         <button id="plant-weight-thirsty" type="button">It wanted water</button>
         <output id="plant-weight-message" aria-live="polite"></output>
+      </div>
+      <div class="inline-control plant-weight-anchors">
+        <label for="plant-weight-full">Full at</label>
+        <input id="plant-weight-full" type="number" step="0.01" min="0" placeholder="17.40">
+        <button id="plant-weight-set-full" type="button">Set</button>
+        <label for="plant-weight-dry">Dry at</label>
+        <input id="plant-weight-dry" type="number" step="0.01" min="0" placeholder="16.20">
+        <button id="plant-weight-set-dry" type="button">Set</button>
+        <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
       <p class="settings-note">Weigh the pot once it has finished draining and press <b>Just watered</b>: that is the full pot everything else is measured against. Press <b>It wanted water</b> on the day you decide it is thirsty, and the two together say how much water this pot holds.</p>
     </section>

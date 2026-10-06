@@ -382,6 +382,7 @@ def create_server(
                         round(float(grams)),
                         str(payload.get("kind", "reading")),
                         self._optional_str(payload.get("note")),
+                        record_watering=payload.get("record_watering", True) is not False,
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/archive"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/archive")])
