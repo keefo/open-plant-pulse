@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 23
+DATABASE_SCHEMA_VERSION = 24
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -827,6 +827,24 @@ MIGRATIONS: Dict[int, str] = {
         WHERE sensors.plant_id IS NOT NULL;
         DROP TABLE plant_journey;
         ALTER TABLE plant_journey_v23 RENAME TO plant_journey;
+    """,
+    24: """
+        /* A plant that stands on its own: no sensor, so nothing about it is
+           discovered. Where it lives, when it was taken on, and how often it
+           usually wants water, which is the fallback until there is enough
+           weight history to answer better. */
+        ALTER TABLE plants ADD COLUMN room_id INTEGER REFERENCES rooms(room_id);
+        ALTER TABLE plants ADD COLUMN created_at TEXT;
+        ALTER TABLE plants ADD COLUMN expected_watering_days INTEGER
+            CHECK (expected_watering_days IS NULL OR
+                   expected_watering_days BETWEEN 1 AND 365);
+        /* Plants that came from a sensor already have a room on the sensor;
+           carry it across so the two agree from the start. */
+        UPDATE plants SET room_id = (
+            SELECT sensors.room_id FROM sensors
+            WHERE sensors.plant_id = plants.plant_id AND sensors.room_id IS NOT NULL
+            LIMIT 1
+        );
     """,
 }
 

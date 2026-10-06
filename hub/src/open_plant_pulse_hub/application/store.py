@@ -159,11 +159,11 @@ EMPTY_JOURNEY = {
     "lighting_hours": 0,
 }
 # Care a person records themselves, because no probe could have seen it.
-MANUAL_CARE_KINDS = {"fertilizing": "Fertilized"}
+MANUAL_CARE_KINDS = {"watering": "Watered", "fertilizing": "Fertilized", "note": "Note"}
 # Care that happens at most once in a day, whoever noticed it. A rise the probe
 # reads and the hand that caused it are one feeding, not two, so they collapse
 # into a single entry: the first to arrive is the one that is kept.
-ONE_PER_DAY_KINDS = ("fertilizing",)
+ONE_PER_DAY_KINDS = ("watering", "fertilizing")
 # How long after a watering was called for it is counted as missed.
 MISSED_WATERING_GRACE = timedelta(hours=24)
 # The longest believable stretch of light. Nobody leaves a grow light on over a
@@ -2577,12 +2577,23 @@ class ReadingStore:
                 self._database.commit()
             first_at, last_at, waterings, fertilizings, settled_missed, lit_seconds, _ = row
             open_missed = self._open_missed_windows(plant_id, now)
+            started = self._database.execute(
+                "SELECT created_at FROM plants WHERE plant_id = ?", (plant_id,)
+            ).fetchone()
+            started_at = started[0] if started else None
 
         monitored_days = 0
         if first_at and last_at:
             first = self._observation_datetime(first_at, now)
             last = self._observation_datetime(last_at, now)
             monitored_days = (last.date() - first.date()).days + 1
+        elif started_at:
+            # A plant with no readings is still being looked after. Its days
+            # run from the day somebody took it on to today, because nobody
+            # stops caring for a plant between entries in a log.
+            first_at = started_at
+            first = self._observation_datetime(started_at, now)
+            monitored_days = (now.date() - first.date()).days + 1
 
         return {
             "started_at": first_at,
@@ -2629,36 +2640,228 @@ class ReadingStore:
         return at.astimezone().date().isoformat()
 
     def record_manual_care(
-        self, sensor_id: str, kind: str, at: Optional[str] = None
+        self, sensor_id: str, kind: str, at: Optional[str] = None, note: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Record care somebody gave the plant, as told by them.
+        """Record care given to the plant this sensor watches."""
+        plant_id = self._plant_id_for(sensor_id)
+        if plant_id is None:
+            raise ValueError("sensor_id has not been observed")
+        return self.record_plant_care(plant_id, kind, at, note)
 
-        A probe can suggest that a plant was fed, from a rise in conductivity
-        and nutrients, but on a plant whose probe reads neither it can see
-        nothing at all. What somebody did is not a guess, so it is recorded as
-        theirs: once for the day, so pressing twice does not feed a plant twice
-        in its own history.
+    def record_plant_care(
+        self,
+        plant_id: int,
+        kind: str,
+        at: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record care somebody gave a plant, as told by them.
+
+        A probe can suggest a watering from a rise in moisture, and a feeding
+        from a rise in conductivity, but on a plant with no probe at all it can
+        see nothing. What somebody did is not a guess, so it is recorded as
+        theirs: once for the day, because a plant is watered or fed once on a
+        day or not at all. A note is not, because two things worth writing down
+        can happen between breakfast and bed.
         """
         if kind not in MANUAL_CARE_KINDS:
             raise ValueError(f"unknown care kind: {kind}")
-        if self.sensor(sensor_id) is None:
-            raise ValueError("sensor_id has not been observed")
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        note = (note or "").strip()
+        if kind == "note" and not note:
+            raise ValueError("a note needs something written in it")
         detected_at = at or _timestamp(datetime.now(timezone.utc))
-        event = CareEvent(
-            # _save_event names a once-a-day event after its day, so whether the
-            # probe or a person recorded this feeding, it is one entry.
-            event_id=f"manual-{kind}-{sensor_id}",
-            sensor_id=sensor_id,
-            kind=kind,
-            detected_at=detected_at,
-            title=MANUAL_CARE_KINDS[kind],
-            summary="Recorded by hand.",
-            confidence="recorded",
-            changes={"source": "manual"},
-        )
         with self._condition:
-            self._save_event(event)
-        return self.plant_journey(sensor_id)
+            self._save_event(
+                CareEvent(
+                    # _save_event renames a once-a-day event after its day, so
+                    # whichever of these ids it starts with is replaced.
+                    event_id=f"manual-{kind}-{plant_id}-{uuid4().hex}",
+                    sensor_id="",
+                    kind=kind,
+                    detected_at=detected_at,
+                    title=MANUAL_CARE_KINDS[kind],
+                    summary=note or "Recorded by hand.",
+                    confidence="recorded",
+                    changes={"source": "manual"},
+                ),
+                plant_id=plant_id,
+            )
+        return self.plant_journey_of(plant_id)
+
+    def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
+        """Every plant the household has, instrumented or not."""
+        with self._condition:
+            rows = self._database.execute(
+                f"""
+                SELECT plants.plant_id, plants.display_name, plants.profile_id,
+                       plants.room_id, rooms.name, plants.archived, plants.created_at,
+                       plants.expected_watering_days,
+                       (SELECT sensor_id FROM sensors
+                        WHERE sensors.plant_id = plants.plant_id
+                          AND sensors.enrollment_status = 'enrolled'
+                        ORDER BY sensor_id LIMIT 1),
+                       (SELECT MAX(detected_at) FROM care_events
+                        WHERE care_events.plant_id = plants.plant_id
+                          AND kind = 'watering')
+                FROM plants
+                LEFT JOIN rooms ON rooms.room_id = plants.room_id
+                {"" if include_archived else "WHERE plants.archived = 0"}
+                ORDER BY plants.display_name COLLATE NOCASE
+                """
+            ).fetchall()
+        return [self._plant_payload(row) for row in rows]
+
+    def plant(self, plant_id: int) -> Optional[Dict[str, Any]]:
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT plants.plant_id, plants.display_name, plants.profile_id,
+                       plants.room_id, rooms.name, plants.archived, plants.created_at,
+                       plants.expected_watering_days,
+                       (SELECT sensor_id FROM sensors
+                        WHERE sensors.plant_id = plants.plant_id
+                          AND sensors.enrollment_status = 'enrolled'
+                        ORDER BY sensor_id LIMIT 1),
+                       (SELECT MAX(detected_at) FROM care_events
+                        WHERE care_events.plant_id = plants.plant_id
+                          AND kind = 'watering')
+                FROM plants
+                LEFT JOIN rooms ON rooms.room_id = plants.room_id
+                WHERE plants.plant_id = ?
+                """,
+                (plant_id,),
+            ).fetchone()
+        return None if row is None else self._plant_payload(row)
+
+    def create_plant(
+        self,
+        display_name: str,
+        room_id: Optional[int] = None,
+        expected_watering_days: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Take on a plant the hub has no sensor for."""
+        display_name = self._validate_plant_name(display_name)
+        room_id = self._validate_plant_room(room_id)
+        expected_watering_days = self._validate_watering_days(expected_watering_days)
+        with self._condition, self._database:
+            cursor = self._database.execute(
+                """
+                INSERT INTO plants (display_name, room_id, expected_watering_days,
+                                    created_at, archived)
+                VALUES (?, ?, ?, ?, 0)
+                """,
+                (
+                    display_name,
+                    room_id,
+                    expected_watering_days,
+                    _timestamp(datetime.now(timezone.utc)),
+                ),
+            )
+            plant_id = int(cursor.lastrowid)
+        plant = self.plant(plant_id)
+        assert plant is not None
+        return plant
+
+    def update_plant(
+        self,
+        plant_id: int,
+        display_name: str,
+        room_id: Optional[int] = None,
+        expected_watering_days: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        display_name = self._validate_plant_name(display_name)
+        room_id = self._validate_plant_room(room_id)
+        expected_watering_days = self._validate_watering_days(expected_watering_days)
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?
+                WHERE plant_id = ?
+                """,
+                (display_name, room_id, expected_watering_days, plant_id),
+            )
+            # A sensor watching it shows the same name, or the two pages
+            # disagree about what the plant is called.
+            self._database.execute(
+                "UPDATE sensors SET display_name = ?, room_id = ? WHERE plant_id = ?",
+                (display_name, room_id, plant_id),
+            )
+        plant = self.plant(plant_id)
+        assert plant is not None
+        return plant
+
+    def set_plant_archived(self, plant_id: int, archived: bool) -> Dict[str, Any]:
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE plants SET archived = ? WHERE plant_id = ?",
+                (1 if archived else 0, plant_id),
+            )
+        plant = self.plant(plant_id)
+        assert plant is not None
+        return plant
+
+    def delete_plant(self, plant_id: int) -> None:
+        """Forget a plant and everything recorded about it.
+
+        Only a plant with no sensor: one with a sensor is forgotten by letting
+        the sensor go, which has its own consequences for the device.
+        """
+        plant = self.plant(plant_id)
+        if plant is None:
+            raise ValueError("unknown plant")
+        if plant["sensor_id"] is not None:
+            raise ValueError("this plant has a sensor; forget the sensor instead")
+        with self._condition, self._database:
+            self._database.execute("DELETE FROM care_events WHERE plant_id = ?", (plant_id,))
+            self._database.execute("DELETE FROM plant_journey WHERE plant_id = ?", (plant_id,))
+            self._database.execute("DELETE FROM plants WHERE plant_id = ?", (plant_id,))
+
+    def _validate_plant_name(self, display_name: str) -> str:
+        display_name = (display_name or "").strip()
+        self._validate_device_text(display_name, "display_name", required=True)
+        return display_name
+
+    def _validate_plant_room(self, room_id: Optional[int]) -> Optional[int]:
+        if room_id in (None, ""):
+            return None
+        room_id = int(room_id)
+        if self._database.execute(
+            "SELECT 1 FROM rooms WHERE room_id = ?", (room_id,)
+        ).fetchone() is None:
+            raise ValueError("unknown room")
+        return room_id
+
+    @staticmethod
+    def _validate_watering_days(days: Optional[int]) -> Optional[int]:
+        if days in (None, ""):
+            return None
+        days = int(days)
+        if not 1 <= days <= 365:
+            raise ValueError("expected_watering_days must be between 1 and 365")
+        return days
+
+    @staticmethod
+    def _plant_payload(row: Tuple[Any, ...]) -> Dict[str, Any]:
+        return {
+            "plant_id": row[0],
+            "display_name": row[1],
+            "profile_id": row[2],
+            "room_id": row[3],
+            "room": row[4],
+            "archived": bool(row[5]),
+            "created_at": row[6],
+            "expected_watering_days": row[7],
+            # The sensor watching it, if one is. This is what tells the two
+            # kinds of plant apart everywhere else.
+            "sensor_id": row[8],
+            "last_watered_at": row[9],
+        }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
         plant_id = self._plant_id_for(sensor_id)
@@ -2929,15 +3132,17 @@ class ReadingStore:
         with self._condition:
             self._database.close()
 
-    def _save_event(self, event: CareEvent) -> None:
+    def _save_event(self, event: CareEvent, plant_id: Optional[int] = None) -> None:
+        if plant_id is None and event.sensor_id:
+            plant_id = self._plant_id_for(event.sensor_id)
         if event.kind in ONE_PER_DAY_KINDS:
-            # Named after the day it belongs to, so a second record of the same
-            # day's feeding is the same row and is written once.
+            # Named after the day it belongs to, and after whose day it is: a
+            # second record of the same plant's feeding is the same row.
+            subject = f"plant-{plant_id}" if plant_id is not None else f"sensor-{event.sensor_id}"
             event = replace(
                 event,
-                event_id=f"{event.kind}-{event.sensor_id}-{self._local_day(event.detected_at)}",
+                event_id=f"{event.kind}-{subject}-{self._local_day(event.detected_at)}",
             )
-        plant_id = self._plant_id_for(event.sensor_id) if event.sensor_id else None
         cursor = self._database.execute(
             """
             INSERT OR IGNORE INTO care_events

@@ -15,7 +15,7 @@ from open_plant_pulse_hub.domain.plant_profiles import public_plant_profiles
 STATIC_DIR = Path(__file__).with_name("static")
 # Top-level paths the browser application owns. Each one, and anything beneath it,
 # is served the same shell so a reload or a pasted link lands on the right view.
-APPLICATION_PAGES = ("/sensors", "/settings", "/onboarding")
+APPLICATION_PAGES = ("/sensors", "/plants", "/settings", "/onboarding")
 # A firmware image for this sensor is about 1.3 MB; the ceiling is a slot's worth
 # with room to spare, so an accidental upload of something enormous is refused
 # before it is read rather than after.
@@ -108,6 +108,10 @@ def create_server(
                 self._send_json(store.hub_wifi_settings())
             elif path == "/api/rooms":
                 self._send_json({"items": store.rooms()})
+            elif path == "/api/plants":
+                self._send_json({"items": store.plants()})
+            elif path.startswith("/api/plants/"):
+                self._send_plant(path[len("/api/plants/") :])
             elif path == "/api/firmware":
                 self._send_json(
                     {"items": firmware.images() if firmware is not None else [],
@@ -172,6 +176,7 @@ def create_server(
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
+                and not path.startswith("/api/plants/")
                 and not path.startswith("/api/lights/")
             ):
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -179,7 +184,14 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path.startswith("/api/lights/"):
+                if path.startswith("/api/plants/"):
+                    result = store.update_plant(
+                        self._plant_id(path[len("/api/plants/") :]),
+                        str(payload.get("display_name", "")),
+                        self._optional_int(payload.get("room_id")),
+                        self._optional_int(payload.get("expected_watering_days")),
+                    )
+                elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(
                         unquote(path[len("/api/lights/") :]),
                         str(payload.get("display_name", "")),
@@ -240,6 +252,18 @@ def create_server(
 
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/plants/"):
+                try:
+                    self._require_same_origin()
+                    store.delete_plant(self._plant_id(path[len("/api/plants/") :]))
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/api/lights/"):
                 try:
                     self._require_same_origin()
@@ -332,6 +356,26 @@ def create_server(
                     result = self._light_service().set_power(
                         unquote(path[len("/api/lights/") : -len("/power")]), on
                     )
+                elif path == "/api/plants":
+                    result = store.create_plant(
+                        str(payload.get("display_name", "")),
+                        self._optional_int(payload.get("room_id")),
+                        self._optional_int(payload.get("expected_watering_days")),
+                    )
+                elif path.startswith("/api/plants/") and path.endswith("/care"):
+                    plant_id = self._plant_id(path[len("/api/plants/") : -len("/care")])
+                    result = store.record_plant_care(
+                        plant_id,
+                        str(payload.get("kind", "")),
+                        None,
+                        self._optional_str(payload.get("note")),
+                    )
+                elif path.startswith("/api/plants/") and path.endswith("/archive"):
+                    plant_id = self._plant_id(path[len("/api/plants/") : -len("/archive")])
+                    archived = payload.get("archived")
+                    if not isinstance(archived, bool):
+                        raise ValueError("archived must be a boolean")
+                    result = store.set_plant_archived(plant_id, archived)
                 elif path == "/api/rooms":
                     result = store.create_room(
                         str(payload.get("name", "")),
@@ -467,6 +511,32 @@ def create_server(
             if content_length <= 0 or content_length > MAX_FIRMWARE_UPLOAD_BYTES:
                 raise ValueError("firmware upload size is invalid")
             return firmware.add(self.rfile.read(content_length))
+
+        @staticmethod
+        def _plant_id(raw: str) -> int:
+            """A plant is named by a number, and nothing else is."""
+            try:
+                return int(unquote(raw))
+            except ValueError as error:
+                raise ValueError("plant_id must be a number") from error
+
+        def _send_plant(self, raw: str) -> None:
+            try:
+                plant_id = self._plant_id(raw)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                return
+            plant = store.plant(plant_id)
+            if plant is None:
+                self._send_json({"error": "plant not found"}, HTTPStatus.NOT_FOUND)
+                return
+            # One request for everything the page draws, because a page
+            # that polls four endpoints for one plant is four times the
+            # chance of showing half an answer.
+            plant = dict(plant)
+            plant["journey"] = store.plant_journey_of(plant_id)
+            plant["care_log"] = store.care_log(50, plant_id=plant_id)
+            self._send_json(plant)
 
         def _read_json(self) -> Dict[str, Any]:
             content_length = int(self.headers.get("Content-Length", "0"))
