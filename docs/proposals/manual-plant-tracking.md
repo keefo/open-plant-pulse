@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed 2026-10-05. Nothing implemented.
+Phases 1 to 4 built on 2026-10-05: the plant is the subject of its own
+history, a plant can be held with no sensor, it has its own page, and the pot
+can be weighed. Phase 5, unifying the routes, is not started, so an
+instrumented plant is still at `/sensors/<id>` and a manual one at
+`/plants/<id>`.
 
 ## Goal
 

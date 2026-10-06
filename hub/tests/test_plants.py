@@ -279,6 +279,37 @@ class PlantApiTests(unittest.TestCase):
         # The ceiling is taken after watering, so the watering is on record.
         self.assertEqual(read["journey"]["watering_count"], 1)
 
+    def test_the_page_carries_only_what_a_plant_without_a_sensor_has(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        # Its own page, its own sections.
+        self.assertIn('data-page="plant"', page)
+        self.assertIn('id="plant-weight-title"', page)
+        self.assertIn('id="plant-care-log"', page)
+        self.assertIn('if (path.startsWith("/plants/")) return "plant";', script)
+        # Weighed in kilograms, which is what the field asks for.
+        self.assertIn('id="plant-weight-input"', page)
+        self.assertIn("kilograms: kilogramsTyped", script)
+        # Nothing on it claims a measurement the plant does not have.
+        for absent in ("climate-history", "chemistry-grid", "raw-report-log", "sensor-firmware"):
+            section = page[page.index('data-page="plant"'):]
+            self.assertNotIn(f'{absent}" data-page="plant"', section)
+
+    def test_a_plant_with_no_sensor_is_offered_on_the_household_page(self) -> None:
+        script = self.call_text("/app.js")
+
+        self.assertIn('plant.sensor_id === null', script)
+        self.assertIn("/plants/${plant.plant_id}", script)
+        # A plant is not faulty for having no sensor, and the page must not
+        # tell somebody to enrol one above a list of their own plants.
+        self.assertIn('"manual"', script)
+        self.assertIn("No plants yet. Add one", script)
+
+    def call_text(self, path: str) -> str:
+        with urlopen(self.base_url + path, timeout=2.0) as response:
+            return response.read().decode("utf-8")
+
     def test_an_unknown_plant_is_a_404_and_a_bad_one_a_400(self) -> None:
         for path, code in (("/api/plants/404", 404), ("/api/plants/fig", 400)):
             with self.subTest(path), self.assertRaises(HTTPError) as raised:

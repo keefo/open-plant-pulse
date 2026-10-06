@@ -111,6 +111,7 @@ function pageFromLocation() {
    *
    * Plant care and device administration are different jobs done at different
    * times, and the forms for the second were crowding the first. */
+  if (path.startsWith("/plants/")) return "plant";
   if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";
   if (path.startsWith("/sensors/")) return "detail";
   if (path === "/settings" || path.startsWith("/settings/")) return "settings";
@@ -170,6 +171,9 @@ function titleForPage(page) {
   if (page === "config") {
     const name = selectedSensor?.display_name || selectedSensorId || "Sensor";
     return `${name} · Configuration · Open Plant Pulse`;
+  }
+  if (page === "plant") {
+    return `${selectedPlant?.display_name || "Plant"} · Open Plant Pulse`;
   }
   if (page === "settings") return "Settings · Open Plant Pulse";
   if (page === "onboarding") return "Add a sensor · Open Plant Pulse";
@@ -235,12 +239,7 @@ function renderFleet() {
   );
   if (!fleetSensors.length) {
     for (const card of cardsBySensorId.values()) card.remove();
-    if (!grid.querySelector(".empty-state")) {
-      const empty = document.createElement("p");
-      empty.className = "empty-state";
-      setText(empty, "No sensors are enrolled. Open the sensor inbox to enroll a nearby sensor.");
-      grid.append(empty);
-    }
+    updateFleetEmptyState();
     return;
   }
 
@@ -1328,8 +1327,9 @@ function careEventNote(event) {
   return event.confidence === "high" ? "High confidence" : "Confirm this event";
 }
 
-function renderCareLog(items) {
-  const list = document.getElementById("care-log-list");
+function renderCareLog(items, listId = "care-log-list") {
+  const list = document.getElementById(listId);
+  if (list === null) return;
   if (!renderKeyChanged(list, items)) return;
   list.replaceChildren();
   if (!items.length) {
@@ -1568,6 +1568,11 @@ async function refresh() {
   try {
     await refreshFleet();
     const page = pageFromLocation();
+    if (page === "plant") {
+      await refreshPlant();
+      return;
+    }
+    if (page === "fleet") await refreshPlants();
     if (page === "settings") {
       if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
       if (settingsTabFromLocation() === "lights") await refreshLights();
@@ -1817,6 +1822,227 @@ async function cancelFirmwareUpdate() {
   await refreshFleet();
 }
 
+/* The household has nothing only when it has neither a sensor nor a plant.
+ * Telling somebody to enrol a sensor above a list of their own plants reads
+ * as though the plants are not there. */
+function updateFleetEmptyState() {
+  const grid = document.getElementById("fleet-grid");
+  if (grid === null) return;
+  const nothing = !fleetSensors.length && !manualPlants.length;
+  const existing = grid.querySelector(".empty-state");
+  if (!nothing) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const empty = document.createElement("p");
+  empty.className = "empty-state";
+  setText(empty, "No plants yet. Add one, or open the sensor inbox to enrol a sensor.");
+  grid.append(empty);
+}
+
+/* Plants nothing is watching, beside the ones that are.
+ *
+ * A card cannot say "healthy" about a plant with no readings, so it says what
+ * is actually known: when it was last watered, and how much water the pot has
+ * left when the scale can answer that. */
+let manualPlants = [];
+
+async function refreshPlants() {
+  try {
+    const response = await fetch("/api/plants");
+    if (!response.ok) return;
+    manualPlants = (await response.json()).items.filter((plant) => plant.sensor_id === null);
+  } catch (_error) {
+    return;
+  }
+  renderManualPlants();
+}
+
+function renderManualPlants() {
+  const grid = document.getElementById("plant-grid");
+  if (grid === null) return;
+  if (!renderKeyChanged(grid, manualPlants)) return;
+  grid.replaceChildren();
+  updateFleetEmptyState();
+  for (const plant of manualPlants) {
+    const card = document.createElement("a");
+    card.className = "fleet-card";
+    card.href = `/plants/${plant.plant_id}`;
+    const name = document.createElement("strong");
+    setText(name, plant.display_name);
+    const where = document.createElement("code");
+    setText(where, plant.room ? plant.room : "no room recorded");
+    const when = document.createElement("span");
+    const watered = daysSince(plant.last_watered_at);
+    setText(when, watered ? "Watered " + watered : "Not watered yet");
+    const state = document.createElement("small");
+    setText(state, "No sensor");
+    state.dataset.state = "manual";
+    card.append(name, where, when, state);
+    grid.append(card);
+  }
+}
+
+async function addPlant() {
+  const name = window.prompt("What is this plant called?");
+  if (!name) return;
+  const response = await fetch("/api/plants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: name }),
+  });
+  if (!response.ok) return;
+  const plant = await response.json();
+  window.location.href = `/plants/${plant.plant_id}`;
+}
+
+/* A plant with no sensor.
+ *
+ * The same page as an instrumented plant's, with the sections that would have
+ * nothing to say left out: no readings, no charts, no firmware. What is left
+ * is what somebody records by hand, and what the pot weighs. */
+let selectedPlant = null;
+
+function plantIdFromLocation() {
+  const match = window.location.pathname.match(/^\/plants\/(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+function kilograms(grams) {
+  return grams == null ? "--" : (grams / 1000).toFixed(2);
+}
+
+/* Days since something, in the words somebody would use. */
+function daysSince(at) {
+  if (!at) return null;
+  const days = Math.floor((Date.now() - Date.parse(at)) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
+function renderPlantPage() {
+  if (!selectedPlant) return;
+  const weight = selectedPlant.weight || {};
+  const journey = selectedPlant.journey || {};
+
+  setText(document.getElementById("plant-page-name"), selectedPlant.display_name);
+  setText(document.getElementById("plant-page-room"),
+    selectedPlant.room ? "in the " + selectedPlant.room : "no room recorded");
+  const watered = daysSince(selectedPlant.last_watered_at);
+  setText(document.getElementById("plant-page-watered"),
+    watered ? "Watered " + watered : "Never watered");
+
+  /* The headline says the most actionable true thing, and nothing more: how
+   * long the water will last if that is known, what is left if only that is,
+   * and otherwise simply that nothing has been weighed. */
+  const state = weight.days_left != null
+    ? `About ${weight.days_left} days of water left`
+    : weight.remaining_percent != null
+      ? `${weight.remaining_percent}% of its water left`
+      : weight.used_grams != null
+        ? `${weight.used_grams} ml used since watering`
+        : "Nothing weighed yet";
+  setText(document.getElementById("plant-page-state"), state);
+
+  setText(document.getElementById("plant-weight-latest"),
+    weight.latest ? kilograms(weight.latest.grams) : "--");
+  setText(document.getElementById("plant-weight-used"),
+    weight.used_grams == null ? "--" : String(weight.used_grams));
+  setText(document.getElementById("plant-weight-remaining"),
+    weight.remaining_percent == null ? "--" : weight.remaining_percent + "%");
+  setText(document.getElementById("plant-weight-daily"),
+    weight.daily_grams == null ? "--" : String(weight.daily_grams));
+  setText(document.getElementById("plant-weight-days"),
+    weight.days_left == null ? "--" : String(weight.days_left));
+  setText(document.getElementById("plant-weight-summary"),
+    weight.watered
+      ? `Full at ${kilograms(weight.watered.grams)} kg, weighed ${daysSince(weight.watered.at)}`
+      : "No watered weight yet");
+
+  setText(document.getElementById("plant-journey-days"), journey.monitored_days ?? "--");
+  setText(document.getElementById("plant-journey-waterings"), journey.watering_count ?? "--");
+  setText(document.getElementById("plant-journey-fertilizing"), journey.fertilizing_count ?? "--");
+  setText(document.getElementById("plant-journey-lighting"), journey.lighting_hours ?? "--");
+  setText(document.getElementById("plant-journey-started"),
+    selectedPlant.created_at
+      ? "Since " + new Date(selectedPlant.created_at).toLocaleDateString(
+          undefined, { dateStyle: "medium" })
+      : "Waiting for its first day");
+
+  renderCareLog(selectedPlant.care_log || [], "plant-care-log");
+
+  const today = new Date().toDateString();
+  for (const [id, kind] of [["plant-watered", "watering"], ["plant-fertilized", "fertilizing"]]) {
+    const done = (selectedPlant.care_log || []).some((event) =>
+      event.kind === kind && new Date(event.detected_at).toDateString() === today);
+    const button = document.getElementById(id);
+    setText(button, done
+      ? (kind === "watering" ? "Watered today ✓" : "Fertilized today ✓")
+      : (kind === "watering" ? "Watered today" : "Fertilized today"));
+    setDisabled(button, done);
+  }
+}
+
+async function refreshPlant() {
+  const plantId = plantIdFromLocation();
+  if (plantId === null) return;
+  try {
+    const response = await fetch(`/api/plants/${plantId}`);
+    if (!response.ok) {
+      setText(document.getElementById("plant-page-name"), "Plant not found");
+      return;
+    }
+    selectedPlant = await response.json();
+  } catch (_error) {
+    return;
+  }
+  renderPlantPage();
+}
+
+async function recordPlantCare(kind) {
+  const plantId = plantIdFromLocation();
+  if (plantId === null) return;
+  let note = null;
+  if (kind === "note") {
+    note = window.prompt("What happened to this plant?");
+    if (!note) return;
+  }
+  await fetch(`/api/plants/${plantId}/care`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, note }),
+  });
+  await refreshPlant();
+}
+
+async function recordPlantWeight(kind) {
+  const plantId = plantIdFromLocation();
+  const field = document.getElementById("plant-weight-input");
+  const message = document.getElementById("plant-weight-message");
+  const kilogramsTyped = Number(field.value);
+  if (plantId === null || !field.value || !Number.isFinite(kilogramsTyped) || kilogramsTyped <= 0) {
+    setText(message, "Type what the pot weighs, in kilograms.");
+    return;
+  }
+  const response = await fetch(`/api/plants/${plantId}/weight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kilograms: kilogramsTyped, kind }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That weight could not be recorded.");
+    return;
+  }
+  field.value = "";
+  setText(message, kind === "watered"
+    ? "Recorded, and the watering with it."
+    : "Recorded.");
+  await refreshPlant();
+}
+
 document.getElementById("open-inbox").addEventListener("click", () => document.getElementById("inbox-dialog").showModal());
 document.getElementById("close-settings").addEventListener("click", () => document.getElementById("settings-dialog").close());
 document.getElementById("settings-form").addEventListener("submit", saveManagedSensor);
@@ -1977,6 +2203,13 @@ document.getElementById("firmware-file").addEventListener("change", (event) => {
   event.target.value = "";
 });
 document.getElementById("record-fertilized").addEventListener("click", recordFertilized);
+document.getElementById("add-plant").addEventListener("click", addPlant);
+document.getElementById("plant-watered").addEventListener("click", () => recordPlantCare("watering"));
+document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
+document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
+document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight("reading"));
+document.getElementById("plant-weight-watered").addEventListener("click", () => recordPlantWeight("watered"));
+document.getElementById("plant-weight-thirsty").addEventListener("click", () => recordPlantWeight("thirsty"));
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 trackRawReportsDisclosure();

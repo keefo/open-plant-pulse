@@ -33,6 +33,22 @@
     </div>
   </header>
 
+  <header class="topbar" data-page="plant" hidden>
+    <div class="plant-identity">
+      <p class="eyebrow">PLANT</p>
+      <h1 id="plant-page-name">Plant</h1>
+      <div class="profile-control"><span id="plant-page-room"></span></div>
+    </div>
+    <div class="topbar-aside">
+      <div class="connection" aria-live="polite">
+        <div class="connection-copy">
+          <strong id="plant-page-state">Nothing recorded yet</strong>
+          <span id="plant-page-watered">Never watered</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
   <header class="topbar" data-page="config" hidden>
     <div class="plant-identity">
       <p class="eyebrow">SENSOR CONFIGURATION</p>
@@ -79,8 +95,12 @@
 
   <main>
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
-      <div class="section-heading"><div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Sensor fleet</h1><p>Choose a sensor to open its monitoring details.</p></div></div>
+      <div class="section-heading">
+        <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
+        <button id="add-plant" class="secondary-action" type="button">Add a plant</button>
+      </div>
       <div id="fleet-grid" class="fleet-grid"></div>
+      <div id="plant-grid" class="fleet-grid"></div>
     </section>
     <section class="settings-page" data-page="settings" aria-labelledby="settings-title" hidden>
       <div class="section-heading">
@@ -422,6 +442,57 @@
       </div>
       <div id="care-log-list" class="care-log-list">
         <p class="care-log-empty">No care events detected yet.</p>
+      </div>
+    </section>
+
+    <section class="plant-weight" data-page="plant" aria-labelledby="plant-weight-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
+        <span id="plant-weight-summary">Nothing weighed yet</span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="plant-weight-latest">--</strong><span>Weighs now</span></div>
+        <div><strong id="plant-weight-used">--</strong><span>Water used</span></div>
+        <div><strong id="plant-weight-remaining">--</strong><span>Capacity left</span></div>
+        <div><strong id="plant-weight-daily">--</strong><span>Used a day</span></div>
+        <div><strong id="plant-weight-days">--</strong><span>Days of water left</span></div>
+      </div>
+      <div class="inline-control plant-weight-entry">
+        <label for="plant-weight-input">Weighs</label>
+        <input id="plant-weight-input" type="number" step="0.01" min="0" max="500" placeholder="17.40">
+        <span>kg</span>
+        <button id="plant-weight-record" type="button">Record</button>
+        <button id="plant-weight-watered" type="button">Just watered</button>
+        <button id="plant-weight-thirsty" type="button">It wanted water</button>
+        <output id="plant-weight-message" aria-live="polite"></output>
+      </div>
+      <p class="settings-note">Weigh the pot once it has finished draining and press <b>Just watered</b>: that is the full pot everything else is measured against. Press <b>It wanted water</b> on the day you decide it is thirsty, and the two together say how much water this pot holds.</p>
+    </section>
+
+    <section class="plant-journey" data-page="plant" aria-labelledby="plant-journey-plant-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-plant-title">Plant journey</h2></div>
+        <span id="plant-journey-started">Waiting for its first day</span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="plant-journey-days">--</strong><span>Days tracked</span></div>
+        <div><strong id="plant-journey-waterings">--</strong><span>Waterings</span></div>
+        <div><strong id="plant-journey-fertilizing">--</strong><span>Fertilizations</span></div>
+        <div><strong id="plant-journey-lighting">--</strong><span>Total lighting hours</span></div>
+      </div>
+    </section>
+
+    <section class="care-log" data-page="plant" aria-label="Plant care history" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
+        <div class="settings-sensor-actions">
+          <button id="plant-watered" class="secondary-action" type="button">Watered today</button>
+          <button id="plant-fertilized" class="secondary-action" type="button">Fertilized today</button>
+          <button id="plant-note" class="secondary-action" type="button">Add a note</button>
+        </div>
+      </div>
+      <div id="plant-care-log" class="care-log-list">
+        <p class="care-log-empty">Nothing recorded yet.</p>
       </div>
     </section>
 

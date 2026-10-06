@@ -46,6 +46,8 @@ body {
 .fleet-card span { margin-top: 8px; color: var(--muted); }
 .fleet-card small { width: fit-content; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; text-transform: capitalize; }
 .fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
+/* Having no sensor is a fact about a plant, not a fault with it. */
+.fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
 .settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .settings-panel > label { font-weight: 700; }
 .settings-panel small, .settings-panel output { color: var(--muted); }
@@ -168,7 +170,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
-.care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log, .plant-lighting-summary { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
+.care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight, .climate-history, .raw-report-log, .plant-lighting-summary { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
 .climate-history-heading { align-items: center; }
 .history-range-selector { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #edf2ec; }
 .history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -338,7 +340,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .metric strong { font-size: 1.1em; }
   .moisture-heading strong { font-size: 36px; }
   .moisture-vessel { min-height: 220px; }
-  .care-log, .chemistry, .watering-calendar, .plant-journey, .climate-history, .raw-report-log, .fleet-overview, .sensor-settings { padding: 16px; }
+  .care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight, .climate-history, .raw-report-log, .fleet-overview, .sensor-settings { padding: 16px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
   .history-range-selector { width: 100%; }
   .history-range-selector button { flex: 1; padding-inline: 4px; }
@@ -423,6 +425,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
    update that has stopped must look stopped. */
 .firmware-progress { height: 8px; border-radius: 4px; background: #e5eae3; overflow: hidden; }
 .firmware-progress i { display: block; height: 100%; background: var(--leaf); transition: width 400ms ease; }
+.plant-weight .journey-stats { margin-bottom: 18px; }
+.plant-weight-entry { flex-wrap: wrap; margin-bottom: 16px; }
+.plant-weight-entry label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.plant-weight-entry button { color: white; background: var(--leaf); border-color: var(--leaf); }
+.plant-weight-entry output { color: var(--muted); font-size: 13px; }
 .settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
 .onboarding-card { max-width: 820px; margin-inline: auto; padding: 26px 30px; display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }
