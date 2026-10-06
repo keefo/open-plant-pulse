@@ -5,6 +5,7 @@ nothing is watching: it is created by hand, cared for by hand, and still has a
 history and a journey of its own.
 """
 
+from datetime import datetime, timedelta, timezone
 import json
 from threading import Thread
 import unittest
@@ -129,6 +130,89 @@ class ManualPlantTests(unittest.TestCase):
                 call()
 
 
+def ago(days: float) -> str:
+    """A timestamp that many days back, for a cycle that has to span time."""
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class PlantWeightTests(unittest.TestCase):
+    """For a pot, mass is the measure of water with nothing assumed about soil."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.plant_id = self.store.create_plant("Bird of paradise")["plant_id"]
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_a_pot_with_one_weighing_knows_what_it_weighs_and_nothing_else(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 17_400)
+
+        status = self.store.plant_weight_status(self.plant_id)
+
+        self.assertEqual(status["latest"]["grams"], 17_400)
+        # Everything else needs a second number to mean anything.
+        for absent in ("watered", "thirsty", "used_grams", "capacity_grams",
+                       "remaining_percent", "daily_grams", "days_left"):
+            self.assertIsNone(status[absent], absent)
+
+    def test_the_ceiling_turns_later_weighings_into_water_used(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(6))
+        self.store.record_plant_weight(self.plant_id, 16_700, at=ago(0))
+
+        status = self.store.plant_weight_status(self.plant_id)
+
+        # Grams of water gone, which is millilitres.
+        self.assertEqual(status["used_grams"], 700)
+        self.assertEqual(status["daily_grams"], 117)
+
+    def test_a_floor_as_well_gives_what_is_left_and_how_long(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(10))
+        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty", at=ago(9))
+        self.store.record_plant_weight(self.plant_id, 16_800, at=ago(0))
+
+        status = self.store.plant_weight_status(self.plant_id)
+
+        self.assertEqual(status["capacity_grams"], 1_200)
+        self.assertEqual(status["remaining_percent"], 50)
+        self.assertIsNotNone(status["days_left"])
+
+    def test_two_weighings_an_hour_apart_say_nothing_about_a_day(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(0.05))
+        self.store.record_plant_weight(self.plant_id, 17_380, at=ago(0))
+
+        # That difference is the scale, not the plant.
+        self.assertIsNone(self.store.plant_weight_status(self.plant_id)["daily_grams"])
+
+    def test_the_rate_is_measured_since_the_watering_not_across_it(self) -> None:
+        # A rate measured across a watering would be a rate of filling.
+        self.store.record_plant_weight(self.plant_id, 16_300, at=ago(12))
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(10))
+        self.store.record_plant_weight(self.plant_id, 16_900, at=ago(0))
+
+        self.assertEqual(self.store.plant_weight_status(self.plant_id)["daily_grams"], 50)
+
+    def test_recording_the_watered_weight_records_the_watering(self) -> None:
+        # That weighing is taken because the plant has just been watered, and
+        # saying so twice invites the two to disagree.
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered")
+
+        log = self.store.care_log(10, plant_id=self.plant_id)
+        self.assertEqual([entry["kind"] for entry in log], ["watering"])
+        self.assertEqual(
+            self.store.plant_journey_of(self.plant_id)["watering_count"], 1
+        )
+
+    def test_it_refuses_a_weight_no_pot_has(self) -> None:
+        for description, grams in (("nothing", 0), ("half a tonne", 600_000)):
+            with self.subTest(description), self.assertRaises(ValueError):
+                self.store.record_plant_weight(self.plant_id, grams)
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(self.plant_id, 1_000, "floating")
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(404, 1_000)
+
+
 class PlantApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
@@ -182,6 +266,18 @@ class PlantApiTests(unittest.TestCase):
         with urlopen(self.base_url + "/plants/1", timeout=2.0) as response:
             self.assertEqual(response.status, 200)
             self.assertIn(b"<title>Open Plant Pulse</title>", response.read())
+
+    def test_a_pot_is_weighed_in_kilograms_and_kept_in_grams(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})
+        path = f"/api/plants/{plant['plant_id']}"
+
+        self.call("POST", path + "/weight", {"kilograms": 17.4, "kind": "watered"})
+        read = self.call("GET", path)
+
+        self.assertEqual(read["weight"]["watered"]["grams"], 17_400)
+        self.assertEqual(read["weights"][0]["grams"], 17_400)
+        # The ceiling is taken after watering, so the watering is on record.
+        self.assertEqual(read["journey"]["watering_count"], 1)
 
     def test_an_unknown_plant_is_a_404_and_a_bad_one_a_400(self) -> None:
         for path, code in (("/api/plants/404", 404), ("/api/plants/fig", 400)):

@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 24
+DATABASE_SCHEMA_VERSION = 25
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -845,6 +845,33 @@ MIGRATIONS: Dict[int, str] = {
             WHERE sensors.plant_id = plants.plant_id AND sensors.room_id IS NOT NULL
             LIMIT 1
         );
+    """,
+    25: """
+        /* Every weighing of a pot, kept.
+
+           For a pot, mass is the only measure of water with no soil-type
+           assumption and no calibration: the probe reads two centimetres
+           around its needles, the scale reads the whole pot. Grams, because
+           that is what a scale measures; kilograms are an entry convenience.
+
+           kind says what the weighing was for. 'watered' is the ceiling, set
+           once drainage stops; 'thirsty' is the floor, set when the plant
+           wanted water; everything else is just where it is now. They are rows
+           rather than two columns on the plant, so a repot or a season's
+           growth adds a new ceiling and the old one stays in the history.
+
+           source is 'manual' now. A load cell would write 'scale' rows into
+           this same table, which is why it is not called manual_weights. */
+        CREATE TABLE plant_weights (
+            weight_id INTEGER PRIMARY KEY,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+            at TEXT NOT NULL,
+            grams INTEGER NOT NULL CHECK (grams > 0),
+            source TEXT NOT NULL CHECK (source IN ('manual', 'scale')),
+            kind TEXT NOT NULL CHECK (kind IN ('reading', 'watered', 'thirsty')),
+            note TEXT
+        );
+        CREATE INDEX plant_weights_by_plant ON plant_weights(plant_id, at DESC);
     """,
 }
 

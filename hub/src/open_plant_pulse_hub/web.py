@@ -370,6 +370,19 @@ def create_server(
                         None,
                         self._optional_str(payload.get("note")),
                     )
+                elif path.startswith("/api/plants/") and path.endswith("/weight"):
+                    plant_id = self._plant_id(path[len("/api/plants/") : -len("/weight")])
+                    # Typed in kilograms, kept in grams: nobody wants to enter
+                    # 17400 for a pot, and no scale is honest past the gram.
+                    kilograms = payload.get("kilograms")
+                    if kilograms in (None, ""):
+                        raise ValueError("kilograms is required")
+                    result = store.record_plant_weight(
+                        plant_id,
+                        round(float(kilograms) * 1000),
+                        str(payload.get("kind", "reading")),
+                        self._optional_str(payload.get("note")),
+                    )
                 elif path.startswith("/api/plants/") and path.endswith("/archive"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/archive")])
                     archived = payload.get("archived")
@@ -536,6 +549,8 @@ def create_server(
             plant = dict(plant)
             plant["journey"] = store.plant_journey_of(plant_id)
             plant["care_log"] = store.care_log(50, plant_id=plant_id)
+            plant["weight"] = store.plant_weight_status(plant_id)
+            plant["weights"] = store.plant_weights(plant_id, 30)
             self._send_json(plant)
 
         def _read_json(self) -> Dict[str, Any]:

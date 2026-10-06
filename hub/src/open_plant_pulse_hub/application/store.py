@@ -158,6 +158,13 @@ EMPTY_JOURNEY = {
     "missed_watering_count": 0,
     "lighting_hours": 0,
 }
+# What a weighing was for. The ceiling is the pot once drainage has stopped,
+# the floor is the pot when the plant wanted water, and everything else is
+# simply where it is now.
+WEIGHT_KINDS = ("reading", "watered", "thirsty")
+# Below this a daily rate is guesswork: two weighings an hour apart say more
+# about the scale than about the plant.
+MIN_WEIGHT_SPAN = timedelta(hours=12)
 # Care a person records themselves, because no probe could have seen it.
 MANUAL_CARE_KINDS = {"watering": "Watered", "fertilizing": "Fertilized", "note": "Note"}
 # Care that happens at most once in a day, whoever noticed it. A rise the probe
@@ -2689,6 +2696,131 @@ class ReadingStore:
                 plant_id=plant_id,
             )
         return self.plant_journey_of(plant_id)
+
+    def record_plant_weight(
+        self,
+        plant_id: int,
+        grams: int,
+        kind: str = "reading",
+        note: Optional[str] = None,
+        at: Optional[str] = None,
+        source: str = "manual",
+    ) -> Dict[str, Any]:
+        """Write down what the pot weighs.
+
+        Recording the watered weight also records the watering: that weighing
+        is taken because the plant has just been watered and drained, and
+        making somebody say so twice invites the two to disagree.
+        """
+        if kind not in WEIGHT_KINDS:
+            raise ValueError(f"unknown weight kind: {kind}")
+        if source not in ("manual", "scale"):
+            raise ValueError(f"unknown weight source: {source}")
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        grams = int(round(float(grams)))
+        if not 1 <= grams <= 500_000:
+            raise ValueError("a pot weighs between 1 gram and 500 kilograms")
+        at = at or _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                INSERT INTO plant_weights (plant_id, at, grams, source, kind, note)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (plant_id, at, grams, source, kind, (note or "").strip() or None),
+            )
+        if kind == "watered":
+            self.record_plant_care(plant_id, "watering", at)
+        return self.plant_weight_status(plant_id)
+
+    def plant_weights(self, plant_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        safe_limit = max(1, min(limit, 500))
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT weight_id, at, grams, source, kind, note
+                FROM plant_weights WHERE plant_id = ?
+                ORDER BY at DESC, weight_id DESC LIMIT ?
+                """,
+                (plant_id, safe_limit),
+            ).fetchall()
+        return [
+            {
+                "weight_id": row[0],
+                "at": row[1],
+                "grams": row[2],
+                "source": row[3],
+                "kind": row[4],
+                "note": row[5],
+            }
+            for row in rows
+        ]
+
+    def plant_weight_status(self, plant_id: int) -> Dict[str, Any]:
+        """What the weighings say about the water in the pot.
+
+        Every figure here is absent rather than guessed. A pot with one
+        weighing knows what it weighs and nothing else; it takes a ceiling to
+        know how much water has gone, a floor to know how much is left to go,
+        and two weighings far enough apart to know how fast.
+        """
+        now = datetime.now(timezone.utc)
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT at, grams, kind FROM plant_weights
+                WHERE plant_id = ? ORDER BY at DESC, weight_id DESC
+                """,
+                (plant_id,),
+            ).fetchall()
+        status: Dict[str, Any] = {
+            "latest": None,
+            "watered": None,
+            "thirsty": None,
+            "used_grams": None,
+            "capacity_grams": None,
+            "remaining_percent": None,
+            "daily_grams": None,
+            "days_left": None,
+        }
+        if not rows:
+            return status
+
+        def point(row: Tuple[Any, ...]) -> Dict[str, Any]:
+            return {"at": row[0], "grams": row[1]}
+
+        status["latest"] = point(rows[0])
+        watered = next((row for row in rows if row[2] == "watered"), None)
+        thirsty = next((row for row in rows if row[2] == "thirsty"), None)
+        status["watered"] = point(watered) if watered else None
+        status["thirsty"] = point(thirsty) if thirsty else None
+
+        latest_grams = rows[0][1]
+        if watered:
+            status["used_grams"] = max(0, watered[1] - latest_grams)
+        if watered and thirsty and watered[1] > thirsty[1]:
+            capacity = watered[1] - thirsty[1]
+            status["capacity_grams"] = capacity
+            remaining = (latest_grams - thirsty[1]) / capacity * 100
+            status["remaining_percent"] = round(min(100.0, max(0.0, remaining)))
+
+        # How fast it is drying, over the weighings since the last watering:
+        # a rate measured across a watering would be a rate of filling.
+        since = watered[0] if watered else None
+        cycle = [row for row in rows if since is None or row[0] >= since]
+        if len(cycle) >= 2:
+            newest, oldest = cycle[0], cycle[-1]
+            span = self._observation_datetime(newest[0], now) - self._observation_datetime(
+                oldest[0], now
+            )
+            lost = oldest[1] - newest[1]
+            if span >= MIN_WEIGHT_SPAN and lost > 0:
+                daily = lost / (span.total_seconds() / 86400.0)
+                status["daily_grams"] = round(daily)
+                if thirsty and newest[1] > thirsty[1]:
+                    status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
+        return status
 
     def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Every plant the household has, instrumented or not."""
