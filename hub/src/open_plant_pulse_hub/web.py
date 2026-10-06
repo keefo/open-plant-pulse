@@ -372,14 +372,14 @@ def create_server(
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/weight"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/weight")])
-                    # Typed in kilograms, kept in grams: nobody wants to enter
-                    # 17400 for a pot, and no scale is honest past the gram.
-                    kilograms = payload.get("kilograms")
-                    if kilograms in (None, ""):
-                        raise ValueError("kilograms is required")
+                    # Grams, which is what a scale measures and what is kept.
+                    # Whether somebody typed kilograms is the browser's affair.
+                    grams = payload.get("grams")
+                    if grams in (None, ""):
+                        raise ValueError("grams is required")
                     result = store.record_plant_weight(
                         plant_id,
-                        round(float(kilograms) * 1000),
+                        round(float(grams)),
                         str(payload.get("kind", "reading")),
                         self._optional_str(payload.get("note")),
                     )

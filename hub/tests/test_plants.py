@@ -267,17 +267,31 @@ class PlantApiTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn(b"<title>Open Plant Pulse</title>", response.read())
 
-    def test_a_pot_is_weighed_in_kilograms_and_kept_in_grams(self) -> None:
+    def test_a_pot_is_weighed_in_grams_whatever_the_keypad_offered(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})
         path = f"/api/plants/{plant['plant_id']}"
 
-        self.call("POST", path + "/weight", {"kilograms": 17.4, "kind": "watered"})
+        self.call("POST", path + "/weight", {"grams": 17_400, "kind": "watered"})
         read = self.call("GET", path)
 
         self.assertEqual(read["weight"]["watered"]["grams"], 17_400)
         self.assertEqual(read["weights"][0]["grams"], 17_400)
         # The ceiling is taken after watering, so the watering is on record.
         self.assertEqual(read["journey"]["watering_count"], 1)
+
+    def test_a_pot_can_be_weighed_in_either_unit(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        # A 17 kg pot in grams is five digits to get wrong; a seedling in
+        # kilograms is 0.42 of one. The scale's owner chooses.
+        self.assertIn('id="plant-weight-unit"', page)
+        self.assertIn('<option value="g">g</option>', page)
+        self.assertIn('Math.round(typed * 1000)', script)
+        # Grams on the wire whichever was typed.
+        self.assertIn("JSON.stringify({ grams, kind })", script)
+        # And the choice outlives the page, per browser.
+        self.assertIn("WEIGHT_UNIT_KEY", script)
 
     def test_the_page_carries_only_what_a_plant_without_a_sensor_has(self) -> None:
         page = self.call_text("/")
@@ -288,9 +302,7 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('id="plant-weight-title"', page)
         self.assertIn('id="plant-care-log"', page)
         self.assertIn('if (path.startsWith("/plants/")) return "plant";', script)
-        # Weighed in kilograms, which is what the field asks for.
         self.assertIn('id="plant-weight-input"', page)
-        self.assertIn("kilograms: kilogramsTyped", script)
         # Nothing on it claims a measurement the plant does not have.
         for absent in ("climate-history", "chemistry-grid", "raw-report-log", "sensor-firmware"):
             section = page[page.index('data-page="plant"'):]
