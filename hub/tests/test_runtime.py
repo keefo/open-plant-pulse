@@ -53,6 +53,10 @@ class CareLogTests(unittest.TestCase):
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
+        # The journey belongs to the plant, so naming one is what gives this
+        # sensor's history somewhere to be counted — and what adopts the
+        # events detected before anybody had named it.
+        store.manage_sensor(reading.sensor_id, "Fern", "Office", "strelitzia", None, None, 1800)
 
         expected = {
             "started_at": "2027-01-01T00:00:00Z",
@@ -336,6 +340,7 @@ class WebApiTests(unittest.TestCase):
         store = ReadingStore()
         reading = sample_reading()
         store.add(reading)
+        store.manage_sensor(reading.sensor_id, "Fern", "Office", "strelitzia", None, None, 1800)
         server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, daemon=True)
         thread.start()

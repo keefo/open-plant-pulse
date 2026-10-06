@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 22
+DATABASE_SCHEMA_VERSION = 23
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -760,6 +760,73 @@ MIGRATIONS: Dict[int, str] = {
             lighting_open_json TEXT NOT NULL DEFAULT '{}',
             updated_at TEXT NOT NULL
         );
+    """,
+    23: """
+        /* The plant is the subject; a sensor is an instrument attached to it.
+           A watering happened to a plant, and the sensor is only how the hub
+           came to know, so a care event carries both: the plant it belongs to,
+           and the sensor that noticed, where one did.
+
+           This is what lets a plant exist with no sensor at all, and it means
+           replacing a sensor no longer orphans everything that happened to the
+           plant it was watching. */
+        CREATE TABLE care_events_v23 (
+            event_id TEXT PRIMARY KEY,
+            plant_id INTEGER REFERENCES plants(plant_id) ON DELETE CASCADE,
+            sensor_id TEXT,
+            kind TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            changes_json TEXT NOT NULL,
+            /* An event belongs to something. One of the two is enough: events
+               a sensor produced before anybody claimed it have no plant yet,
+               and are adopted when it is enrolled. */
+            CHECK (plant_id IS NOT NULL OR sensor_id IS NOT NULL)
+        );
+        INSERT INTO care_events_v23 (
+            event_id, plant_id, sensor_id, kind, detected_at, title, summary,
+            confidence, changes_json
+        )
+        SELECT events.event_id, sensors.plant_id, events.sensor_id, events.kind,
+               events.detected_at, events.title, events.summary, events.confidence,
+               events.changes_json
+        FROM care_events AS events
+        LEFT JOIN sensors ON sensors.sensor_id = events.sensor_id;
+        DROP TABLE care_events;
+        ALTER TABLE care_events_v23 RENAME TO care_events;
+        CREATE INDEX care_events_by_plant ON care_events(plant_id, detected_at DESC);
+        CREATE INDEX care_events_by_sensor ON care_events(sensor_id, detected_at DESC);
+
+        /* The journey is the plant's lifetime, so it is keyed by the plant.
+           A sensor nobody has claimed has no plant and no journey; enrolling
+           it gives it both. */
+        CREATE TABLE plant_journey_v23 (
+            plant_id INTEGER PRIMARY KEY REFERENCES plants(plant_id) ON DELETE CASCADE,
+            first_reading_at TEXT,
+            last_reading_at TEXT,
+            watering_count INTEGER NOT NULL DEFAULT 0,
+            fertilizing_count INTEGER NOT NULL DEFAULT 0,
+            settled_missed_count INTEGER NOT NULL DEFAULT 0,
+            lighting_seconds INTEGER NOT NULL DEFAULT 0,
+            lighting_open_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        );
+        INSERT OR REPLACE INTO plant_journey_v23 (
+            plant_id, first_reading_at, last_reading_at, watering_count,
+            fertilizing_count, settled_missed_count, lighting_seconds,
+            lighting_open_json, updated_at
+        )
+        SELECT sensors.plant_id, journey.first_reading_at, journey.last_reading_at,
+               journey.watering_count, journey.fertilizing_count,
+               journey.settled_missed_count, journey.lighting_seconds,
+               journey.lighting_open_json, journey.updated_at
+        FROM plant_journey AS journey
+        JOIN sensors ON sensors.sensor_id = journey.sensor_id
+        WHERE sensors.plant_id IS NOT NULL;
+        DROP TABLE plant_journey;
+        ALTER TABLE plant_journey_v23 RENAME TO plant_journey;
     """,
 }
 

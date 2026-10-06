@@ -290,11 +290,11 @@ class LightingCareLogTests(unittest.TestCase):
         """
         self.store._database.execute(
             """
-            INSERT INTO care_events (event_id, sensor_id, kind, detected_at, title,
+            INSERT INTO care_events (event_id, plant_id, kind, detected_at, title,
                                      summary, confidence, changes_json)
             VALUES (?, ?, 'lighting', ?, 'x', 'y', 'high', ?)
             """,
-            (light_id + at, self.sensor_id, at,
+            (light_id + at, self.store.sensor(self.sensor_id)["plant_id"], at,
              json.dumps({"light_id": light_id, "light": "Lamp", "wanted": wanted,
                          "source": source, "outcome": outcome})),
         )
@@ -390,8 +390,8 @@ class LightingCareLogTests(unittest.TestCase):
         self.assertEqual(kept, self.store.rebuild_journey(self.sensor_id))
         self.assertEqual(
             self.store._database.execute(
-                "SELECT lighting_open_json FROM plant_journey WHERE sensor_id = ?",
-                (self.sensor_id,),
+                "SELECT lighting_open_json FROM plant_journey WHERE plant_id = ?",
+                (self.store.sensor(self.sensor_id)["plant_id"],),
             ).fetchone()[0],
             "{}",
         )

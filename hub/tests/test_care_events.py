@@ -315,3 +315,103 @@ class ManualCareTests(unittest.TestCase):
             self.store.record_manual_care("plant-01", "levitating")
         with self.assertRaises(ValueError):
             self.store.record_manual_care("sensor-unknown", "fertilizing")
+
+
+class PlantAsSubjectTests(unittest.TestCase):
+    """A care event happened to a plant; a sensor is how the hub found out."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.store.record_beacon(
+            sensor_id="sensor-one",
+            received_at="2026-10-05T00:00:00Z",
+            observed_identifier="test",
+            source_adapter="test",
+            rssi=-40,
+            service_data=b"\x40\x00\x01",
+            contract_version=3,
+        )
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def enroll(self, sensor_id: str = "sensor-one", name: str = "Fern") -> int:
+        self.store.manage_sensor(sensor_id, name, "Office", "strelitzia", None, None, 1800)
+        return self.store.sensor(sensor_id)["plant_id"]
+
+    def saved_event(self, sensor_id: str, kind: str, detected_at: str) -> None:
+        self.store._save_event(
+            CareEvent(
+                event_id=f"{kind}-{detected_at}",
+                sensor_id=sensor_id,
+                kind=kind,
+                detected_at=detected_at,
+                title="t",
+                summary="s",
+                confidence="high",
+                changes={},
+            )
+        )
+
+    def test_an_event_carries_the_plant_and_the_sensor_that_noticed(self) -> None:
+        plant_id = self.enroll()
+        self.saved_event("sensor-one", "watering", "2026-10-05T09:00:00Z")
+
+        row = self.store._database.execute(
+            "SELECT plant_id, sensor_id FROM care_events WHERE kind = 'watering'"
+        ).fetchone()
+
+        self.assertEqual(row, (plant_id, "sensor-one"))
+
+    def test_enrolling_adopts_what_the_sensor_noticed_beforehand(self) -> None:
+        # Detected while the sensor sat in the inbox, before it had a plant.
+        self.saved_event("sensor-one", "watering", "2026-10-04T09:00:00Z")
+        self.assertIsNone(
+            self.store._database.execute(
+                "SELECT plant_id FROM care_events WHERE kind = 'watering'"
+            ).fetchone()[0]
+        )
+
+        plant_id = self.enroll()
+
+        # The plant did not begin when somebody named it.
+        self.assertEqual(
+            self.store._database.execute(
+                "SELECT plant_id FROM care_events WHERE kind = 'watering'"
+            ).fetchone()[0],
+            plant_id,
+        )
+        self.assertEqual(self.store.plant_journey("sensor-one")["watering_count"], 1)
+
+    def test_a_sensor_nobody_has_claimed_has_no_journey_and_that_is_not_an_error(self) -> None:
+        self.saved_event("sensor-one", "watering", "2026-10-04T09:00:00Z")
+
+        journey = self.store.plant_journey("sensor-one")
+
+        self.assertEqual(journey["watering_count"], 0)
+        self.assertIsNone(journey["started_at"])
+        # Its own events are still readable, by the sensor, until a plant has them.
+        self.assertEqual(len(self.store.care_log(10, "sensor-one")), 1)
+
+    def test_the_care_log_asked_by_sensor_answers_for_the_plant(self) -> None:
+        plant_id = self.enroll()
+        self.saved_event("sensor-one", "watering", "2026-10-05T09:00:00Z")
+        # Recorded against the plant with no sensor involved at all.
+        self.store.record_manual_care("sensor-one", "fertilizing", at="2026-10-05T10:00:00Z")
+
+        by_sensor = self.store.care_log(10, "sensor-one")
+        by_plant = self.store.care_log(10, plant_id=plant_id)
+
+        self.assertEqual([e["event_id"] for e in by_sensor], [e["event_id"] for e in by_plant])
+        self.assertEqual(len(by_sensor), 2)
+
+    def test_the_journey_can_be_asked_for_by_the_plant_itself(self) -> None:
+        plant_id = self.enroll()
+        self.saved_event("sensor-one", "watering", "2026-10-05T09:00:00Z")
+
+        self.assertEqual(
+            self.store.plant_journey_of(plant_id), self.store.plant_journey("sensor-one")
+        )
+        self.assertEqual(
+            self.store.rebuild_journey_of(plant_id), self.store.plant_journey_of(plant_id)
+        )

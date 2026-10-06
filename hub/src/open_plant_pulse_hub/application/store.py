@@ -149,6 +149,15 @@ def _lighting_summary(source: str, wanted: bool, outcome: str) -> str:
     return f"Asked to switch {state} {reason}; the light did not confirm."
 
 
+# What a journey says about a plant nothing is known about yet.
+EMPTY_JOURNEY = {
+    "started_at": None,
+    "monitored_days": 0,
+    "watering_count": 0,
+    "fertilizing_count": 0,
+    "missed_watering_count": 0,
+    "lighting_hours": 0,
+}
 # Care a person records themselves, because no probe could have seen it.
 MANUAL_CARE_KINDS = {"fertilizing": "Fertilized"}
 # Care that happens at most once in a day, whoever noticed it. A rise the probe
@@ -1063,26 +1072,26 @@ class ReadingStore:
             "source": source,
             "outcome": outcome,
         }
-        for (sensor_id,) in self._database.execute(
-            "SELECT sensor_id FROM sensors WHERE plant_id = ?", (plant_id,)
-        ):
-            self._database.execute(
-                """
-                INSERT OR IGNORE INTO care_events
-                (event_id, sensor_id, kind, detected_at, title, summary, confidence, changes_json)
-                VALUES (?, ?, 'lighting', ?, ?, ?, ?, ?)
-                """,
-                (
-                    uuid4().hex,
-                    sensor_id,
-                    detected_at,
-                    f"{light_name} {'on' if wanted else 'off'}",
-                    _lighting_summary(source, wanted, outcome),
-                    "high" if outcome == "confirmed" else "low",
-                    json.dumps(changes),
-                ),
-            )
-            self._journey_apply_event(sensor_id, "lighting", detected_at, json.dumps(changes))
+        # The light is the plant's, so the entry is the plant's. It used to
+        # be written once per sensor watching the plant, which counted one
+        # switch twice for anybody with two.
+        self._database.execute(
+            """
+            INSERT OR IGNORE INTO care_events
+            (event_id, plant_id, kind, detected_at, title, summary, confidence, changes_json)
+            VALUES (?, ?, 'lighting', ?, ?, ?, ?, ?)
+            """,
+            (
+                uuid4().hex,
+                plant_id,
+                detected_at,
+                f"{light_name} {'on' if wanted else 'off'}",
+                _lighting_summary(source, wanted, outcome),
+                "high" if outcome == "confirmed" else "low",
+                json.dumps(changes),
+            ),
+        )
+        self._journey_apply_event(plant_id, "lighting", detected_at, json.dumps(changes))
 
     def light_events(self, light_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         with self._condition:
@@ -1102,6 +1111,18 @@ class ReadingStore:
                     (light_id, limit),
                 )
             ]
+
+    def _plant_id_for(self, sensor_id: str) -> Optional[int]:
+        """The plant this sensor watches, if anybody has said which.
+
+        A sensor in the inbox watches nothing yet. It still produces readings
+        and the events detected from them, which are adopted by the plant when
+        somebody enrolls it.
+        """
+        row = self._database.execute(
+            "SELECT plant_id FROM sensors WHERE sensor_id = ?", (sensor_id,)
+        ).fetchone()
+        return None if row is None or row[0] is None else int(row[0])
 
     def _plant_of_sensor(self, sensor_id: str) -> int:
         row = self._database.execute(
@@ -1600,7 +1621,11 @@ class ReadingStore:
             self._database.execute(
                 "DELETE FROM report_packet2 WHERE sensor_id = ?", (sensor_id,)
             )
-            self._database.execute("DELETE FROM care_events WHERE sensor_id = ?", (sensor_id,))
+            self._database.execute(
+                "DELETE FROM care_events WHERE sensor_id = ? OR (plant_id IS NOT NULL "
+                "AND plant_id = (SELECT plant_id FROM sensors WHERE sensor_id = ?))",
+                (sensor_id, sensor_id),
+            )
             self._database.execute("DELETE FROM advertisements WHERE sensor_id = ?", (sensor_id,))
             self._database.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
             if plant_id is not None:
@@ -1705,6 +1730,12 @@ class ReadingStore:
                     """,
                     (display_name, profile_id, room or None, plant_id),
                 )
+            # Whatever this sensor noticed before anybody claimed it belongs
+            # to the plant now: the plant did not begin when it was named.
+            self._database.execute(
+                "UPDATE care_events SET plant_id = ? WHERE sensor_id = ? AND plant_id IS NULL",
+                (plant_id, sensor_id),
+            )
             cursor = self._database.execute(
                 """
                 UPDATE sensors
@@ -1891,9 +1922,14 @@ class ReadingStore:
                             """,
                             (replacement_sensor_id, sensor_id),
                         )
+                        # The events move with the history, and so does the
+                        # plant they belong to: a replacement is the same
+                        # plant watched by a different instrument.
                         self._database.execute(
-                            "UPDATE care_events SET sensor_id = ? WHERE sensor_id = ?",
-                            (replacement_sensor_id, sensor_id),
+                            "UPDATE care_events SET sensor_id = ?, plant_id = "
+                            "(SELECT plant_id FROM sensors WHERE sensor_id = ?) "
+                            "WHERE sensor_id = ?",
+                            (replacement_sensor_id, replacement_sensor_id, sensor_id),
                         )
                         self._database.execute(
                             "UPDATE advertisements SET sensor_id = ? WHERE sensor_id = ?",
@@ -1904,8 +1940,10 @@ class ReadingStore:
             if merge_history:
                 # History that moved between sensors takes its figures with it,
                 # and the only honest way to move them is to count them again.
-                self._rebuild_journey(sensor_id)
-                self._rebuild_journey(replacement_sensor_id)
+                for moved in (sensor_id, replacement_sensor_id):
+                    plant_id = self._plant_id_for(moved)
+                    if plant_id is not None:
+                        self._rebuild_journey(plant_id)
             if old[3] is not None:
                 self._sensor_refill_below[replacement_sensor_id] = self._sensor_refill_below.get(
                     sensor_id, self._default_refill_below
@@ -2078,7 +2116,8 @@ class ReadingStore:
                 """
                 SELECT 1
                 FROM care_events
-                WHERE sensor_id = ? AND kind = 'watering'
+                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                  AND kind = 'watering'
                   AND julianday(detected_at) >= julianday(?)
                   AND julianday(detected_at) <= julianday(?)
                 LIMIT 1
@@ -2106,7 +2145,8 @@ class ReadingStore:
             """
             SELECT detected_at
             FROM care_events
-            WHERE sensor_id = ? AND kind = 'watering'
+            WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+              AND kind = 'watering'
               AND detected_at >= ?
             ORDER BY detected_at DESC
             """,
@@ -2274,7 +2314,18 @@ class ReadingStore:
                 ).fetchall()
         return [self._serialize_row(row) for row in rows]
 
-    def care_log(self, limit: int = 50, sensor_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def care_log(
+        self,
+        limit: int = 50,
+        sensor_id: Optional[str] = None,
+        plant_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """What happened to a plant, asked for by the plant or by its sensor.
+
+        Asked by sensor, the answer is still the plant's: everything that
+        happened to it, including what a previous sensor noticed and what
+        somebody recorded by hand with no sensor involved.
+        """
         safe_limit = max(1, min(limit, 200))
         with self._condition:
             query = """
@@ -2282,7 +2333,14 @@ class ReadingStore:
                 FROM care_events
             """
             parameters: Tuple[Any, ...]
-            if sensor_id is not None:
+            if plant_id is None and sensor_id is not None:
+                plant_id = self._plant_id_for(sensor_id)
+            if plant_id is not None:
+                query += " WHERE plant_id = ?"
+                parameters = (plant_id, safe_limit)
+            elif sensor_id is not None:
+                # A sensor nobody has claimed: its events are its own until a
+                # plant adopts them.
                 query += " WHERE sensor_id = ?"
                 parameters = (sensor_id, safe_limit)
             else:
@@ -2339,7 +2397,8 @@ class ReadingStore:
                 """
                 SELECT kind, detected_at
                 FROM care_events
-                WHERE sensor_id = ? AND kind IN ('watering', 'watering_due')
+                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                  AND kind IN ('watering', 'watering_due')
                   AND detected_at < ?
                 ORDER BY detected_at
                 """,
@@ -2348,7 +2407,8 @@ class ReadingStore:
             fertilizing_rows = self._database.execute(
                 """
                 SELECT detected_at FROM care_events
-                WHERE sensor_id = ? AND kind = 'fertilizing' AND detected_at < ?
+                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                  AND kind = 'fertilizing' AND detected_at < ?
                 """,
                 (sensor_id, end_at),
             ).fetchall()
@@ -2462,7 +2522,8 @@ class ReadingStore:
                 """
                 SELECT DISTINCT substr(detected_at, 1, 10)
                 FROM care_events
-                WHERE sensor_id = ? AND kind = 'watering'
+                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                  AND kind = 'watering'
                 ORDER BY detected_at
                 """,
                 (sensor_id,),
@@ -2478,6 +2539,13 @@ class ReadingStore:
         }
 
     def plant_journey(self, sensor_id: str) -> Dict[str, Any]:
+        """The lifetime figures of the plant this sensor watches."""
+        plant_id = self._plant_id_for(sensor_id)
+        if plant_id is None:
+            return dict(EMPTY_JOURNEY)
+        return self.plant_journey_of(plant_id)
+
+    def plant_journey_of(self, plant_id: int) -> Dict[str, Any]:
         """The lifetime figures, read rather than counted again.
 
         Everything that only changes when something happens is kept in the
@@ -2492,30 +2560,23 @@ class ReadingStore:
                 SELECT first_reading_at, last_reading_at, watering_count,
                        fertilizing_count, settled_missed_count, lighting_seconds,
                        lighting_open_json
-                FROM plant_journey WHERE sensor_id = ?
+                FROM plant_journey WHERE plant_id = ?
                 """,
-                (sensor_id,),
+                (plant_id,),
             ).fetchone()
             if row is None:
                 if self._database.execute(
-                    "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
+                    "SELECT 1 FROM plants WHERE plant_id = ?", (plant_id,)
                 ).fetchone() is None:
-                    # Asking about a sensor this hub has never heard of is not an
+                    # Asking about a plant this hub has never heard of is not an
                     # error; it is a plant with no journey.
-                    return {
-                        "started_at": None,
-                        "monitored_days": 0,
-                        "watering_count": 0,
-                        "fertilizing_count": 0,
-                        "missed_watering_count": 0,
-                        "lighting_hours": 0.0,
-                    }
-                # A sensor from before these figures were kept: count it once,
+                    return dict(EMPTY_JOURNEY)
+                # A plant from before these figures were kept: count it once,
                 # and it is kept from then on.
-                row = self._rebuild_journey(sensor_id)
+                row = self._rebuild_journey(plant_id)
                 self._database.commit()
             first_at, last_at, waterings, fertilizings, settled_missed, lit_seconds, _ = row
-            open_missed = self._open_missed_windows(sensor_id, now)
+            open_missed = self._open_missed_windows(plant_id, now)
 
         monitored_days = 0
         if first_at and last_at:
@@ -2534,7 +2595,7 @@ class ReadingStore:
             "lighting_hours": round(lit_seconds / 3600.0),
         }
 
-    def _open_missed_windows(self, sensor_id: str, now: datetime) -> int:
+    def _open_missed_windows(self, plant_id: int, now: datetime) -> int:
         """Watering windows still open, and already a day overdue.
 
         Only the windows since the last watering can still be open, so this
@@ -2543,12 +2604,12 @@ class ReadingStore:
         rows = self._database.execute(
             """
             SELECT detected_at FROM care_events
-            WHERE sensor_id = ? AND kind = 'watering_due'
+            WHERE plant_id = ? AND kind = 'watering_due'
               AND detected_at > COALESCE(
                   (SELECT MAX(detected_at) FROM care_events
-                   WHERE sensor_id = ? AND kind = 'watering'), '')
+                   WHERE plant_id = ? AND kind = 'watering'), '')
             """,
-            (sensor_id, sensor_id),
+            (plant_id, plant_id),
         ).fetchall()
         deadline = now - MISSED_WATERING_GRACE
         return sum(1 for (due_at,) in rows if self._observation_datetime(due_at, now) < deadline)
@@ -2600,6 +2661,12 @@ class ReadingStore:
         return self.plant_journey(sensor_id)
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
+        plant_id = self._plant_id_for(sensor_id)
+        if plant_id is None:
+            return dict(EMPTY_JOURNEY)
+        return self.rebuild_journey_of(plant_id)
+
+    def rebuild_journey_of(self, plant_id: int) -> Dict[str, Any]:
         """Count a plant's journey again from its readings and care events.
 
         The stored row is a cache, never a second truth: anything it holds can
@@ -2607,25 +2674,32 @@ class ReadingStore:
         migration runs, and what to run if a figure is ever doubted.
         """
         with self._condition, self._database:
-            self._rebuild_journey(sensor_id)
-        return self.plant_journey(sensor_id)
+            self._rebuild_journey(plant_id)
+        return self.plant_journey_of(plant_id)
 
-    def _rebuild_journey(self, sensor_id: str) -> Tuple[Any, ...]:
+    def _rebuild_journey(self, plant_id: int) -> Tuple[Any, ...]:
+        # Across every sensor the plant has had, so replacing one does not
+        # shorten the life of the plant it was watching.
         reading_range = self._database.execute(
             """
             SELECT MIN(COALESCE(observed_at, received_at)),
                    MAX(COALESCE(observed_at, received_at))
-            FROM sensor_readings WHERE sensor_id = ?
+            FROM sensor_readings
+            WHERE sensor_id IN (SELECT sensor_id FROM sensors WHERE plant_id = ?)
             """,
-            (sensor_id,),
+            (plant_id,),
         ).fetchone()
         events = self._database.execute(
             """
             SELECT kind, detected_at, changes_json FROM care_events
-            WHERE sensor_id = ? AND kind IN ('watering', 'watering_due', 'fertilizing', 'lighting')
-            ORDER BY detected_at
+            WHERE plant_id = ? AND kind IN ('watering', 'watering_due', 'fertilizing', 'lighting')
+            /* Written order breaks ties: timestamps have one-second
+               resolution, and a lamp switched on and off inside a second
+               must be folded in the order it happened, not whichever order
+               an index happens to return. */
+            ORDER BY detected_at, rowid
             """,
-            (sensor_id,),
+            (plant_id,),
         ).fetchall()
 
         waterings = fertilizings = settled_missed = 0
@@ -2662,11 +2736,11 @@ class ReadingStore:
         self._database.execute(
             """
             INSERT INTO plant_journey (
-                sensor_id, first_reading_at, last_reading_at, watering_count,
+                plant_id, first_reading_at, last_reading_at, watering_count,
                 fertilizing_count, settled_missed_count, lighting_seconds,
                 lighting_open_json, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(sensor_id) DO UPDATE SET
+            ON CONFLICT(plant_id) DO UPDATE SET
                 first_reading_at = excluded.first_reading_at,
                 last_reading_at = excluded.last_reading_at,
                 watering_count = excluded.watering_count,
@@ -2676,7 +2750,7 @@ class ReadingStore:
                 lighting_open_json = excluded.lighting_open_json,
                 updated_at = excluded.updated_at
             """,
-            (sensor_id,) + row + (_timestamp(now),),
+            (plant_id,) + row + (_timestamp(now),),
         )
         return row
 
@@ -2742,7 +2816,7 @@ class ReadingStore:
         return int(self.plant_journey(sensor_id)["lighting_hours"])
 
     def _journey_apply_event(
-        self, sensor_id: str, kind: str, detected_at: str, changes_json: str
+        self, plant_id: int, kind: str, detected_at: str, changes_json: str
     ) -> None:
         """Fold one care event into the plant's kept figures as it happens.
 
@@ -2754,14 +2828,14 @@ class ReadingStore:
         row = self._database.execute(
             """
             SELECT settled_missed_count, lighting_seconds, lighting_open_json
-            FROM plant_journey WHERE sensor_id = ?
+            FROM plant_journey WHERE plant_id = ?
             """,
-            (sensor_id,),
+            (plant_id,),
         ).fetchone()
         if row is None:
-            # Nothing kept for this sensor yet, so there is nothing to add to:
+            # Nothing kept for this plant yet, so there is nothing to add to:
             # counting it from scratch is both the fix and the update.
-            self._rebuild_journey(sensor_id)
+            self._rebuild_journey(plant_id)
             return
         settled_missed, lit_seconds, open_json = row
         now = datetime.now(timezone.utc)
@@ -2770,8 +2844,8 @@ class ReadingStore:
         if kind == "fertilizing":
             self._database.execute(
                 "UPDATE plant_journey SET fertilizing_count = fertilizing_count + 1, "
-                "updated_at = ? WHERE sensor_id = ?",
-                (_timestamp(now), sensor_id),
+                "updated_at = ? WHERE plant_id = ?",
+                (_timestamp(now), plant_id),
             )
             return
         if kind == "watering_due":
@@ -2779,12 +2853,12 @@ class ReadingStore:
             # the clock's answer, and the reader asks it.
             return
         if kind == "watering":
-            settled = self._open_missed_windows_before(sensor_id, at)
+            settled = self._open_missed_windows_before(plant_id, at)
             self._database.execute(
                 "UPDATE plant_journey SET watering_count = watering_count + 1, "
                 "settled_missed_count = settled_missed_count + ?, updated_at = ? "
-                "WHERE sensor_id = ?",
-                (settled, _timestamp(now), sensor_id),
+                "WHERE plant_id = ?",
+                (settled, _timestamp(now), plant_id),
             )
             return
 
@@ -2797,23 +2871,23 @@ class ReadingStore:
             """
             UPDATE plant_journey
             SET lighting_seconds = ?, lighting_open_json = ?, updated_at = ?
-            WHERE sensor_id = ?
+            WHERE plant_id = ?
             """,
-            (lit_seconds + earned, json.dumps(lit), _timestamp(now), sensor_id),
+            (lit_seconds + earned, json.dumps(lit), _timestamp(now), plant_id),
         )
 
-    def _open_missed_windows_before(self, sensor_id: str, watered_at: datetime) -> int:
+    def _open_missed_windows_before(self, plant_id: int, watered_at: datetime) -> int:
         """Windows this watering answers, and how many of them it answers late."""
         rows = self._database.execute(
             """
             SELECT detected_at FROM care_events
-            WHERE sensor_id = ? AND kind = 'watering_due'
+            WHERE plant_id = ? AND kind = 'watering_due'
               AND detected_at > COALESCE(
                   (SELECT MAX(detected_at) FROM care_events
-                   WHERE sensor_id = ? AND kind = 'watering' AND detected_at < ?), '')
+                   WHERE plant_id = ? AND kind = 'watering' AND detected_at < ?), '')
               AND detected_at < ?
             """,
-            (sensor_id, sensor_id, _timestamp(watered_at), _timestamp(watered_at)),
+            (plant_id, plant_id, _timestamp(watered_at), _timestamp(watered_at)),
         ).fetchall()
         return sum(
             1
@@ -2822,6 +2896,11 @@ class ReadingStore:
         )
 
     def _journey_note_reading(self, sensor_id: str, observed_at: str, received_at: str) -> None:
+        plant_id = self._plant_id_for(sensor_id)
+        if plant_id is None:
+            # Readings from a sensor nobody has claimed are kept; the figures
+            # they feed start when a plant does.
+            return
         """Keep the first and last time this plant reported.
 
         Taken from each reading as it lands, so the page never scans a lifetime
@@ -2830,16 +2909,16 @@ class ReadingStore:
         at = observed_at or received_at
         self._database.execute(
             """
-            INSERT INTO plant_journey (sensor_id, first_reading_at, last_reading_at, updated_at)
+            INSERT INTO plant_journey (plant_id, first_reading_at, last_reading_at, updated_at)
             VALUES (?, ?, ?, ?)
-            ON CONFLICT(sensor_id) DO UPDATE SET
+            ON CONFLICT(plant_id) DO UPDATE SET
                 first_reading_at = MIN(COALESCE(plant_journey.first_reading_at, excluded.first_reading_at),
                                        excluded.first_reading_at),
                 last_reading_at = MAX(COALESCE(plant_journey.last_reading_at, excluded.last_reading_at),
                                       excluded.last_reading_at),
                 updated_at = excluded.updated_at
             """,
-            (sensor_id, at, at, _timestamp(datetime.now(timezone.utc))),
+            (plant_id, at, at, _timestamp(datetime.now(timezone.utc))),
         )
 
     def wait_for_reading(self, timeout: float) -> bool:
@@ -2858,14 +2937,17 @@ class ReadingStore:
                 event,
                 event_id=f"{event.kind}-{event.sensor_id}-{self._local_day(event.detected_at)}",
             )
+        plant_id = self._plant_id_for(event.sensor_id) if event.sensor_id else None
         cursor = self._database.execute(
             """
             INSERT OR IGNORE INTO care_events
-            (event_id, sensor_id, kind, detected_at, title, summary, confidence, changes_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (event_id, plant_id, sensor_id, kind, detected_at, title, summary,
+             confidence, changes_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.event_id,
+                plant_id,
                 event.sensor_id,
                 event.kind,
                 event.detected_at,
@@ -2875,11 +2957,12 @@ class ReadingStore:
                 json.dumps(event.changes, separators=(",", ":")),
             ),
         )
-        if cursor.rowcount > 0:
+        if cursor.rowcount > 0 and plant_id is not None:
             # Only a row that was really written counts: saving the same event
-            # twice must not add to a figure twice.
+            # twice must not add to a figure twice. A sensor nobody has claimed
+            # has no plant to keep figures for.
             self._journey_apply_event(
-                event.sensor_id,
+                plant_id,
                 event.kind,
                 event.detected_at,
                 json.dumps(event.changes, separators=(",", ":")),
