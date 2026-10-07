@@ -4,6 +4,13 @@
   "id": "monstera",
   "name": "Monstera",
   "scientific_name": "Monstera deliciosa",
+  "varieties": [
+    {"id": "deliciosa", "name": "Deliciosa", "note": "The usual one: plain green, large fenestrated leaves once mature."},
+    {"id": "borsigiana", "name": "Borsigiana", "note": "Smaller leaves, closer internodes, quicker to climb. Treated the same in every other way."},
+    {"id": "albo", "name": "Albo Variegata", "note": "White sectors, unstable: a shoot that reverts to green will outgrow the rest, and an all-white leaf feeds the plant nothing. Slower, and less tolerant of a dark corner."},
+    {"id": "thai_constellation", "name": "Thai Constellation", "note": "Cream speckling, stable because it is a tissue-culture cultivar. Slower than plain green but far less temperamental than Albo."},
+    {"id": "aurea", "name": "Aurea Variegata", "note": "Yellow sectors rather than white, and as unstable as Albo."}
+  ],
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},

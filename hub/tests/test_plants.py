@@ -375,6 +375,45 @@ class PlantApiTests(unittest.TestCase):
             self.call("PUT", path, {"display_name": "Golden pothos"})["profile_id"]
         )
 
+    def test_a_plant_is_told_which_variety_it_is(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Pothos"})
+        path = f"/api/plants/{plant['plant_id']}"
+
+        saved = self.call("PUT", path, {
+            "display_name": "Pothos", "profile_id": "pothos", "variety": "marble_queen",
+        })
+        self.assertEqual(saved["variety"], "marble_queen")
+
+        # A variety belongs to its profile and nowhere else.
+        for refused in (
+            {"profile_id": "pothos", "variety": "nonesuch"},
+            {"profile_id": "spider_plant", "variety": "marble_queen"},
+            {"variety": "marble_queen"},
+        ):
+            with self.assertRaises(HTTPError) as error:
+                self.call("PUT", path, {"display_name": "Pothos", **refused})
+            self.assertEqual(error.exception.code, 400)
+        self.assertEqual(self.call("GET", path)["variety"], "marble_queen")
+
+        # Changing the profile drops a variety the new one does not know.
+        moved = self.call("PUT", path, {"display_name": "Pothos", "profile_id": "spider_plant"})
+        self.assertIsNone(moved["variety"])
+
+    def test_every_profile_offers_its_varieties(self) -> None:
+        catalog = self.call("GET", "/api/plant-profiles")["profiles"]
+
+        pothos = {kind["id"] for kind in catalog["pothos"]["varieties"]}
+        self.assertIn("golden", pothos)
+        self.assertIn("marble_queen", pothos)
+        # The same species, so one profile with two varieties rather than two
+        # profiles that would have to be kept in step.
+        self.assertEqual(catalog["pothos"]["scientific_name"], "Epipremnum aureum")
+        # Every variety is named and identified; a note is optional.
+        for profile in catalog.values():
+            for kind in profile.get("varieties", []):
+                self.assertEqual({"id", "name", "note"} >= set(kind), True)
+                self.assertTrue(kind["id"] and kind["name"])
+
     def test_a_plant_with_no_sensor_still_has_lights(self) -> None:
         # The lights were always the plant's; only the address was the
         # sensor's, so a plant without one reaches them directly.

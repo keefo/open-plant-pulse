@@ -4,6 +4,14 @@
   "id": "spider_plant",
   "name": "Spider plant",
   "scientific_name": "Chlorophytum comosum",
+  "varieties": [
+    {"id": "vittatum", "name": "Vittatum", "note": "The common one: a cream stripe down the middle of each leaf, green margins."},
+    {"id": "variegatum", "name": "Variegatum", "note": "The reverse: green centre, cream margins. A little slower than Vittatum."},
+    {"id": "bonnie", "name": "Bonnie", "note": "Curled leaves on a compact plant. The same stripe as Vittatum, in less room."},
+    {"id": "ocean", "name": "Ocean", "note": "Short, broad leaves with cream margins. Stays small and clumping."},
+    {"id": "hawaiian", "name": "Hawaiian", "note": "New leaves come up champagne-toned and mature to green. Needs good light to show it."},
+    {"id": "green", "name": "Plain green", "note": "No variegation. The toughest of them, and the least fussy about light."}
+  ],
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [16, 27], "scale": [10, 35]},

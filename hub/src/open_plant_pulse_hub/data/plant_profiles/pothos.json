@@ -4,6 +4,17 @@
   "id": "pothos",
   "name": "Pothos",
   "scientific_name": "Epipremnum aureum",
+  "varieties": [
+    {"id": "golden", "name": "Golden", "note": "Gold marbling on green. The quickest grower of the pothos and the most forgiving of a dim corner."},
+    {"id": "marble_queen", "name": "Marble Queen", "note": "Heavily white-marbled, so less leaf is doing the work: slower, drinks less, and wants brighter light to keep the variegation."},
+    {"id": "snow_queen", "name": "Snow Queen", "note": "Whiter still than Marble Queen, and slower again. Needs the brightest indirect light of the family."},
+    {"id": "neon", "name": "Neon", "note": "Plain chartreuse, no variegation. Colour fades toward green in low light rather than reverting."},
+    {"id": "jade", "name": "Jade", "note": "Solid green. The most tolerant of low light, since every leaf is working."},
+    {"id": "njoy", "name": "N'Joy", "note": "Small leaves in clean white and green blocks. Compact and slow; a small pot dries slowly to match."},
+    {"id": "pearls_and_jade", "name": "Pearls and Jade", "note": "Small leaves with grey-green and white at the margins. Slow, and prone to crisping in dry air."},
+    {"id": "manjula", "name": "Manjula", "note": "Wavy leaves with wide cream splashes. Slow, and the cupped leaves hold water: keep it off the foliage."},
+    {"id": "global_green", "name": "Global Green", "note": "Dark green leaves edged in lighter green. Vigorous for a variegated pothos."}
+  ],
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 29], "scale": [10, 35]},

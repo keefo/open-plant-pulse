@@ -2055,8 +2055,15 @@ function renderPlantPage() {
   const journey = selectedPlant.journey || {};
 
   setText(document.getElementById("plant-page-name"), selectedPlant.display_name);
-  setText(document.getElementById("plant-page-room"),
-    selectedPlant.room ? "in the " + selectedPlant.room : "no room recorded");
+  /* What it is and where it lives, in one line: "Pothos · Marble Queen · in
+   * the Living room", with whichever parts are known. */
+  const profile = profiles?.profiles?.[selectedPlant.profile_id];
+  const variety = profile?.varieties?.find((kind) => kind.id === selectedPlant.variety);
+  setText(document.getElementById("plant-page-room"), [
+    profile?.name,
+    variety?.name,
+    selectedPlant.room ? "in the " + selectedPlant.room : "no room recorded",
+  ].filter(Boolean).join(" · "));
   const watered = daysSince(selectedPlant.last_watered_at);
   setText(document.getElementById("plant-page-watered"),
     watered ? "Watered " + watered : "Never watered");
@@ -2186,6 +2193,40 @@ function fillPlantProfileSelect(select, profileId) {
   select.value = profileId ?? "";
 }
 
+/* The varieties of whichever profile is chosen in the form, not of whichever
+ * is saved: picking Pothos should offer Marble Queen before anything is
+ * saved. A variety belongs to its profile, so changing the profile empties
+ * the list rather than leaving a name that refers to nothing. */
+function fillPlantVarietySelect(variety) {
+  const select = document.getElementById("plant-config-variety");
+  const note = document.getElementById("plant-config-variety-note");
+  const profileId = document.getElementById("plant-config-profile").value;
+  const varieties = profiles?.profiles?.[profileId]?.varieties || [];
+  const renderKey = JSON.stringify([profileId, varieties.map((kind) => kind.id)]);
+  if (select.dataset.renderKey !== renderKey) {
+    setData(select, "renderKey", renderKey);
+    select.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    setText(none, varieties.length
+      ? "Not recorded"
+      : profileId ? "This profile lists no varieties" : "Choose a profile first");
+    select.append(none);
+    for (const kind of varieties) {
+      const option = document.createElement("option");
+      option.value = kind.id;
+      setText(option, kind.name);
+      select.append(option);
+    }
+  }
+  setDisabled(select, varieties.length === 0);
+  if (variety !== undefined) select.value = variety ?? "";
+  const chosen = varieties.find((kind) => kind.id === select.value);
+  setText(note, chosen?.note
+    || "The named plant within that profile. It changes how fast it grows and "
+       + "how much light it wants, not what the roots will take.");
+}
+
 function renderPlantConfig() {
   if (!selectedPlant) return;
   setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
@@ -2200,6 +2241,7 @@ function renderPlantConfig() {
   document.getElementById("plant-config-watering-days").value =
     selectedPlant.expected_watering_days ?? "";
   fillPlantProfileSelect(document.getElementById("plant-config-profile"), selectedPlant.profile_id);
+  fillPlantVarietySelect(selectedPlant.variety);
 }
 
 async function savePlantConfig(event) {
@@ -2216,6 +2258,7 @@ async function savePlantConfig(event) {
       room_id: room === "" ? null : Number(room),
       expected_watering_days: days === "" ? null : Number(days),
       profile_id: document.getElementById("plant-config-profile").value || null,
+      variety: document.getElementById("plant-config-variety").value || null,
     }),
   });
   const payload = await response.json().catch(() => ({}));
@@ -2687,6 +2730,9 @@ document.getElementById("plant-weight-record").addEventListener("click", () => r
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
 document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
+// Choosing a profile offers its varieties at once, before anything is saved.
+document.getElementById("plant-config-profile").addEventListener("change", () => fillPlantVarietySelect(null));
+document.getElementById("plant-config-variety").addEventListener("change", () => fillPlantVarietySelect());
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnits();

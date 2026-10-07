@@ -4,6 +4,11 @@
   "id": "strelitzia",
   "name": "Bird of paradise",
   "scientific_name": "Strelitzia spp.",
+  "varieties": [
+    {"id": "nicolai", "name": "Giant white (S. nicolai)", "note": "The big indoor one: trunk-forming, leaves to two metres, white and blue flowers outdoors."},
+    {"id": "reginae", "name": "Bird of paradise (S. reginae)", "note": "Clumping and smaller, with the orange and blue flower. Wants more direct sun than nicolai to bloom."},
+    {"id": "juncea", "name": "Narrow-leaf (S. juncea)", "note": "Rolled, rush-like leaves with almost no blade. Slower and more drought-tolerant than the others."}
+  ],
   "root_zone": {
     "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
     "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},

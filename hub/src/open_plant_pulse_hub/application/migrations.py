@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 26
+DATABASE_SCHEMA_VERSION = 27
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -884,6 +884,17 @@ MIGRATIONS: Dict[int, str] = {
            row, observed or not, can serve as the newest anchor. */
         ALTER TABLE plant_weights ADD COLUMN observed INTEGER NOT NULL DEFAULT 1
             CHECK (observed IN (0, 1));
+    """,
+    27: """
+        /* Which kind of the kind it is.
+
+           A profile is the species: how dry the pot may get, what the roots
+           tolerate. A variety is the named plant within it -- Marble Queen
+           rather than Golden pothos -- which changes how fast it grows and
+           how much light it wants to stay itself, but not what the roots
+           will take. The profile holds the list; the plant holds the choice,
+           by id, so renaming one in the catalog does not rename it here. */
+        ALTER TABLE plants ADD COLUMN variety TEXT;
     """,
 }
 

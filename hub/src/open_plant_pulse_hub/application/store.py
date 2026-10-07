@@ -2900,7 +2900,8 @@ class ReadingStore:
                         ORDER BY sensor_id LIMIT 1),
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
-                          AND kind = 'watering')
+                          AND kind = 'watering'),
+                       plants.variety
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -2928,7 +2929,8 @@ class ReadingStore:
                         ORDER BY sensor_id LIMIT 1),
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
-                          AND kind = 'watering')
+                          AND kind = 'watering'),
+                       plants.variety
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -2944,6 +2946,25 @@ class ReadingStore:
         if profile_id not in load_plant_profiles()["profiles"]:
             raise ValueError("profile_id is invalid")
         return profile_id
+
+    @staticmethod
+    def _validate_plant_variety(
+        profile_id: Optional[str], variety: Optional[str]
+    ) -> Optional[str]:
+        """A variety only means anything within the profile that lists it.
+
+        Marble Queen is a pothos; it is not a bird of paradise. Changing the
+        profile therefore drops a variety the new one does not know, rather
+        than keeping a label that no longer refers to anything.
+        """
+        if variety in (None, ""):
+            return None
+        profile = load_plant_profiles()["profiles"].get(profile_id or "")
+        if profile is None:
+            raise ValueError("a variety needs a profile to belong to")
+        if variety not in {kind["id"] for kind in profile.get("varieties", [])}:
+            raise ValueError(f"{profile['name']} has no variety {variety}")
+        return variety
 
     def create_plant(
         self,
@@ -2981,6 +3002,7 @@ class ReadingStore:
         room_id: Optional[int] = None,
         expected_watering_days: Optional[int] = None,
         profile_id: Optional[str] = None,
+        variety: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
@@ -2988,14 +3010,15 @@ class ReadingStore:
         room_id = self._validate_plant_room(room_id)
         expected_watering_days = self._validate_watering_days(expected_watering_days)
         profile_id = self._validate_plant_profile(profile_id)
+        variety = self._validate_plant_variety(profile_id, variety)
         with self._condition, self._database:
             self._database.execute(
                 """
                 UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?,
-                                  profile_id = ?
+                                  profile_id = ?, variety = ?
                 WHERE plant_id = ?
                 """,
-                (display_name, room_id, expected_watering_days, profile_id, plant_id),
+                (display_name, room_id, expected_watering_days, profile_id, variety, plant_id),
             )
             # A sensor watching it shows the same name, profile and room, or
             # its pages and the plant's disagree about the same plant.
@@ -3078,6 +3101,9 @@ class ReadingStore:
             # kinds of plant apart everywhere else.
             "sensor_id": row[8],
             "last_watered_at": row[9],
+            # Which kind of the kind: the profile is the species, the variety
+            # the named plant within it.
+            "variety": row[10],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
