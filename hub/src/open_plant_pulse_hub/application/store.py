@@ -911,13 +911,24 @@ class ReadingStore:
             raise ValueError("light not found")
 
     def plant_lighting(self, sensor_id: str) -> Dict[str, Any]:
+        """The lighting of whichever plant this sensor watches."""
+        with self._condition:
+            plant_id = self._plant_of_sensor(sensor_id)
+        lighting = self.plant_lighting_of(plant_id)
+        return {**lighting, "sensor_id": sensor_id}
+
+    def plant_lighting_of(self, plant_id: int) -> Dict[str, Any]:
         """The lights a plant uses and when they are lit.
+
+        Lights have always belonged to the plant rather than to the sensor
+        watching it, which is why a plant with no sensor has them too.
 
         A plant that has never been given a schedule is shown the default one,
         marked unsaved; it takes effect only once saved.
         """
         with self._condition:
-            plant_id = self._plant_of_sensor(sensor_id)
+            if self.plant(plant_id) is None:
+                raise ValueError("unknown plant")
             light_ids = [
                 row[0]
                 for row in self._database.execute(
@@ -938,7 +949,6 @@ class ReadingStore:
             else dict(DEFAULT_SCHEDULE)
         )
         return {
-            "sensor_id": sensor_id,
             "plant_id": plant_id,
             "light_ids": light_ids,
             "schedule": schedule,
@@ -948,12 +958,21 @@ class ReadingStore:
     def set_plant_lighting(
         self, sensor_id: str, light_ids: List[str], schedule: Dict[str, Any]
     ) -> Dict[str, Any]:
+        with self._condition:
+            plant_id = self._plant_of_sensor(sensor_id)
+        lighting = self.set_plant_lighting_of(plant_id, light_ids, schedule)
+        return {**lighting, "sensor_id": sensor_id}
+
+    def set_plant_lighting_of(
+        self, plant_id: int, light_ids: List[str], schedule: Dict[str, Any]
+    ) -> Dict[str, Any]:
         schedule = validate_schedule(schedule)
         if not isinstance(light_ids, list) or not all(isinstance(i, str) for i in light_ids):
             raise ValueError("light_ids must be a list of light IDs")
         light_ids = list(dict.fromkeys(light_ids))
         with self._condition, self._database:
-            plant_id = self._plant_of_sensor(sensor_id)
+            if self.plant(plant_id) is None:
+                raise ValueError("unknown plant")
             for light_id in light_ids:
                 owner = self._database.execute(
                     """
@@ -990,7 +1009,7 @@ class ReadingStore:
                     _timestamp(datetime.now(timezone.utc)),
                 ),
             )
-        return self.plant_lighting(sensor_id)
+        return self.plant_lighting_of(plant_id)
 
     def light_assignments(self) -> Dict[str, Dict[str, Any]]:
         """For each light that belongs to a plant: that plant and its schedule."""

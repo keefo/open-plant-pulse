@@ -37,7 +37,10 @@
     <div class="plant-identity">
       <p class="eyebrow">PLANT</p>
       <h1 id="plant-page-name">Plant</h1>
-      <div class="profile-control"><span id="plant-page-room"></span></div>
+      <div class="profile-control">
+        <span id="plant-page-room"></span>
+        <a id="plant-page-config" class="secondary-action" href="/plants">Configure</a>
+      </div>
     </div>
     <div class="topbar-aside">
       <div class="connection" aria-live="polite">
@@ -45,6 +48,16 @@
           <strong id="plant-page-state">Nothing recorded yet</strong>
           <span id="plant-page-watered">Never watered</span>
         </div>
+      </div>
+    </div>
+  </header>
+
+  <header class="topbar" data-page="plant-config" hidden>
+    <div class="plant-identity">
+      <p class="eyebrow">PLANT</p>
+      <h1 id="plant-config-name">Configuration</h1>
+      <div class="profile-control">
+        <a id="plant-config-back" class="secondary-action" href="/plants">Back to the plant</a>
       </div>
     </div>
   </header>
@@ -523,6 +536,24 @@
       </div>
     </section>
 
+    <section class="sensor-settings" data-page="plant-config" aria-labelledby="plant-config-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">PLANT</p><h2 id="plant-config-title">Configuration</h2></div>
+      </div>
+      <form id="plant-config-form" class="sensor-settings-form">
+        <label>Plant name<input id="plant-config-display-name" maxlength="80" required></label>
+        <label>Room<select id="plant-config-room"></select></label>
+        <label>Expected watering interval
+          <input id="plant-config-watering-days" type="number" min="1" max="365" step="1"
+                 placeholder="leave empty if you would rather not say">
+          <small>Days between waterings. A watering this far overdue counts as a
+            missed window in the plant's journey.</small>
+        </label>
+        <div class="settings-actions"><button type="submit">Save configuration</button></div>
+        <output id="plant-config-message"></output>
+      </form>
+    </section>
+
     <section class="sensor-settings" data-page="config" aria-labelledby="sensor-settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Configuration</h2></div>
@@ -568,7 +599,7 @@
       </form>
     </section>
 
-    <section class="sensor-settings plant-lighting" data-page="config" aria-labelledby="plant-lighting-config-title" hidden>
+    <section class="sensor-settings plant-lighting" data-page="config plant-config" aria-labelledby="plant-lighting-config-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">PLANT</p><h2 id="plant-lighting-config-title">Lighting</h2></div>
         <a class="secondary-action" href="/settings/lights">Manage lights</a>

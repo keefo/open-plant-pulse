@@ -8,7 +8,7 @@
 let lightDrivers = [];
 let lightItems = [];
 let plantLighting = null;
-let plantLightingDraftSensorId = null;
+let plantLightingDraftSubject = null;
 // Lights being switched from the plant page, by ID, to the state asked for.
 // A switch shows what was asked while the light is asked, not what the last
 // poll said a moment before.
@@ -285,12 +285,28 @@ async function removeLight(lightId) {
  * The schedule belongs to the plant, not the light, so it is edited here, with
  * the choice of which lights the plant uses. A light already lighting another
  * plant is shown but cannot be taken: one light, one plant, one schedule. */
+function lightingSubject() {
+  const page = pageFromLocation();
+  if (page === "plant" || page === "plant-config") {
+    const plantId = plantIdFromLocation();
+    return plantId === null
+      ? null
+      : { key: "plant:" + plantId, url: "/api/plants/" + plantId + "/lighting" };
+  }
+  return selectedSensorId === null || selectedSensorId === undefined
+    ? null
+    : {
+        key: "sensor:" + selectedSensorId,
+        url: "/api/sensors/" + encodeURIComponent(selectedSensorId) + "/lighting",
+      };
+}
+
 async function refreshPlantLighting() {
-  if (!selectedSensorId) return;
-  const sensorId = selectedSensorId;
+  const subject = lightingSubject();
+  if (subject === null) return;
   const epoch = plantLightingEpoch;
-  const response = await fetch("/api/sensors/" + encodeURIComponent(sensorId) + "/lighting");
-  if (selectedSensorId !== sensorId || epoch !== plantLightingEpoch) return;
+  const response = await fetch(subject.url);
+  if (lightingSubject()?.key !== subject.key || epoch !== plantLightingEpoch) return;
   if (!response.ok) {
     plantLighting = null;
     renderPlantLighting();
@@ -445,7 +461,7 @@ function renderPlantLightingForm() {
   const choices = document.getElementById("lighting-light-choices");
   const note = document.getElementById("lighting-note");
   if (!plantLighting) return;
-  if (plantLightingDraftSensorId === selectedSensorId) return;
+  if (plantLightingDraftSubject === lightingSubject()?.key) return;
   const legend = choices.querySelector("legend");
   choices.replaceChildren(legend);
   if (!plantLighting.lights.length) {
@@ -478,12 +494,12 @@ function renderPlantLightingForm() {
 
 async function savePlantLighting(event) {
   event.preventDefault();
-  if (!selectedSensorId) return;
-  const sensorId = selectedSensorId;
+  const subject = lightingSubject();
+  if (subject === null) return;
   const message = document.getElementById("plant-lighting-message");
   const lightIds = [...document.querySelectorAll("#lighting-light-choices input:checked")]
     .map((box) => box.value);
-  const response = await fetch("/api/sensors/" + encodeURIComponent(sensorId) + "/lighting", {
+  const response = await fetch(subject.url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -501,7 +517,7 @@ async function savePlantLighting(event) {
     setText(message, payload.error || "Could not save the lighting");
     return;
   }
-  plantLightingDraftSensorId = null;
+  plantLightingDraftSubject = null;
   plantLighting = payload;
   renderPlantLighting();
   setText(message, "Saved. The lights follow it from now.");
@@ -530,6 +546,6 @@ document.getElementById("plant-lighting-lights").addEventListener("change", (eve
 });
 const plantLightingForm = document.getElementById("plant-lighting-form");
 plantLightingForm.addEventListener("input", () => {
-  plantLightingDraftSensorId = selectedSensorId;
+  plantLightingDraftSubject = lightingSubject()?.key ?? null;
 });
 plantLightingForm.addEventListener("submit", savePlantLighting);

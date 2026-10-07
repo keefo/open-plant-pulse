@@ -311,9 +311,59 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(self.call("GET", "/api/plants")["items"], [])
 
     def test_the_page_is_served_for_a_plant_address(self) -> None:
-        with urlopen(self.base_url + "/plants/1", timeout=2.0) as response:
-            self.assertEqual(response.status, 200)
-            self.assertIn(b"<title>Open Plant Pulse</title>", response.read())
+        for address in ("/plants/1", "/plants/1/config"):
+            with urlopen(self.base_url + address, timeout=2.0) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b"<title>Open Plant Pulse</title>", response.read())
+
+    def test_a_plant_is_told_where_it_lives_and_how_often_it_drinks(self) -> None:
+        room = self.call("POST", "/api/rooms", {"name": "Study", "aspect": "north", "light": "low"})
+        plant = self.call("POST", "/api/plants", {"display_name": "Fern"})
+        path = f"/api/plants/{plant['plant_id']}"
+
+        saved = self.call("PUT", path, {
+            "display_name": "Boston fern",
+            "room_id": room["room_id"],
+            "expected_watering_days": 4,
+        })
+
+        self.assertEqual(saved["display_name"], "Boston fern")
+        self.assertEqual(saved["room"], "Study")
+        self.assertEqual(saved["expected_watering_days"], 4)
+        # And a plant may be in no room at all, which is not the same as the
+        # question never having been asked.
+        homeless = self.call("PUT", path, {"display_name": "Boston fern", "room_id": None})
+        self.assertIsNone(homeless["room_id"])
+
+    def test_a_plant_with_no_sensor_still_has_lights(self) -> None:
+        # The lights were always the plant's; only the address was the
+        # sensor's, so a plant without one reaches them directly.
+        plant = self.call("POST", "/api/plants", {"display_name": "Calathea"})
+        path = f"/api/plants/{plant['plant_id']}/lighting"
+
+        default = self.call("GET", path)
+        self.assertEqual(default["plant_id"], plant["plant_id"])
+        self.assertFalse(default["schedule_saved"])
+
+        saved = self.call("PUT", path, {
+            "light_ids": [],
+            "schedule": {"enabled": True, "on": "07:00", "off": "19:30"},
+        })
+        self.assertTrue(saved["schedule_saved"])
+        self.assertEqual(saved["schedule"]["off"], "19:30")
+        self.assertEqual(self.call("GET", path)["schedule"]["on"], "07:00")
+
+    def test_the_configuration_page_asks_the_plant_its_own_questions(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        self.assertIn('data-page="plant-config"', page)
+        for field in ("plant-config-display-name", "plant-config-room",
+                      "plant-config-watering-days"):
+            self.assertIn(f'id="{field}"', page)
+        # The lighting form is one form, shown on both configuration pages.
+        self.assertIn('data-page="config plant-config"', page)
+        self.assertIn('path.endsWith("/config")) return "plant-config"', script)
 
     def test_a_pot_is_weighed_in_grams_whatever_the_keypad_offered(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})

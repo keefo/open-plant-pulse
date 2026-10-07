@@ -110,6 +110,8 @@ def create_server(
                 self._send_json({"items": store.rooms()})
             elif path == "/api/plants":
                 self._send_json({"items": store.plants()})
+            elif path.startswith("/api/plants/") and path.endswith("/lighting"):
+                self._send_plant_lighting_of(path[len("/api/plants/") : -len("/lighting")])
             elif path.startswith("/api/plants/"):
                 self._send_plant(path[len("/api/plants/") :])
             elif path == "/api/firmware":
@@ -184,7 +186,17 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path.startswith("/api/plants/"):
+                if path.startswith("/api/plants/") and path.endswith("/lighting"):
+                    plant_id = self._plant_id(path[len("/api/plants/") : -len("/lighting")])
+                    store.set_plant_lighting_of(
+                        plant_id,
+                        payload.get("light_ids", []),
+                        payload.get("schedule", {}),
+                    )
+                    if lights is not None:
+                        lights.lighting_changed()
+                    result = self._plant_lighting_of(plant_id)
+                elif path.startswith("/api/plants/"):
                     result = store.update_plant(
                         self._plant_id(path[len("/api/plants/") :]),
                         str(payload.get("display_name", "")),
@@ -465,6 +477,18 @@ def create_server(
                 **store.plant_lighting(sensor_id),
                 "lights": lights.lights() if lights is not None else [],
             }
+
+        def _plant_lighting_of(self, plant_id: int) -> Dict[str, Any]:
+            return {
+                **store.plant_lighting_of(plant_id),
+                "lights": lights.lights() if lights is not None else [],
+            }
+
+        def _send_plant_lighting_of(self, raw: str) -> None:
+            try:
+                self._send_json(self._plant_lighting_of(self._plant_id(raw)))
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)
 
         def _send_plant_lighting(self, sensor_id: str) -> None:
             try:

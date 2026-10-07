@@ -111,6 +111,7 @@ function pageFromLocation() {
    *
    * Plant care and device administration are different jobs done at different
    * times, and the forms for the second were crowding the first. */
+  if (path.startsWith("/plants/") && path.endsWith("/config")) return "plant-config";
   if (path.startsWith("/plants/")) return "plant";
   if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";
   if (path.startsWith("/sensors/")) return "detail";
@@ -143,8 +144,10 @@ function sensorQuery() {
 
 function renderPage() {
   const page = pageFromLocation();
+  // A section may serve more than one page: the lighting form is the same
+  // form whether the plant has a sensor or not.
   document.querySelectorAll("[data-page]").forEach((element) => {
-    setHidden(element, element.dataset.page !== page);
+    setHidden(element, !element.dataset.page.split(" ").includes(page));
   });
   setClass(document.getElementById("fleet-link"), "active", page === "fleet");
   setClass(document.getElementById("settings-link"), "active", page === "settings");
@@ -152,6 +155,12 @@ function renderPage() {
     setAttr(document.getElementById("detail-config-link"), "href", sensorPath(selectedSensorId, "/settings"));
     setAttr(document.getElementById("config-back-link"), "href", sensorPath(selectedSensorId));
     setAttr(document.getElementById("plant-lighting-change"), "href", sensorPath(selectedSensorId, "/settings"));
+  }
+  if (page === "plant" || page === "plant-config") {
+    const plantId = plantIdFromLocation();
+    if (plantId !== null) {
+      setAttr(document.getElementById("plant-page-config"), "href", `/plants/${plantId}/config`);
+    }
   }
   if (page === "config") {
     setText(document.getElementById("config-plant-name"), selectedSensor
@@ -1579,6 +1588,10 @@ async function refresh() {
       await refreshPlant();
       return;
     }
+    if (page === "plant-config") {
+      await refreshPlantConfig();
+      return;
+    }
     if (page === "settings") {
       if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
       if (settingsTabFromLocation() === "lights") await refreshLights();
@@ -1911,7 +1924,7 @@ async function addPlant() {
 let selectedPlant = null;
 
 function plantIdFromLocation() {
-  const match = window.location.pathname.match(/^\/plants\/(\d+)$/);
+  const match = window.location.pathname.match(/^\/plants\/(\d+)(?:\/config)?$/);
   return match ? Number(match[1]) : null;
 }
 
@@ -2079,6 +2092,86 @@ function renderPlantPage() {
   const button = document.getElementById("plant-fertilized");
   setText(button, fed ? "Fertilized today ✓" : "Fertilized today");
   setDisabled(button, fed);
+}
+
+/* A plant's configuration: what it is called, where it is, and which lights
+ * are its own -- the questions a sensor's configuration page asks about the
+ * plant it watches, asked where there is no sensor to ask through. */
+async function refreshPlantConfig() {
+  const plantId = plantIdFromLocation();
+  if (plantId === null) return;
+  const [plantResponse] = await Promise.all([
+    fetch(`/api/plants/${plantId}`),
+    refreshPlantLighting(),
+  ]);
+  if (!plantResponse.ok) {
+    setText(document.getElementById("plant-config-name"), "Plant not found");
+    return;
+  }
+  selectedPlant = await plantResponse.json();
+  renderPlantConfig();
+}
+
+/* A plant may be in no room at all, which a sensor may not be: it is a thing
+ * somebody owns before it is a thing the hub is watching. */
+function fillPlantRoomSelect(select, roomId) {
+  const renderKey = JSON.stringify(rooms.map((room) => [room.room_id, room.name]));
+  if (select.dataset.renderKey !== renderKey) {
+    setData(select, "renderKey", renderKey);
+    select.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    setText(none, rooms.length ? "No room recorded" : "No rooms yet · add one in Settings");
+    select.append(none);
+    rooms.forEach((room) => {
+      const option = document.createElement("option");
+      option.value = room.room_id;
+      setText(option, room.name);
+      select.append(option);
+    });
+  }
+  select.value = roomId == null ? "" : String(roomId);
+}
+
+function renderPlantConfig() {
+  if (!selectedPlant) return;
+  setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
+  setAttr(document.getElementById("plant-config-back"), "href", `/plants/${selectedPlant.plant_id}`);
+
+  // Left alone while it is being filled in, so a refresh a second later does
+  // not snatch back a half-typed name.
+  const form = document.getElementById("plant-config-form");
+  if (form.contains(document.activeElement)) return;
+  document.getElementById("plant-config-display-name").value = selectedPlant.display_name;
+  fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
+  document.getElementById("plant-config-watering-days").value =
+    selectedPlant.expected_watering_days ?? "";
+}
+
+async function savePlantConfig(event) {
+  event.preventDefault();
+  if (!selectedPlant) return;
+  const message = document.getElementById("plant-config-message");
+  const days = document.getElementById("plant-config-watering-days").value;
+  const room = document.getElementById("plant-config-room").value;
+  const response = await fetch(`/api/plants/${selectedPlant.plant_id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      display_name: document.getElementById("plant-config-display-name").value,
+      room_id: room === "" ? null : Number(room),
+      expected_watering_days: days === "" ? null : Number(days),
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    setText(message, payload.error || "Could not save this plant.");
+    return;
+  }
+  selectedPlant = payload;
+  setText(message, "Saved.");
+  document.activeElement.blur();
+  renderPlantConfig();
 }
 
 /* The pot's weight over a month, which is this plant's moisture history.
@@ -2477,7 +2570,7 @@ document.getElementById("onboarding-next").addEventListener("click", async () =>
 });
 window.addEventListener("popstate", () => {
   sensorSettingsDraftSensorId = null;
-  plantLightingDraftSensorId = null;
+  plantLightingDraftSubject = null;
   selectedSensorId = sensorIdFromLocation();
   refresh();
 });
@@ -2497,6 +2590,7 @@ document.getElementById("plant-note").addEventListener("click", () => recordPlan
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
 document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
+document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnits();
