@@ -1566,13 +1566,19 @@ async function refreshPlantJourney() {
 
 async function refresh() {
   try {
-    await refreshFleet();
     const page = pageFromLocation();
+    // The household grid shows sensored and manual plants side by side, so it
+    // asks for both at once. Asking in turn paints the sensors a round trip
+    // early, which is invisible on this machine and plain from anywhere else.
+    if (page === "fleet") {
+      await Promise.all([refreshFleet(), refreshPlants()]);
+    } else {
+      await refreshFleet();
+    }
     if (page === "plant") {
       await refreshPlant();
       return;
     }
-    if (page === "fleet") await refreshPlants();
     if (page === "settings") {
       if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
       if (settingsTabFromLocation() === "lights") await refreshLights();
@@ -2495,5 +2501,9 @@ document.getElementById("firmware-install").addEventListener("click", installFir
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnits();
 trackRawReportsDisclosure();
-loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(refreshLightDrivers)
-  .then(refreshFirmwareImages).then(poll);
+/* Five things the page needs before it can draw, none of which depends on
+ * another: asked for together, they cost one round trip rather than five. */
+Promise.all([
+  loadProfiles(), refreshHouseholdNetwork(), refreshRooms(),
+  refreshLightDrivers(), refreshFirmwareImages(),
+]).then(poll);
