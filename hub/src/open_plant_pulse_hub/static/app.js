@@ -2291,10 +2291,15 @@ async function recordPlantCare(kind) {
   await refreshPlant();
 }
 
-async function recordPlantWeight(kind) {
+/* One button. The checkbox beside it says whether this weighing is the pot
+ * full -- the ceiling everything else is measured against, and a watering in
+ * the care log with it. */
+async function recordPlantWeight() {
   const plantId = plantIdFromLocation();
   const field = document.getElementById("plant-weight-input");
+  const watered = document.getElementById("plant-weight-watered");
   const message = document.getElementById("plant-weight-message");
+  const kind = watered.checked ? "watered" : "reading";
   const typed = Number(field.value);
   if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
     setText(message, `Type what the pot weighs, in ${weightUnit() === "g" ? "grams" : "kilograms"}.`);
@@ -2314,6 +2319,8 @@ async function recordPlantWeight(kind) {
     return;
   }
   field.value = "";
+  // Cleared, so the next weighing is not a watering by leftover tick.
+  watered.checked = false;
   setText(message, kind === "watered"
     ? "Recorded, and the watering with it."
     : "Recorded.");
@@ -2484,9 +2491,7 @@ document.getElementById("add-plant").addEventListener("click", addPlant);
 document.getElementById("plant-watered").addEventListener("click", () => recordPlantCare("watering"));
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
-document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight("reading"));
-document.getElementById("plant-weight-watered").addEventListener("click", () => recordPlantWeight("watered"));
-document.getElementById("plant-weight-thirsty").addEventListener("click", () => recordPlantWeight("thirsty"));
+document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
 document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
 document.getElementById("firmware-install").addEventListener("click", installFirmware);

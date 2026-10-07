@@ -470,9 +470,11 @@
           <option value="kg">kg</option>
           <option value="g">g</option>
         </select>
+        <label class="weight-watered-check" for="plant-weight-watered">
+          <input id="plant-weight-watered" type="checkbox">
+          Just watered
+        </label>
         <button id="plant-weight-record" type="button">Record</button>
-        <button id="plant-weight-watered" type="button">Just watered</button>
-        <button id="plant-weight-thirsty" type="button">It wanted water</button>
         <output id="plant-weight-message" aria-live="polite"></output>
       </div>
       <div class="inline-control plant-weight-anchors">
@@ -492,7 +494,7 @@
         <button id="plant-weight-set-dry" type="button">Set</button>
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
-      <p class="settings-note">Weigh the pot once it has finished draining and press <b>Just watered</b>: that is the full pot everything else is measured against. Press <b>It wanted water</b> on the day you decide it is thirsty, and the two together say how much water this pot holds.</p>
+      <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Dry at</b> is the same pot once the plant has used that water up — set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
     </section>
 
     <section class="plant-journey" data-page="plant" aria-labelledby="plant-journey-plant-title" hidden>

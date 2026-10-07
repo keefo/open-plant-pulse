@@ -354,6 +354,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .chemistry-grid { grid-template-columns: 1fr; }
   .inline-control { align-items: stretch; flex-direction: column; }
   .inline-control input { width: 100%; }
+  .weight-watered-check input { width: auto; }
   .sensor-settings-form { grid-template-columns: 1fr; }
   .settings-actions, .sensor-settings-form output { grid-column: auto; }
   .replacement-control { align-items: stretch; flex-direction: column; }
@@ -433,6 +434,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .weight-trend .history-chart { width: 100%; height: auto; }
 .weight-trend .history-chart-empty { margin: 0; color: var(--muted); font-size: 13px; }
 .weight-trend .range-status { margin-top: 6px; }
+.weight-watered-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+/* A tick box, not one of the row's 100px entry fields. */
+.weight-watered-check input { width: auto; margin: 0; padding: 0; }
 .plant-weight-anchors { flex-wrap: wrap; margin-bottom: 16px; }
 .plant-weight-anchors label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .plant-weight-anchors output { color: var(--muted); font-size: 13px; }
