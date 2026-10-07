@@ -1971,9 +1971,9 @@ const WEIGHT_UNIT_FIELDS = {
     field: "plant-weight-full",
     placeholder: { kg: "17.40", g: "17400" },
   },
-  "plant-weight-dry-unit": {
-    key: "open-plant-pulse.weight-unit.dry",
-    field: "plant-weight-dry",
+  "plant-weight-thirsty-unit": {
+    key: "open-plant-pulse.weight-unit.thirsty",
+    field: "plant-weight-thirsty",
     placeholder: { kg: "16.20", g: "16200" },
   },
 };
@@ -2386,7 +2386,7 @@ function renderPlantWeightChart() {
       svgElement("text", {
         class: "trend-refill-label", x: plot.left + 4, y: y(weight.thirsty.grams) - 4,
         "text-anchor": "start",
-      }, `Dry at ${showWeight(weight.thirsty.grams)} ${weightUnit()}`)
+      }, `Thirsty at ${showWeight(weight.thirsty.grams)} ${weightUnit()}`)
     );
   } else if (weight.watered) {
     chart.append(
@@ -2445,8 +2445,8 @@ function renderPlantWeightChart() {
 async function setPlantAnchor(kind) {
   const plantId = plantIdFromLocation();
   const full = kind === "watered";
-  const field = document.getElementById(full ? "plant-weight-full" : "plant-weight-dry");
-  const unit = unitOf(full ? "plant-weight-full-unit" : "plant-weight-dry-unit");
+  const field = document.getElementById(full ? "plant-weight-full" : "plant-weight-thirsty");
+  const unit = unitOf(full ? "plant-weight-full-unit" : "plant-weight-thirsty-unit");
   const message = document.getElementById("plant-weight-anchor-message");
   const typed = Number(field.value);
   if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
@@ -2468,7 +2468,7 @@ async function setPlantAnchor(kind) {
   // its full weight will otherwise expect the watering to be in the log.
   setText(message, kind === "watered"
     ? "Full weight set — a reference, not a watering. Tick Just watered on a weighing to record one."
-    : "Dry weight set.");
+    : "Thirsty weight set.");
   await refreshPlant();
 }
 
@@ -2478,7 +2478,7 @@ function fillPlantAnchorFields() {
   const weight = (selectedPlant && selectedPlant.weight) || {};
   const fields = [
     ["plant-weight-full", "plant-weight-full-unit", weight.watered],
-    ["plant-weight-dry", "plant-weight-dry-unit", weight.thirsty],
+    ["plant-weight-thirsty", "plant-weight-thirsty-unit", weight.thirsty],
   ];
   for (const [id, selectId, anchor] of fields) {
     const field = document.getElementById(id);
@@ -2728,7 +2728,7 @@ document.getElementById("plant-fertilized").addEventListener("click", () => reco
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
-document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
+document.getElementById("plant-weight-set-thirsty").addEventListener("click", () => setPlantAnchor("thirsty"));
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 // Choosing a profile offers its varieties at once, before anything is saved.
 document.getElementById("plant-config-profile").addEventListener("change", () => fillPlantVarietySelect(null));

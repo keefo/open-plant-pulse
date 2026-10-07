@@ -477,10 +477,10 @@ class PlantApiTests(unittest.TestCase):
         # Full and dry are drawn as the band between them.
         self.assertIn('class: "trend-cycle"', script)
         self.assertIn("Full at ${showWeight(weight.watered.grams)}", script)
-        self.assertIn("Dry at ${showWeight(weight.thirsty.grams)}", script)
+        self.assertIn("Thirsty at ${showWeight(weight.thirsty.grams)}", script)
         # And both can be typed in, which does not invent a watering.
         self.assertIn('id="plant-weight-full"', page)
-        self.assertIn('id="plant-weight-dry"', page)
+        self.assertIn('id="plant-weight-thirsty"', page)
         self.assertIn("observed: false", script)
 
     def test_a_pot_can_be_weighed_in_either_unit(self) -> None:
@@ -491,7 +491,7 @@ class PlantApiTests(unittest.TestCase):
         # kilograms is 0.42 of one. The scale's owner chooses.
         # Every box says which unit it is read in, including the anchors: a
         # number typed into an unlabelled box is a guess about what was meant.
-        for selector in ("plant-weight-unit", "plant-weight-full-unit", "plant-weight-dry-unit"):
+        for selector in ("plant-weight-unit", "plant-weight-full-unit", "plant-weight-thirsty-unit"):
             self.assertIn(f'id="{selector}"', page)
         self.assertEqual(page.count('<option value="g">g</option>'), 3)
         self.assertIn("Math.round(typed * 1000)", script)
