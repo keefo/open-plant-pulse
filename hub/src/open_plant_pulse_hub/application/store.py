@@ -2884,7 +2884,13 @@ class ReadingStore:
                 ORDER BY plants.display_name COLLATE NOCASE
                 """
             ).fetchall()
-        return [self._plant_payload(row) for row in rows]
+        # The household list says how much water each pot has left, which only
+        # its weighings know. One small indexed query per plant, and a house
+        # has tens of plants, not thousands.
+        return [
+            {**self._plant_payload(row), "weight": self.plant_weight_status(row[0])}
+            for row in rows
+        ]
 
     def plant(self, plant_id: int) -> Optional[Dict[str, Any]]:
         with self._condition:

@@ -48,6 +48,14 @@ body {
 .fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
+/* A pot with water left reads as well as a sensor reporting in; one nearly
+   empty reads like any other thing that wants attention today. */
+.fleet-card small[data-state="watered"] { color: var(--leaf); background: #e5f1e8; }
+.fleet-card small[data-state="thirsty"] { color: #9a3f29; background: #f7e5df; }
+/* A measurement is not a word to capitalise: "47% water left", not "47% Water
+   Left", and millilitres keep their small l. */
+.fleet-card small[data-state="watered"], .fleet-card small[data-state="thirsty"],
+.fleet-card small[data-state="manual"] { text-transform: none; }
 .settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .settings-panel > label { font-weight: 700; }
 .settings-panel small, .settings-panel output { color: var(--muted); }

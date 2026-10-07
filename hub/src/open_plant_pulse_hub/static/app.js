@@ -1895,9 +1895,19 @@ function renderManualPlants() {
     const when = document.createElement("span");
     const watered = daysSince(plant.last_watered_at);
     setText(when, watered ? "Watered " + watered : "Not watered yet");
+    /* What the pot weighs answers the question the card is really asked --
+     * does this plant need me today -- so it is shown in place of the bare
+     * "No sensor" whenever the weighings can answer it. */
     const state = document.createElement("small");
-    setText(state, "No sensor");
-    state.dataset.state = "manual";
+    const weight = plant.weight || {};
+    setText(state, weight.remaining_percent != null
+      ? `${weight.remaining_percent}% water left`
+      : weight.used_grams
+        ? `${weight.used_grams} ml used`
+        : "No sensor");
+    state.dataset.state = weight.remaining_percent == null
+      ? "manual"
+      : weight.remaining_percent <= 15 ? "thirsty" : "watered";
     card.append(name, where, when, state);
     grid.append(card);
   }
@@ -2336,7 +2346,11 @@ async function setPlantAnchor(kind) {
     setText(message, payload.error || "That weight could not be recorded.");
     return;
   }
-  setText(message, kind === "watered" ? "Full weight set." : "Dry weight set.");
+  // Said plainly, because somebody who has just watered the plant and typed
+  // its full weight will otherwise expect the watering to be in the log.
+  setText(message, kind === "watered"
+    ? "Full weight set — a reference, not a watering. Tick Just watered on a weighing to record one."
+    : "Dry weight set.");
   await refreshPlant();
 }
 
