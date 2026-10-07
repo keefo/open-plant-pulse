@@ -2103,6 +2103,11 @@ function renderPlantPage() {
           undefined, { dateStyle: "medium" })
       : "Waiting for its first day");
 
+  // Today, until somebody picks another day: the poll a second later must
+  // not take back the date they just chose.
+  const dateField = document.getElementById("plant-weight-date");
+  dateField.max = localDate(new Date());
+  if (!dateField.value) resetWeighingDate();
   renderPlantWeightChart();
   fillPlantAnchorFields();
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
@@ -2222,6 +2227,36 @@ async function savePlantConfig(event) {
   setText(message, "Saved.");
   document.activeElement.blur();
   renderPlantConfig();
+}
+
+/* The day the pot was on the scale, which is today unless somebody says
+ * otherwise: a number written down on Tuesday is still Tuesday's weighing.
+ *
+ * A date carries no time, so a backdated weighing is filed at midday local
+ * time -- far enough from either midnight that no time zone files it under
+ * the wrong day. Today is sent as the moment it actually is. */
+function weighingTime() {
+  const chosen = document.getElementById("plant-weight-date").value;
+  const today = localDate(new Date());
+  if (!chosen || chosen === today) return new Date().toISOString();
+  if (chosen > today) return null;
+  const [year, month, day] = chosen.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0).toISOString();
+}
+
+function localDate(when) {
+  return [
+    when.getFullYear(),
+    String(when.getMonth() + 1).padStart(2, "0"),
+    String(when.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function resetWeighingDate() {
+  const field = document.getElementById("plant-weight-date");
+  const today = localDate(new Date());
+  field.max = today;
+  field.value = today;
 }
 
 /* The pot's weight over a month, which is this plant's moisture history.
@@ -2451,6 +2486,11 @@ async function recordPlantWeight() {
   const watered = document.getElementById("plant-weight-watered");
   const message = document.getElementById("plant-weight-message");
   const kind = watered.checked ? "watered" : "reading";
+  const at = weighingTime();
+  if (at === null) {
+    setText(message, "That date has not happened yet.");
+    return;
+  }
   const typed = Number(field.value);
   if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
     setText(message, `Type what the pot weighs, in ${weightUnit() === "g" ? "grams" : "kilograms"}.`);
@@ -2462,7 +2502,7 @@ async function recordPlantWeight() {
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ grams, kind }),
+    body: JSON.stringify({ grams, kind, at }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -2470,8 +2510,10 @@ async function recordPlantWeight() {
     return;
   }
   field.value = "";
-  // Cleared, so the next weighing is not a watering by leftover tick.
+  // Cleared, so the next weighing is not a watering by leftover tick, and
+  // back to today, so a number typed tomorrow is not filed under yesterday.
   watered.checked = false;
+  resetWeighingDate();
   setText(message, kind === "watered"
     ? "Recorded, and the watering with it."
     : "Recorded.");

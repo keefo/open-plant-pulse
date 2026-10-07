@@ -395,6 +395,7 @@ def create_server(
                         round(float(grams)),
                         str(payload.get("kind", "reading")),
                         self._optional_str(payload.get("note")),
+                        self._optional_str(payload.get("at")),
                         observed=payload.get("observed", True) is not False,
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/archive"):

@@ -251,6 +251,27 @@ class PlantWeightTests(unittest.TestCase):
         )
         self.assertEqual(len(self.store.plant_weights(self.plant_id)), 2)
 
+    def test_a_weighing_can_be_written_down_late(self) -> None:
+        # The number was on a scrap of paper from Tuesday.
+        self.store.record_plant_weight(self.plant_id, 2_400, at=ago(9))
+        self.store.record_plant_weight(self.plant_id, 2_100, at=ago(1))
+
+        weighings = self.store.plant_weights(self.plant_id)
+        self.assertEqual([row["grams"] for row in weighings], [2_100, 2_400])
+        # Dated where it belongs, so it is the older of the two.
+        self.assertLess(weighings[1]["at"], weighings[0]["at"])
+
+    def test_it_refuses_a_weighing_that_has_not_happened(self) -> None:
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(self.plant_id, 2_400, at=tomorrow)
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(self.plant_id, 2_400, at="last Tuesday")
+        # A moment with no time zone is not a moment.
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(self.plant_id, 2_400, at="2026-10-01T12:00:00")
+        self.assertEqual(self.store.plant_weights(self.plant_id), [])
+
     def test_it_refuses_a_weight_no_pot_has(self) -> None:
         for description, grams in (("nothing", 0), ("half a tonne", 600_000)):
             with self.subTest(description), self.assertRaises(ValueError):
@@ -396,6 +417,16 @@ class PlantApiTests(unittest.TestCase):
         # The ceiling is taken after watering, so the watering is on record.
         self.assertEqual(read["journey"]["watering_count"], 1)
 
+    def test_a_weighing_carries_the_day_it_was_taken(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        self.assertIn('id="plant-weight-date" type="date"', page)
+        # Today unless somebody says otherwise, and never a day ahead.
+        self.assertIn("function resetWeighingDate()", script)
+        self.assertIn("if (chosen > today) return null;", script)
+        self.assertIn("JSON.stringify({ grams, kind, at })", script)
+
     def test_the_pot_has_a_month_of_its_own_history(self) -> None:
         page = self.call_text("/")
         script = self.call_text("/app.js")
@@ -426,7 +457,7 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(page.count('<option value="g">g</option>'), 3)
         self.assertIn("Math.round(typed * 1000)", script)
         # Grams on the wire whichever was typed.
-        self.assertIn("JSON.stringify({ grams, kind })", script)
+        self.assertIn("JSON.stringify({ grams, kind, at })", script)
         # And each choice outlives the page, per browser.
         self.assertIn("WEIGHT_UNIT_FIELDS", script)
         self.assertIn("open-plant-pulse.weight-unit.full", script)

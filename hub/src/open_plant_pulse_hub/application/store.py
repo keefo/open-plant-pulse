@@ -2747,7 +2747,7 @@ class ReadingStore:
         grams = int(round(float(grams)))
         if not 1 <= grams <= 500_000:
             raise ValueError("a pot weighs between 1 gram and 500 kilograms")
-        at = at or _timestamp(datetime.now(timezone.utc))
+        at = self._validate_weighing_time(at)
         with self._condition, self._database:
             self._database.execute(
                 """
@@ -2763,6 +2763,29 @@ class ReadingStore:
         if kind == "watered" and observed:
             self.record_plant_care(plant_id, "watering", at)
         return self.plant_weight_status(plant_id)
+
+    @staticmethod
+    def _validate_weighing_time(at: Optional[str]) -> str:
+        """When the pot was on the scale.
+
+        A weighing can be entered late -- the number was written on a scrap of
+        paper on Tuesday -- so any past moment is allowed. A future one is
+        not: nothing has been weighed tomorrow, and a figure dated ahead would
+        sit at the end of every history until the day caught up with it.
+        """
+        now = datetime.now(timezone.utc)
+        if not at:
+            return _timestamp(now)
+        try:
+            when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("at must be a timestamp") from error
+        if when.tzinfo is None:
+            raise ValueError("at must say which time zone it is in")
+        when = when.astimezone(timezone.utc)
+        if when > now + timedelta(minutes=5):
+            raise ValueError("a pot cannot be weighed in the future")
+        return _timestamp(when)
 
     def plant_weights(self, plant_id: int, limit: int = 50) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(limit, 500))
