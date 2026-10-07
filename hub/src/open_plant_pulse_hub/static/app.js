@@ -192,6 +192,10 @@ function titleForPage(page) {
 function navigate(path) {
   window.history.pushState({}, "", path);
   renderPage();
+  // The new page asks for what it shows straight away rather than waiting for
+  // the next tick of the poll: a page a second behind looks like a page still
+  // loading, and the page being arrived at is the one nobody has data for.
+  refresh();
 }
 
 function sensorState(sensor) {
