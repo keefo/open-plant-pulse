@@ -202,6 +202,7 @@ def create_server(
                         str(payload.get("display_name", "")),
                         self._optional_int(payload.get("room_id")),
                         self._optional_int(payload.get("expected_watering_days")),
+                        self._optional_str(payload.get("profile_id")),
                     )
                 elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(

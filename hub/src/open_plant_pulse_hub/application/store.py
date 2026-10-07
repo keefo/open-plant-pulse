@@ -2914,6 +2914,14 @@ class ReadingStore:
             ).fetchone()
         return None if row is None else self._plant_payload(row)
 
+    def _validate_plant_profile(self, profile_id: Optional[str]) -> Optional[str]:
+        """A plant may have no profile; it may not have one that does not exist."""
+        if profile_id in (None, ""):
+            return None
+        if profile_id not in load_plant_profiles()["profiles"]:
+            raise ValueError("profile_id is invalid")
+        return profile_id
+
     def create_plant(
         self,
         display_name: str,
@@ -2949,25 +2957,32 @@ class ReadingStore:
         display_name: str,
         room_id: Optional[int] = None,
         expected_watering_days: Optional[int] = None,
+        profile_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
         display_name = self._validate_plant_name(display_name)
         room_id = self._validate_plant_room(room_id)
         expected_watering_days = self._validate_watering_days(expected_watering_days)
+        profile_id = self._validate_plant_profile(profile_id)
         with self._condition, self._database:
             self._database.execute(
                 """
-                UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?
+                UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?,
+                                  profile_id = ?
                 WHERE plant_id = ?
                 """,
-                (display_name, room_id, expected_watering_days, plant_id),
+                (display_name, room_id, expected_watering_days, profile_id, plant_id),
             )
-            # A sensor watching it shows the same name, or the two pages
-            # disagree about what the plant is called.
+            # A sensor watching it shows the same name, profile and room, or
+            # its pages and the plant's disagree about the same plant.
             self._database.execute(
-                "UPDATE sensors SET display_name = ?, room_id = ? WHERE plant_id = ?",
-                (display_name, room_id, plant_id),
+                """
+                UPDATE sensors SET display_name = ?, room_id = ?,
+                                   profile_id = COALESCE(?, profile_id)
+                WHERE plant_id = ?
+                """,
+                (display_name, room_id, profile_id, plant_id),
             )
         plant = self.plant(plant_id)
         assert plant is not None

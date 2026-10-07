@@ -2152,6 +2152,31 @@ function fillPlantRoomSelect(select, roomId) {
   select.value = roomId == null ? "" : String(roomId);
 }
 
+/* A plant may have no profile, the way it may have no room: the hub is told
+ * what a plant is when somebody knows, not before. */
+function fillPlantProfileSelect(select, profileId) {
+  const entries = Object.entries(profiles?.profiles || {})
+    .sort((a, b) => a[1].name.localeCompare(b[1].name));
+  const renderKey = JSON.stringify(entries.map(([id, profile]) => [id, profile.name]));
+  if (select.dataset.renderKey !== renderKey) {
+    setData(select, "renderKey", renderKey);
+    select.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "";
+    setText(none, "Not recorded");
+    select.append(none);
+    for (const [id, profile] of entries) {
+      const option = document.createElement("option");
+      option.value = id;
+      setText(option, profile.scientific_name && profile.scientific_name !== "Starter profile"
+        ? `${profile.name} · ${profile.scientific_name}`
+        : profile.name);
+      select.append(option);
+    }
+  }
+  select.value = profileId ?? "";
+}
+
 function renderPlantConfig() {
   if (!selectedPlant) return;
   setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
@@ -2165,6 +2190,7 @@ function renderPlantConfig() {
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
   document.getElementById("plant-config-watering-days").value =
     selectedPlant.expected_watering_days ?? "";
+  fillPlantProfileSelect(document.getElementById("plant-config-profile"), selectedPlant.profile_id);
 }
 
 async function savePlantConfig(event) {
@@ -2180,6 +2206,7 @@ async function savePlantConfig(event) {
       display_name: document.getElementById("plant-config-display-name").value,
       room_id: room === "" ? null : Number(room),
       expected_watering_days: days === "" ? null : Number(days),
+      profile_id: document.getElementById("plant-config-profile").value || null,
     }),
   });
   const payload = await response.json().catch(() => ({}));

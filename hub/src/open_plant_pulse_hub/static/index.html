@@ -543,6 +543,10 @@
       <form id="plant-config-form" class="sensor-settings-form">
         <label>Plant name<input id="plant-config-display-name" maxlength="80" required></label>
         <label>Room<select id="plant-config-room"></select></label>
+        <label>Plant profile<select id="plant-config-profile"></select>
+          <small>Starter ranges for this kind of plant. A plant with no sensor
+            is not judged against them yet; the profile records what it is.</small>
+        </label>
         <label>Expected watering interval
           <input id="plant-config-watering-days" type="number" min="1" max="365" step="1"
                  placeholder="leave empty if you would rather not say">

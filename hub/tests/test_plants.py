@@ -335,6 +335,25 @@ class PlantApiTests(unittest.TestCase):
         homeless = self.call("PUT", path, {"display_name": "Boston fern", "room_id": None})
         self.assertIsNone(homeless["room_id"])
 
+    def test_a_plant_is_told_what_kind_of_plant_it_is(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Golden pothos"})
+        path = f"/api/plants/{plant['plant_id']}"
+        self.assertIsNone(plant["profile_id"])
+
+        saved = self.call("PUT", path, {"display_name": "Golden pothos", "profile_id": "pothos"})
+        self.assertEqual(saved["profile_id"], "pothos")
+
+        # A profile that does not exist is refused rather than stored.
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", path, {"display_name": "Golden pothos", "profile_id": "nonesuch"})
+        self.assertEqual(refused.exception.code, 400)
+        self.assertEqual(self.call("GET", path)["profile_id"], "pothos")
+
+        # And a plant may be no particular kind of plant.
+        self.assertIsNone(
+            self.call("PUT", path, {"display_name": "Golden pothos"})["profile_id"]
+        )
+
     def test_a_plant_with_no_sensor_still_has_lights(self) -> None:
         # The lights were always the plant's; only the address was the
         # sensor's, so a plant without one reaches them directly.
