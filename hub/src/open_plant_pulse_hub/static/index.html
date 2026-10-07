@@ -478,9 +478,17 @@
       <div class="inline-control plant-weight-anchors">
         <label for="plant-weight-full">Full at</label>
         <input id="plant-weight-full" type="number" step="0.01" min="0" placeholder="17.40">
+        <select id="plant-weight-full-unit" aria-label="Full weight unit">
+          <option value="kg">kg</option>
+          <option value="g">g</option>
+        </select>
         <button id="plant-weight-set-full" type="button">Set</button>
         <label for="plant-weight-dry">Dry at</label>
         <input id="plant-weight-dry" type="number" step="0.01" min="0" placeholder="16.20">
+        <select id="plant-weight-dry-unit" aria-label="Dry weight unit">
+          <option value="kg">kg</option>
+          <option value="g">g</option>
+        </select>
         <button id="plant-weight-set-dry" type="button">Set</button>
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>

@@ -1909,61 +1909,93 @@ function plantIdFromLocation() {
   return match ? Number(match[1]) : null;
 }
 
-/* Kilograms or grams, as whoever is holding the scale prefers.
+/* Kilograms or grams, per field, as whoever is holding the scale prefers.
  *
  * A 17 kg pot typed in grams is five digits to get wrong; a seedling in
- * kilograms is 0.42 of one. Grams are what is stored either way, so this is
- * only about the keypad. Remembered per browser, like any other preference:
- * if storage refuses, the choice simply does not outlive the page. */
-const WEIGHT_UNIT_KEY = "open-plant-pulse.weight-unit";
+ * kilograms is 0.42 of one. Each box says which it is reading, because a
+ * number typed into an unlabelled box is a guess about what the page meant.
+ * Grams are stored either way, so this is only about the keypad.
+ *
+ * Remembered per browser, per box: if storage refuses, the choice simply does
+ * not outlive the page. */
+const WEIGHT_UNIT_FIELDS = {
+  "plant-weight-unit": {
+    key: "open-plant-pulse.weight-unit",
+    field: "plant-weight-input",
+    placeholder: { kg: "17.40", g: "17400" },
+  },
+  "plant-weight-full-unit": {
+    key: "open-plant-pulse.weight-unit.full",
+    field: "plant-weight-full",
+    placeholder: { kg: "17.40", g: "17400" },
+  },
+  "plant-weight-dry-unit": {
+    key: "open-plant-pulse.weight-unit.dry",
+    field: "plant-weight-dry",
+    placeholder: { kg: "16.20", g: "16200" },
+  },
+};
 
-function weightUnit() {
-  const chosen = document.getElementById("plant-weight-unit");
+function unitOf(selectId) {
+  const chosen = document.getElementById(selectId);
   return chosen && chosen.value === "g" ? "g" : "kg";
 }
 
-function restoreWeightUnit() {
-  const chosen = document.getElementById("plant-weight-unit");
-  if (chosen === null) return;
-  try {
-    const remembered = window.localStorage.getItem(WEIGHT_UNIT_KEY);
-    if (remembered === "g" || remembered === "kg") chosen.value = remembered;
-  } catch (_error) {
-    /* Nothing to do: kilograms is the default either way. */
-  }
-  applyWeightUnit();
-  chosen.addEventListener("change", () => {
-    try {
-      window.localStorage.setItem(WEIGHT_UNIT_KEY, chosen.value);
-    } catch (_error) {
-      /* The selector still works; it just forgets. */
-    }
-    applyWeightUnit();
-    document.getElementById("plant-weight-full").value = "";
-    document.getElementById("plant-weight-dry").value = "";
-    renderPlantPage();
-  });
+/* The unit the panel reads in: the one beside the weighing it is about. */
+function weightUnit() {
+  return unitOf("plant-weight-unit");
 }
 
-/* The field asks for the unit it will be read in, and nothing stale is left
- * sitting in it when the unit changes under a typed number. */
-function applyWeightUnit() {
-  const field = document.getElementById("plant-weight-input");
+function gramsFrom(typed, unit) {
+  return unit === "g" ? Math.round(typed) : Math.round(typed * 1000);
+}
+
+function showWeight(grams, unit = weightUnit()) {
+  if (grams == null) return "--";
+  return unit === "g" ? String(grams) : (grams / 1000).toFixed(2);
+}
+
+/* The field asks for the unit it will be read in, and a number already in it
+ * is converted rather than silently reinterpreted. */
+function applyWeightUnit(selectId, previous) {
+  const spec = WEIGHT_UNIT_FIELDS[selectId];
+  const field = document.getElementById(spec.field);
   if (field === null) return;
-  const grams = weightUnit() === "g";
-  field.value = "";
+  const unit = unitOf(selectId);
+  const grams = unit === "g";
   field.step = grams ? "1" : "0.01";
   field.max = grams ? "500000" : "500";
-  field.placeholder = grams ? "17400" : "17.40";
+  field.placeholder = spec.placeholder[unit];
+  if (previous && previous !== unit && field.value) {
+    const typed = Number(field.value);
+    if (Number.isFinite(typed)) field.value = showWeight(gramsFrom(typed, previous), unit);
+  }
 }
 
-function showWeight(grams) {
-  if (grams == null) return "--";
-  return weightUnit() === "g" ? String(grams) : (grams / 1000).toFixed(2);
-}
-
-function kilograms(grams) {
-  return grams == null ? "--" : (grams / 1000).toFixed(2);
+function restoreWeightUnits() {
+  for (const [selectId, spec] of Object.entries(WEIGHT_UNIT_FIELDS)) {
+    const chosen = document.getElementById(selectId);
+    if (chosen === null) continue;
+    try {
+      const remembered = window.localStorage.getItem(spec.key);
+      if (remembered === "g" || remembered === "kg") chosen.value = remembered;
+    } catch (_error) {
+      /* Kilograms is the default either way. */
+    }
+    chosen.dataset.unit = unitOf(selectId);
+    applyWeightUnit(selectId);
+    chosen.addEventListener("change", () => {
+      const previous = chosen.dataset.unit;
+      chosen.dataset.unit = unitOf(selectId);
+      try {
+        window.localStorage.setItem(spec.key, chosen.value);
+      } catch (_error) {
+        /* The selector still works; it just forgets. */
+      }
+      applyWeightUnit(selectId, previous);
+      renderPlantPage();
+    });
+  }
 }
 
 /* Days since something, in the words somebody would use. */
@@ -2182,14 +2214,16 @@ function renderPlantWeightChart() {
  * 17.4 kg is not the same as watering it, so no watering is recorded. */
 async function setPlantAnchor(kind) {
   const plantId = plantIdFromLocation();
-  const field = document.getElementById(kind === "watered" ? "plant-weight-full" : "plant-weight-dry");
+  const full = kind === "watered";
+  const field = document.getElementById(full ? "plant-weight-full" : "plant-weight-dry");
+  const unit = unitOf(full ? "plant-weight-full-unit" : "plant-weight-dry-unit");
   const message = document.getElementById("plant-weight-anchor-message");
   const typed = Number(field.value);
   if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
-    setText(message, `Type the weight in ${weightUnit() === "g" ? "grams" : "kilograms"}.`);
+    setText(message, `Type the weight in ${unit === "g" ? "grams" : "kilograms"}.`);
     return;
   }
-  const grams = weightUnit() === "g" ? Math.round(typed) : Math.round(typed * 1000);
+  const grams = gramsFrom(typed, unit);
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2208,10 +2242,14 @@ async function setPlantAnchor(kind) {
  * means editing a number rather than remembering it. */
 function fillPlantAnchorFields() {
   const weight = (selectedPlant && selectedPlant.weight) || {};
-  for (const [id, anchor] of [["plant-weight-full", weight.watered], ["plant-weight-dry", weight.thirsty]]) {
+  const fields = [
+    ["plant-weight-full", "plant-weight-full-unit", weight.watered],
+    ["plant-weight-dry", "plant-weight-dry-unit", weight.thirsty],
+  ];
+  for (const [id, selectId, anchor] of fields) {
     const field = document.getElementById(id);
     if (field === null || field === document.activeElement) continue;
-    const shown = anchor ? showWeight(anchor.grams) : "";
+    const shown = anchor ? showWeight(anchor.grams, unitOf(selectId)) : "";
     if (field.value !== shown) field.value = shown;
   }
 }
@@ -2259,7 +2297,7 @@ async function recordPlantWeight(kind) {
   }
   // Grams on the wire and grams in the database: the unit is a keypad choice,
   // not something the rest of the hub should have to know about.
-  const grams = weightUnit() === "g" ? Math.round(typed) : Math.round(typed * 1000);
+  const grams = gramsFrom(typed, weightUnit());
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2448,7 +2486,7 @@ document.getElementById("plant-weight-set-full").addEventListener("click", () =>
 document.getElementById("plant-weight-set-dry").addEventListener("click", () => setPlantAnchor("thirsty"));
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
-restoreWeightUnit();
+restoreWeightUnits();
 trackRawReportsDisclosure();
 loadProfiles().then(refreshHouseholdNetwork).then(refreshRooms).then(refreshLightDrivers)
   .then(refreshFirmwareImages).then(poll);

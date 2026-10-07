@@ -326,13 +326,17 @@ class PlantApiTests(unittest.TestCase):
 
         # A 17 kg pot in grams is five digits to get wrong; a seedling in
         # kilograms is 0.42 of one. The scale's owner chooses.
-        self.assertIn('id="plant-weight-unit"', page)
-        self.assertIn('<option value="g">g</option>', page)
-        self.assertIn('Math.round(typed * 1000)', script)
+        # Every box says which unit it is read in, including the anchors: a
+        # number typed into an unlabelled box is a guess about what was meant.
+        for selector in ("plant-weight-unit", "plant-weight-full-unit", "plant-weight-dry-unit"):
+            self.assertIn(f'id="{selector}"', page)
+        self.assertEqual(page.count('<option value="g">g</option>'), 3)
+        self.assertIn("Math.round(typed * 1000)", script)
         # Grams on the wire whichever was typed.
         self.assertIn("JSON.stringify({ grams, kind })", script)
-        # And the choice outlives the page, per browser.
-        self.assertIn("WEIGHT_UNIT_KEY", script)
+        # And each choice outlives the page, per browser.
+        self.assertIn("WEIGHT_UNIT_FIELDS", script)
+        self.assertIn("open-plant-pulse.weight-unit.full", script)
 
     def test_the_page_carries_only_what_a_plant_without_a_sensor_has(self) -> None:
         page = self.call_text("/")
