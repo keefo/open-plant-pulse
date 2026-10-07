@@ -10,7 +10,10 @@ class PlantProfileLoaderTests(unittest.TestCase):
     def test_discovers_every_profile_file(self) -> None:
         catalog = load_plant_profiles()
 
-        self.assertEqual(set(catalog["profiles"]), {"generic_foliage", "monstera", "strelitzia"})
+        self.assertEqual(
+            set(catalog["profiles"]),
+            {"generic_foliage", "monstera", "pothos", "spider_plant", "strelitzia"},
+        )
         self.assertNotIn("schema_version", catalog["profiles"]["strelitzia"])
         self.assertNotIn("$schema", catalog["profiles"]["strelitzia"])
         self.assertEqual(catalog["profiles"]["monstera"]["drainage"]["preferred_response"], "balanced")

@@ -1892,9 +1892,18 @@ function renderManualPlants() {
     setText(name, plant.display_name);
     const where = document.createElement("code");
     setText(where, plant.room ? plant.room : "no room recorded");
+    /* The last thing that happened to this plant, by whichever instrument
+     * knows. A pot can be weighed without the watering being logged, and a
+     * card that says "not watered yet" beside "47% water left" is two true
+     * sentences that read as nonsense together. */
     const when = document.createElement("span");
     const watered = daysSince(plant.last_watered_at);
-    setText(when, watered ? "Watered " + watered : "Not watered yet");
+    const weighed = daysSince(plant.weight?.latest?.at);
+    setText(when, watered
+      ? "Watered " + watered
+      : weighed
+        ? "Weighed " + weighed
+        : "Not watered yet");
     /* What the pot weighs answers the question the card is really asked --
      * does this plant need me today -- so it is shown in place of the bare
      * "No sensor" whenever the weighings can answer it. */

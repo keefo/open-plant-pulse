@@ -1,0 +1,37 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "spider_plant",
+  "name": "Spider plant",
+  "scientific_name": "Chlorophytum comosum",
+  "root_zone": {
+    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
+    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [16, 27], "scale": [10, 35]},
+    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [400, 1100], "scale": [0, 3000]}
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Water once the top of the pot dries; the roots carry a reserve",
+    "refill_below": 35,
+    "post_water_target": [58, 72],
+    "comfortable_cycle": [35, 72],
+    "concern_below": 18,
+    "concern_above": 88
+  },
+  "drainage": {
+    "label": "Free-draining mix; the tuberous roots fill the pot and hold water themselves",
+    "preferred_response": "balanced",
+    "acceptable_responses": ["fast", "balanced"],
+    "maximum_settle_minutes": 20
+  },
+  "climate": {
+    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [16, 27], "scale": [10, 35]},
+    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 65], "scale": [20, 90]}
+  },
+  "chemistry": {
+    "soil_ph": {"label": "pH", "unit": "", "ideal": [6.0, 7.2], "scale": [4.0, 9.0]},
+    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [50, 110], "scale": [0, 200]},
+    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [25, 60], "scale": [0, 140]},
+    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [70, 150], "scale": [0, 240]}
+  }
+}

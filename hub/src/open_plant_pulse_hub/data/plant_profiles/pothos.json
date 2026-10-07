@@ -1,0 +1,37 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "pothos",
+  "name": "Pothos",
+  "scientific_name": "Epipremnum aureum",
+  "root_zone": {
+    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
+    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 29], "scale": [10, 35]},
+    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1400], "scale": [0, 3000]}
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Let most of the pot dry before watering again",
+    "refill_below": 30,
+    "post_water_target": [55, 72],
+    "comfortable_cycle": [30, 72],
+    "concern_below": 15,
+    "concern_above": 85
+  },
+  "drainage": {
+    "label": "Free-draining mix; standing wet is the usual cause of loss",
+    "preferred_response": "fast",
+    "acceptable_responses": ["fast", "balanced"],
+    "maximum_settle_minutes": 20
+  },
+  "climate": {
+    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 30], "scale": [10, 35]},
+    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 65], "scale": [20, 90]}
+  },
+  "chemistry": {
+    "soil_ph": {"label": "pH", "unit": "", "ideal": [6.0, 7.0], "scale": [4.0, 9.0]},
+    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [60, 120], "scale": [0, 200]},
+    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [25, 65], "scale": [0, 140]},
+    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [80, 160], "scale": [0, 240]}
+  }
+}
