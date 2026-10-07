@@ -2043,9 +2043,12 @@ function renderPlantPage() {
     weight.daily_grams == null ? "--" : String(weight.daily_grams));
   setText(document.getElementById("plant-weight-days"),
     weight.days_left == null ? "--" : String(weight.days_left));
+  /* "weighed" only for a weighing: an anchor typed in from memory was set,
+   * which is a different claim about a different moment. */
   setText(document.getElementById("plant-weight-summary"),
     weight.watered
-      ? `Full at ${showWeight(weight.watered.grams)} ${weightUnit()}, weighed ${daysSince(weight.watered.at)}`
+      ? `Full at ${showWeight(weight.watered.grams)} ${weightUnit()}, ` +
+        `${weight.watered.observed ? "weighed" : "set"} ${daysSince(weight.watered.at)}`
       : "No watered weight yet");
 
   setText(document.getElementById("plant-journey-days"), journey.monitored_days ?? "--");
@@ -2085,6 +2088,7 @@ function plantWeightPoints() {
   const weights = (selectedPlant && selectedPlant.weights) || [];
   const since = Date.now() - plantWeightTrendMs;
   return weights
+    .filter((weighing) => weighing.observed)
     .map((weighing) => ({ timestamp: Date.parse(weighing.at), grams: weighing.grams }))
     .filter((point) => Number.isFinite(point.timestamp) && point.timestamp >= since)
     .sort((a, b) => a.timestamp - b.timestamp);
@@ -2210,8 +2214,9 @@ function renderPlantWeightChart() {
     `–${showWeight(Math.max(...points.map((p) => p.grams)))} ${unit}`);
 }
 
-/* Setting an anchor is a correction, not an event: saying the full pot weighs
- * 17.4 kg is not the same as watering it, so no watering is recorded. */
+/* Setting an anchor is a claim about the pot in a state it is not in: what it
+ * weighs full, or dry. It is not a weighing taken now, so it does not become
+ * what the pot weighs now, and setting the full weight is not watering it. */
 async function setPlantAnchor(kind) {
   const plantId = plantIdFromLocation();
   const full = kind === "watered";
@@ -2227,7 +2232,7 @@ async function setPlantAnchor(kind) {
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ grams, kind, record_watering: false }),
+    body: JSON.stringify({ grams, kind, observed: false }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));

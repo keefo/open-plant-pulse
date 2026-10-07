@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 25
+DATABASE_SCHEMA_VERSION = 26
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -872,6 +872,18 @@ MIGRATIONS: Dict[int, str] = {
             note TEXT
         );
         CREATE INDEX plant_weights_by_plant ON plant_weights(plant_id, at DESC);
+    """,
+    26: """
+        /* Whether the pot was on the scale at that moment.
+
+           A weighing is an observation: the pot weighed 8.38 kg at noon. An
+           anchor typed in from memory is a claim about the pot in a state it
+           is not in now -- 'full, it weighs 17.4 kg' -- and dating that claim
+           today does not mean the pot weighs 17.4 kg today. Only observed
+           rows say what the pot weighs now or how fast it is drying; every
+           row, observed or not, can serve as the newest anchor. */
+        ALTER TABLE plant_weights ADD COLUMN observed INTEGER NOT NULL DEFAULT 1
+            CHECK (observed IN (0, 1));
     """,
 }
 

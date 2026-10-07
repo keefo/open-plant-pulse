@@ -2705,15 +2705,19 @@ class ReadingStore:
         note: Optional[str] = None,
         at: Optional[str] = None,
         source: str = "manual",
-        record_watering: bool = True,
+        observed: bool = True,
     ) -> Dict[str, Any]:
         """Write down what the pot weighs.
 
         Recording the watered weight also records the watering: that weighing
         is taken because the plant has just been watered and drained, and
-        making somebody say so twice invites the two to disagree. Correcting
-        the figure afterwards is not a second watering, so that passes
-        record_watering=False and the care log is left alone.
+        making somebody say so twice invites the two to disagree.
+
+        observed=False marks a claim rather than an observation -- an anchor
+        typed in from memory, saying what the pot weighs full or dry, not what
+        it weighs now. Such a row anchors but is not a weighing: it is not the
+        latest weight, it is no part of the drying rate, and recording the
+        full weight that way is not watering the plant.
         """
         if kind not in WEIGHT_KINDS:
             raise ValueError(f"unknown weight kind: {kind}")
@@ -2728,12 +2732,16 @@ class ReadingStore:
         with self._condition, self._database:
             self._database.execute(
                 """
-                INSERT INTO plant_weights (plant_id, at, grams, source, kind, note)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO plant_weights
+                    (plant_id, at, grams, source, kind, note, observed)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (plant_id, at, grams, source, kind, (note or "").strip() or None),
+                (
+                    plant_id, at, grams, source, kind,
+                    (note or "").strip() or None, 1 if observed else 0,
+                ),
             )
-        if kind == "watered" and record_watering:
+        if kind == "watered" and observed:
             self.record_plant_care(plant_id, "watering", at)
         return self.plant_weight_status(plant_id)
 
@@ -2742,7 +2750,7 @@ class ReadingStore:
         with self._condition:
             rows = self._database.execute(
                 """
-                SELECT weight_id, at, grams, source, kind, note
+                SELECT weight_id, at, grams, source, kind, note, observed
                 FROM plant_weights WHERE plant_id = ?
                 ORDER BY at DESC, weight_id DESC LIMIT ?
                 """,
@@ -2756,6 +2764,7 @@ class ReadingStore:
                 "source": row[3],
                 "kind": row[4],
                 "note": row[5],
+                "observed": bool(row[6]),
             }
             for row in rows
         ]
@@ -2772,7 +2781,7 @@ class ReadingStore:
         with self._condition:
             rows = self._database.execute(
                 """
-                SELECT at, grams, kind FROM plant_weights
+                SELECT at, grams, kind, observed FROM plant_weights
                 WHERE plant_id = ? ORDER BY at DESC, weight_id DESC
                 """,
                 (plant_id,),
@@ -2791,27 +2800,37 @@ class ReadingStore:
             return status
 
         def point(row: Tuple[Any, ...]) -> Dict[str, Any]:
-            return {"at": row[0], "grams": row[1]}
+            return {"at": row[0], "grams": row[1], "observed": bool(row[3])}
 
-        status["latest"] = point(rows[0])
+        # An anchor typed in from memory anchors; it is not a weighing, so it
+        # is not what the pot weighs now.
+        weighings = [row for row in rows if row[3]]
+        latest = weighings[0] if weighings else None
+        status["latest"] = point(latest) if latest else None
         watered = next((row for row in rows if row[2] == "watered"), None)
         thirsty = next((row for row in rows if row[2] == "thirsty"), None)
         status["watered"] = point(watered) if watered else None
         status["thirsty"] = point(thirsty) if thirsty else None
-
-        latest_grams = rows[0][1]
-        if watered:
-            status["used_grams"] = max(0, watered[1] - latest_grams)
+        # How much water the pot holds is the distance between its anchors,
+        # which is known as soon as both are, weighed or typed in.
+        capacity = None
         if watered and thirsty and watered[1] > thirsty[1]:
             capacity = watered[1] - thirsty[1]
             status["capacity_grams"] = capacity
+        if latest is None:
+            return status
+
+        latest_grams = latest[1]
+        if watered:
+            status["used_grams"] = max(0, watered[1] - latest_grams)
+        if capacity:
             remaining = (latest_grams - thirsty[1]) / capacity * 100
             status["remaining_percent"] = round(min(100.0, max(0.0, remaining)))
 
         # How fast it is drying, over the weighings since the last watering:
         # a rate measured across a watering would be a rate of filling.
         since = watered[0] if watered else None
-        cycle = [row for row in rows if since is None or row[0] >= since]
+        cycle = [row for row in weighings if since is None or row[0] >= since]
         if len(cycle) >= 2:
             newest, oldest = cycle[0], cycle[-1]
             span = self._observation_datetime(newest[0], now) - self._observation_datetime(

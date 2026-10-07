@@ -205,7 +205,7 @@ class PlantWeightTests(unittest.TestCase):
 
     def test_correcting_an_anchor_is_not_a_second_watering(self) -> None:
         # Saying the full pot weighs 17.4 kg is a calibration, not an event.
-        self.store.record_plant_weight(self.plant_id, 17_400, "watered", record_watering=False)
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", observed=False)
         self.store.record_plant_weight(self.plant_id, 16_200, "thirsty")
 
         self.assertEqual(self.store.care_log(10, plant_id=self.plant_id), [])
@@ -214,13 +214,37 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual(status["thirsty"]["grams"], 16_200)
         self.assertEqual(status["capacity_grams"], 1_200)
 
+    def test_a_typed_anchor_is_not_what_the_pot_weighs_now(self) -> None:
+        # Saying "it weighs 16.2 kg dry" is a claim about a state the pot is
+        # not in; it must not become the latest weighing.
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(5))
+        self.store.record_plant_weight(self.plant_id, 16_900, at=ago(1))
+        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty", observed=False)
+
+        status = self.store.plant_weight_status(self.plant_id)
+        self.assertEqual(status["latest"]["grams"], 16_900)
+        self.assertEqual(status["thirsty"]["grams"], 16_200)
+        self.assertEqual(status["used_grams"], 500)
+        # And the claim is no part of how fast the pot is drying.
+        self.assertEqual(status["daily_grams"], 125)
+
+    def test_a_pot_with_only_typed_anchors_has_no_weight_yet(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 17_400, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty", observed=False)
+
+        status = self.store.plant_weight_status(self.plant_id)
+        self.assertIsNone(status["latest"])
+        self.assertIsNone(status["used_grams"])
+        self.assertEqual(status["capacity_grams"], 1_200)
+        self.assertEqual(self.store.care_log(10, plant_id=self.plant_id), [])
+
     def test_the_newest_anchor_is_the_one_that_counts(self) -> None:
         # A repot or a season's growth gives a new full weight; the old one
         # stays in the history rather than being overwritten.
         self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(30),
-                                       record_watering=False)
+                                       observed=False)
         self.store.record_plant_weight(self.plant_id, 19_000, "watered", at=ago(1),
-                                       record_watering=False)
+                                       observed=False)
 
         self.assertEqual(
             self.store.plant_weight_status(self.plant_id)["watered"]["grams"], 19_000
@@ -318,7 +342,7 @@ class PlantApiTests(unittest.TestCase):
         # And both can be typed in, which does not invent a watering.
         self.assertIn('id="plant-weight-full"', page)
         self.assertIn('id="plant-weight-dry"', page)
-        self.assertIn("record_watering: false", script)
+        self.assertIn("observed: false", script)
 
     def test_a_pot_can_be_weighed_in_either_unit(self) -> None:
         page = self.call_text("/")
