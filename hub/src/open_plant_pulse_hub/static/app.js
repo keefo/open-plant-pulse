@@ -2065,16 +2065,14 @@ function renderPlantPage() {
   fillPlantAnchorFields();
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
 
+  // Watering is recorded by weighing the full pot, so the log keeps only the
+  // buttons for what no weighing can tell: feeding, and whatever was noticed.
   const today = new Date().toDateString();
-  for (const [id, kind] of [["plant-watered", "watering"], ["plant-fertilized", "fertilizing"]]) {
-    const done = (selectedPlant.care_log || []).some((event) =>
-      event.kind === kind && new Date(event.detected_at).toDateString() === today);
-    const button = document.getElementById(id);
-    setText(button, done
-      ? (kind === "watering" ? "Watered today ✓" : "Fertilized today ✓")
-      : (kind === "watering" ? "Watered today" : "Fertilized today"));
-    setDisabled(button, done);
-  }
+  const fed = (selectedPlant.care_log || []).some((event) =>
+    event.kind === "fertilizing" && new Date(event.detected_at).toDateString() === today);
+  const button = document.getElementById("plant-fertilized");
+  setText(button, fed ? "Fertilized today ✓" : "Fertilized today");
+  setDisabled(button, fed);
 }
 
 /* The pot's weight over a month, which is this plant's moisture history.
@@ -2488,7 +2486,6 @@ document.getElementById("firmware-file").addEventListener("change", (event) => {
 });
 document.getElementById("record-fertilized").addEventListener("click", recordFertilized);
 document.getElementById("add-plant").addEventListener("click", addPlant);
-document.getElementById("plant-watered").addEventListener("click", () => recordPlantCare("watering"));
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
