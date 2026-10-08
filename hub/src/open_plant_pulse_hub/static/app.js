@@ -2175,7 +2175,12 @@ async function uploadPlantPhotos(files) {
     setText(message, `Sending ${index + 1} of ${files.length}…`);
     const body = await shrinkPhoto(file);
     if (body === null) {
-      setText(message, `${file.name} is not a picture this browser can read.`);
+      // Worth naming: a photograph taken on an iPhone is HEIC, and Chrome
+      // cannot decode one however willing the page is.
+      setText(message, /\.hei[cf]$/i.test(file.name)
+        ? `${file.name} is a HEIC photograph, which this browser cannot read. `
+          + "Convert it to JPEG first, or open this page in Safari."
+        : `${file.name} is not a picture this browser can read.`);
       continue;
     }
     const response = await fetch(`/api/plants/${plantId}/photos`, {
@@ -2886,11 +2891,20 @@ document.getElementById("plant-note").addEventListener("click", () => recordPlan
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
 document.getElementById("plant-weight-set-thirsty").addEventListener("click", () => setPlantAnchor("thirsty"));
-document.getElementById("plant-photo-add").addEventListener("click",
-  () => document.getElementById("plant-photo-file").click());
+/* The label opens the picker by itself, which is one less thing to go wrong
+ * than forwarding a click; the keyboard needs the forwarding, though, since a
+ * label is not a button. */
+document.getElementById("plant-photo-add").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    document.getElementById("plant-photo-file").click();
+  }
+});
 document.getElementById("plant-photo-file").addEventListener("change", (event) => {
-  const files = event.target.files;
-  // Cleared first, so choosing the same file twice in a row still counts.
+  // Copied out before the input is cleared: files is the input's own live
+  // list, and emptying the input empties the list that was about to be read.
+  const files = [...event.target.files];
+  // Cleared so that choosing the same file twice in a row still counts.
   event.target.value = "";
   uploadPlantPhotos(files);
 });

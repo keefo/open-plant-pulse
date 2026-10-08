@@ -528,8 +528,8 @@
       <div class="section-heading">
         <div><p class="eyebrow">PHOTOGRAPHS</p><h2 id="plant-photos-title">How it looks</h2></div>
         <div class="settings-sensor-actions">
-          <button id="plant-photo-add" class="secondary-action" type="button">Add photos</button>
-          <input id="plant-photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
+          <label id="plant-photo-add" class="secondary-action" for="plant-photo-file" tabindex="0" role="button">Add photos</label>
+          <input id="plant-photo-file" class="visually-hidden" type="file" accept="image/*" multiple>
         </div>
       </div>
       <output id="plant-photo-message" aria-live="polite"></output>

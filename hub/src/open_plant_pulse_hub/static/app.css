@@ -565,4 +565,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .photo-tile figcaption strong { color: var(--leaf); }
 .link-button { padding: 0; border: 0; color: var(--muted); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
 .link-button:hover { color: var(--ink); }
+/* Out of sight but still a real control, so the label can open it and the
+   keyboard can still reach it. A display:none input is not always clickable. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#plant-photo-add { cursor: pointer; }
 #plant-photo-message { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
