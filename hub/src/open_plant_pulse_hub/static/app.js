@@ -112,8 +112,10 @@ function pageFromLocation() {
    * Plant care and device administration are different jobs done at different
    * times, and the forms for the second were crowding the first. */
   if (path.startsWith("/plants/") && path.endsWith("/config")) return "plant-config";
+  // A sensor's settings are a section of its plant's configuration now, so
+  // the sensor's old address is the plant's page.
+  if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "plant-config";
   if (path.startsWith("/plants/")) return "plant";
-  if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";
   if (path.startsWith("/sensors/")) return "detail";
   if (path === "/settings" || path.startsWith("/settings/")) return "settings";
   if (path === "/onboarding" || path.startsWith("/onboarding/")) return "onboarding";
@@ -152,15 +154,28 @@ function renderPage() {
   setClass(document.getElementById("fleet-link"), "active", page === "fleet");
   setClass(document.getElementById("settings-link"), "active", page === "settings");
   if (selectedSensorId) {
-    setAttr(document.getElementById("detail-config-link"), "href", sensorPath(selectedSensorId, "/settings"));
+    const plantId = selectedSensor?.plant_id ?? null;
+    const configure = plantId === null
+      ? sensorPath(selectedSensorId, "/settings")
+      : `/plants/${plantId}/config`;
+    setAttr(document.getElementById("detail-config-link"), "href", configure);
     setAttr(document.getElementById("config-back-link"), "href", sensorPath(selectedSensorId));
-    setAttr(document.getElementById("plant-lighting-change"), "href", sensorPath(selectedSensorId, "/settings"));
+    setAttr(document.getElementById("plant-lighting-change"), "href", configure);
   }
   if (page === "plant" || page === "plant-config") {
     const plantId = plantIdFromLocation();
     if (plantId !== null) {
       setAttr(document.getElementById("plant-page-config"), "href", `/plants/${plantId}/config`);
     }
+  }
+  if (page === "plant-config") {
+    // A plant with no sensor has no sensor sections, rather than empty ones.
+    const watched = plantSensor() !== null;
+    for (const id of ["sensor-settings-panel", "sensor-firmware-panel", "raw-report-log"]) {
+      const panel = document.getElementById(id);
+      if (panel !== null) setHidden(panel, !watched);
+    }
+    if (watched) renderSensorFirmware();
   }
   if (page === "config") {
     setText(document.getElementById("config-plant-name"), selectedSensor
@@ -554,11 +569,6 @@ function renderSensorSettings() {
   setText(document.getElementById("settings-sensor-id"), selectedSensor.sensor_id);
   renderConfigRevision(selectedSensor);
   if (!preserveDraft) {
-    document.getElementById("detail-setting-name").value = selectedSensor.display_name || "";
-    renderRoomChoices();
-    const detailRoom = document.getElementById("detail-setting-room");
-    if (selectedSensor.room_id != null) detailRoom.value = String(selectedSensor.room_id);
-    document.getElementById("detail-setting-profile").value = selectedSensor.profile_id || profiles.default_profile;
     selectReportingInterval(
       document.getElementById("detail-setting-reporting-interval"),
       selectedSensor.expected_interval_seconds
@@ -1504,11 +1514,9 @@ async function loadProfiles() {
   const response = await fetch("/api/plant-profiles");
   profiles = await response.json();
   const settingSelect = document.getElementById("setting-profile");
-  const detailSettingSelect = document.getElementById("detail-setting-profile");
   const onboardingSelect = document.getElementById("onboarding-profile");
   for (const [id, profile] of Object.entries(profiles.profiles)) {
     settingSelect.add(new Option(profile.name, id));
-    detailSettingSelect.add(new Option(profile.name, id));
     onboardingSelect.add(new Option(profile.name, id));
   }
   setText(document.getElementById("chemistry-guidance"), profiles.guidance);
@@ -1784,7 +1792,16 @@ async function refresh() {
       return;
     }
     if (page === "plant-config") {
+      // The sensor's own settings are a section of this page, so it loads
+      // what a sensor page used to: its firmware and its raw reports.
+      selectedSensorId = plantSensor()?.sensor_id ?? null;
+      selectedSensor = plantSensor() ?? null;
       await refreshPlantConfig();
+      if (selectedSensorId) {
+        const reports = await fetch(`/api/raw-reports${sensorQuery()}`);
+        if (reports.ok) renderRawReports((await reports.json()).items);
+        await refreshFirmwareImages();
+      }
       return;
     }
     if (page === "settings") {
@@ -2083,7 +2100,14 @@ let selectedPlant = null;
 
 function plantIdFromLocation() {
   const match = window.location.pathname.match(/^\/plants\/(\d+)(?:\/config)?$/);
-  return match ? Number(match[1]) : null;
+  if (match) return Number(match[1]);
+  // Reached by way of a sensor: the plant is whichever one it watches.
+  const bySensor = window.location.pathname.match(/^\/sensors\/(.+)\/settings$/);
+  if (bySensor) {
+    const sensor = fleetSensors.find((s) => s.sensor_id === decodeURIComponent(bySensor[1]));
+    return sensor?.plant_id ?? null;
+  }
+  return null;
 }
 
 /* Kilograms or grams, per field, as whoever is holding the scale prefers.
@@ -2528,6 +2552,14 @@ async function removePlantPhoto(photo) {
 /* A plant's configuration: what it is called, where it is, and which lights
  * are its own -- the questions a sensor's configuration page asks about the
  * plant it watches, asked where there is no sensor to ask through. */
+/* The sensor watching the plant whose page this is, if one is. */
+function plantSensor() {
+  const plantId = plantIdFromLocation();
+  return plantId === null
+    ? null
+    : fleetSensors.find((sensor) => sensor.plant_id === plantId) || null;
+}
+
 async function refreshPlantConfig() {
   const plantId = plantIdFromLocation();
   if (plantId === null) return;
@@ -2626,7 +2658,9 @@ function fillPlantVarietySelect(variety) {
 function renderPlantConfig() {
   if (!selectedPlant) return;
   setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
-  setAttr(document.getElementById("plant-config-back"), "href", `/plants/${selectedPlant.plant_id}`);
+  const sensor = plantSensor();
+  setAttr(document.getElementById("plant-config-back"), "href",
+    sensor ? sensorPath(sensor.sensor_id) : `/plants/${selectedPlant.plant_id}`);
 
   // Left alone while it is being filled in, so a refresh a second later does
   // not snatch back a half-typed name.
@@ -2999,9 +3033,8 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      display_name: document.getElementById("detail-setting-name").value,
-      room_id: Number(document.getElementById("detail-setting-room").value) || null,
-      profile_id: document.getElementById("detail-setting-profile").value,
+      // The plant's name, room and kind are the plant's, and are left out
+      // so that saving the device cannot quietly rewrite them.
       expected_interval_seconds: Number(
         document.getElementById("detail-setting-reporting-interval").value
       )

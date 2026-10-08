@@ -593,12 +593,41 @@ class PlantApiTests(unittest.TestCase):
         script = self.call_text("/app.js")
 
         self.assertIn('data-page="plant-config"', page)
-        for field in ("plant-config-display-name", "plant-config-room",
-                      "plant-config-watering-days"):
-            self.assertIn(f'id="{field}"', page)
-        # The lighting form is one form, shown on both configuration pages.
-        self.assertIn('data-page="config plant-config"', page)
         self.assertIn('path.endsWith("/config")) return "plant-config"', script)
+
+        # Every plant-level setting lives on this page and only here. The
+        # same question asked in two places is how a plant with a sensor came
+        # to have a profile, a variety and an at-home date it could not
+        # reach: each was added to the page one kind of plant uses.
+        plant_fields = (
+            "plant-config-display-name", "plant-config-room", "plant-config-profile",
+            "plant-config-variety", "plant-config-acquired", "plant-config-watering-days",
+            "lighting-enabled", "lighting-on", "lighting-off",
+        )
+        panel = page[page.index('id="plant-config-title"'):page.index('id="sensor-settings-panel"')]
+        for field in plant_fields:
+            self.assertEqual(page.count(f'id="{field}"'), 1, f"{field} is asked twice")
+            self.assertIn(f'id="{field}"', panel, f"{field} is not on the plant's page")
+
+        # And the sensor's section asks nothing about the plant: saving the
+        # device must not be able to rewrite what the plant is.
+        sensor_panel = page[page.index('id="sensor-settings-panel"'):]
+        for gone in ("detail-setting-name", "detail-setting-room", "detail-setting-profile"):
+            self.assertNotIn(gone, page, f"{gone} still asks the plant's question")
+        self.assertIn("detail-setting-reporting-interval", sensor_panel)
+        self.assertNotIn('display_name: document.getElementById("detail-setting-name")', script)
+
+    def test_a_plant_with_a_sensor_is_configured_in_the_same_place(self) -> None:
+        script = self.call_text("/app.js")
+
+        # The sensor's own address leads to its plant's configuration, and
+        # the sensor's settings are a section of it rather than a page.
+        self.assertIn(
+            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "plant-config";',
+            script)
+        self.assertIn("function plantSensor()", script)
+        # A plant with no sensor gets no empty sensor sections.
+        self.assertIn('"sensor-settings-panel", "sensor-firmware-panel", "raw-report-log"', script)
 
     def test_a_pot_is_weighed_in_grams_whatever_the_keypad_offered(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})

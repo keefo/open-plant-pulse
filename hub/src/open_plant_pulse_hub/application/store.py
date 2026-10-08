@@ -1677,14 +1677,34 @@ class ReadingStore:
     def manage_sensor(
         self,
         sensor_id: str,
-        display_name: str,
-        room: str,
-        profile_id: str,
+        display_name: Optional[str],
+        room: Optional[str],
+        profile_id: Optional[str],
         moisture_low_percent: Optional[float],
         conductivity_high_us_cm: Optional[int],
         expected_interval_seconds: int,
         room_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Adopt a sensor, or change what the hub asks of the device.
+
+        What the plant is called, which room it is in and what kind of plant
+        it is belong to the plant and are edited on the plant's own page.
+        They are still taken here, because adopting a sensor is where a plant
+        is born; left out, they are kept as they are rather than cleared.
+        """
+        held = self._database.execute(
+            """
+            SELECT sensors.display_name, sensors.room, sensors.profile_id, sensors.room_id
+            FROM sensors WHERE sensor_id = ?
+            """,
+            (sensor_id,),
+        ).fetchone()
+        if display_name is None:
+            display_name = (held[0] if held else "") or ""
+        if room is None and room_id is None:
+            room, room_id = (held[1] if held else None) or "", held[3] if held else None
+        if profile_id is None:
+            profile_id = (held[2] if held else None) or load_plant_profiles()["default_profile"]
         display_name = display_name.strip()
         # Rooms are chosen, not typed. The name is still stored on the sensor so
         # every existing reader keeps working, but the room it points at is what

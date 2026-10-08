@@ -115,7 +115,6 @@ function renderRooms() {
 /* The room is picked, never typed, so two sensors in one room always agree on
  * which room that is. */
 function renderRoomChoices() {
-  fillRoomSelect(document.getElementById("detail-setting-room"));
   const select = document.getElementById("onboarding-room");
   if (select === null) return;
   const chosen = select.value;

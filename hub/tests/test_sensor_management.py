@@ -252,11 +252,13 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn(b"Configuration", detail_page)
         self.assertIn(b"Reporting interval", detail_page)
         self.assertIn(b'id="detail-setting-reporting-interval"', detail_page)
-        # Configuring a sensor and watching a plant are separate pages served by
-        # one document, so what tells them apart is the page each section is on.
+        # Watching a plant and configuring it are separate pages served by one
+        # document, so what tells them apart is the page each section is on.
+        # Configuration is the plant's page, the sensor's settings included:
+        # a plant is one thing however many instruments are on it.
         self.assertIn(b'<section class="climate-history" data-page="detail"', detail_page)
-        self.assertIn(b'<section class="sensor-settings" data-page="config"', detail_page)
-        self.assertIn(b'id="raw-report-log" data-page="config"', detail_page)
+        self.assertIn(b'<section class="sensor-settings" data-page="plant-config"', detail_page)
+        self.assertIn(b'id="raw-report-log" data-page="plant-config"', detail_page)
         self.assertIn(b'id="detail-config-link"', detail_page)
         self.assertIn(b'id="config-back-link"', detail_page)
         self.assertNotIn(b"Global reporting interval", detail_page)
@@ -324,22 +326,24 @@ class SensorManagementWebTests(unittest.TestCase):
         app = (static / "app.js").read_text()
         onboarding = (static / "onboarding.js").read_text()
 
-        # The hub serves the application for the new route as for any other page.
+        # The hub serves the application for the route as for any other page.
         with self.request(f"/sensors/{quote(sensor_id, safe='')}/settings") as response:
             self.assertEqual(response.status, 200)
-            self.assertIn(b'data-page="config"', response.read())
+            self.assertIn(b'data-page="plant-config"', response.read())
 
+        # A sensor's settings are a section of its plant's configuration, so
+        # the sensor's own address leads to the plant's page.
         self.assertIn(
-            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "config";',
+            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "plant-config";',
             app,
         )
         # The sensor is still named by the path, with or without the suffix.
         self.assertIn(r"/^\/sensors\/([^/]+)(?:\/settings)?$/", app)
         # Reachable from the plant page, and from the row in hub settings.
-        self.assertIn('sensorPath(selectedSensorId, "/settings")', app)
+        self.assertIn("`/plants/${plantId}/config`", app)
         self.assertIn('"/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings"', onboarding)
         # Polling follows the page: no charts to feed here, and no report log there.
-        self.assertIn('if (page === "config") {', app)
+        self.assertIn('if (page === "plant-config") {', app)
 
     def test_raw_report_log_is_collapsed_last_and_remembers_its_state(self) -> None:
         with self.request("/sensors/sensor-aabbccddeeff") as response:

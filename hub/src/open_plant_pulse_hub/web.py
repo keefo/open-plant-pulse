@@ -263,9 +263,9 @@ def create_server(
                     sensor_id = unquote(path[len("/api/sensors/") :])
                     result = store.manage_sensor(
                         sensor_id,
-                        str(payload.get("display_name", "")),
-                        str(payload.get("room", "")),
-                        str(payload.get("profile_id", "")),
+                        self._optional_str(payload.get("display_name")),
+                        self._optional_str(payload.get("room")),
+                        self._optional_str(payload.get("profile_id")),
                         self._optional_float(payload.get("moisture_low_percent")),
                         self._optional_int(payload.get("conductivity_high_us_cm")),
                         int(payload.get("expected_interval_seconds", 1800)),
