@@ -1819,7 +1819,11 @@ async function refresh() {
       refreshPotResponse(), refreshPlantJourney(), refreshPlantLighting(),
       refreshPlantPhotos()
     ]);
-  } catch (_error) {
+  } catch (error) {
+    // Said out loud as well as shown. This catch is here for a hub that has
+    // gone away, but it will just as happily swallow a page that threw, and
+    // a bug in the page should not pass for a network that is down.
+    console.error("refresh failed", error);
     setText(document.getElementById("status"), "Hub unavailable");
     setClass(document.getElementById("status-dot"), "live", false);
   }
@@ -2448,6 +2452,10 @@ function renderPlantPhotos() {
     tile.className = "photo-tile";
     if (photo.cover) tile.dataset.cover = "true";
 
+    // When the camera says it was taken, or when it arrived if it said
+    // nothing. Declared here because the picture's own description uses it.
+    const taken = photo.taken_at || photo.added_at;
+
     /* Opening the picture at its own address rather than in a viewer of our
      * own: the browser already has one, with zoom and save. */
     const link = document.createElement("a");
@@ -2462,7 +2470,6 @@ function renderPlantPhotos() {
 
     const caption = document.createElement("figcaption");
     const when = document.createElement("span");
-    const taken = photo.taken_at || photo.added_at;
     setText(when, new Date(taken).toLocaleDateString(undefined, { dateStyle: "medium" }));
     setAttr(when, "title", photo.taken_at
       ? "Taken " + new Date(photo.taken_at).toLocaleString()
