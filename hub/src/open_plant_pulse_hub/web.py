@@ -601,9 +601,12 @@ def create_server(
         def _send_photo(self, raw: str) -> None:
             """The photograph itself.
 
-            Named by a number the hub issued, and held in the browser for a
-            year: the bytes behind an id never change, since editing a
-            photograph here means uploading another one.
+            Held in the browser for a year, which is safe only because the
+            page asks by content: an id is handed out again once its
+            photograph is deleted, so an id alone would eventually name
+            different bytes and the browser would go on showing the old
+            ones. The digest in the query string is what makes the address
+            immutable; nothing here reads it.
             """
             try:
                 photo_id = self._plant_id(raw)

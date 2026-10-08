@@ -2902,7 +2902,9 @@ class ReadingStore:
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
                        plants.variety,
-                       plants.cover_photo_id
+                       plants.cover_photo_id,
+                       (SELECT digest FROM plant_photos
+                        WHERE plant_photos.photo_id = plants.cover_photo_id)
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -2932,7 +2934,9 @@ class ReadingStore:
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
                        plants.variety,
-                       plants.cover_photo_id
+                       plants.cover_photo_id,
+                       (SELECT digest FROM plant_photos
+                        WHERE plant_photos.photo_id = plants.cover_photo_id)
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -3243,6 +3247,10 @@ class ReadingStore:
             # the named plant within it.
             "variety": row[10],
             "cover_photo_id": row[11],
+            # The cover's digest, so the card can ask for it by content. An
+            # id is reused once its photograph is deleted; what the bytes are
+            # is not.
+            "cover_photo_digest": row[12],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

@@ -1625,7 +1625,8 @@ async function refresh() {
     if (careLogResponse.ok) renderCareLog((await careLogResponse.json()).items);
     await Promise.all([
       refreshClimateHistory(), refreshMoistureTrend(), refreshWateringCalendar(),
-      refreshPotResponse(), refreshPlantJourney(), refreshPlantLighting()
+      refreshPotResponse(), refreshPlantJourney(), refreshPlantLighting(),
+      refreshPlantPhotos()
     ]);
   } catch (_error) {
     setText(document.getElementById("status"), "Hub unavailable");
@@ -1898,7 +1899,7 @@ function renderManualPlants() {
     if (plant.cover_photo_id != null) {
       const cover = document.createElement("img");
       cover.className = "fleet-card-cover";
-      cover.src = `/api/photos/${plant.cover_photo_id}`;
+      cover.src = photoUrl(plant.cover_photo_id, plant.cover_photo_digest);
       cover.loading = "lazy";
       cover.alt = "";
       card.append(cover);
@@ -2147,6 +2148,16 @@ function renderPlantPage() {
  * what the browser would have had to download anyway. The original stays on
  * the camera, which is where the archive belongs. */
 const PHOTO_MAX_EDGE = 1600;
+
+/* Where to ask for a photograph.
+ *
+ * The id alone is not a stable name: SQLite hands a deleted row's id to the
+ * next one, so /api/photos/4 can mean a different picture tomorrow -- and
+ * the browser, told to keep it for a year, would go on showing yesterday's.
+ * The digest makes the address name the bytes. */
+function photoUrl(photoId, digest) {
+  return `/api/photos/${photoId}?v=${(digest || "").slice(0, 16)}`;
+}
 const PHOTO_QUALITY = 0.85;
 let plantPhotos = [];
 
@@ -2166,8 +2177,15 @@ async function shrinkPhoto(file) {
   return shrunk !== null && shrunk.size < file.size ? shrunk : file;
 }
 
+/* Which plant is being looked at, however it was reached: a plant with a
+ * sensor is still the plant, and its photographs are the plant's rather than
+ * the instrument's. */
+function currentPlantId() {
+  return plantIdFromLocation() ?? selectedSensor?.plant_id ?? null;
+}
+
 async function uploadPlantPhotos(files) {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   const message = document.getElementById("plant-photo-message");
   if (plantId === null || !files.length) return;
   let added = 0;
@@ -2197,11 +2215,11 @@ async function uploadPlantPhotos(files) {
   }
   setText(message, added ? `Added ${added}.` : "");
   await refreshPlantPhotos();
-  await refreshPlant();
+  if (pageFromLocation() === "plant") await refreshPlant();
 }
 
 async function refreshPlantPhotos() {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   if (plantId === null) return;
   const response = await fetch(`/api/plants/${plantId}/photos`);
   if (!response.ok) return;
@@ -2229,11 +2247,11 @@ function renderPlantPhotos() {
     /* Opening the picture at its own address rather than in a viewer of our
      * own: the browser already has one, with zoom and save. */
     const link = document.createElement("a");
-    link.href = `/api/photos/${photo.photo_id}`;
+    link.href = photoUrl(photo.photo_id, photo.digest);
     link.target = "_blank";
     link.rel = "noopener";
     const image = document.createElement("img");
-    image.src = `/api/photos/${photo.photo_id}`;
+    image.src = photoUrl(photo.photo_id, photo.digest);
     image.loading = "lazy";
     image.alt = `${selectedPlant?.display_name || "This plant"}, ${daysSince(photo.added_at)}`;
     link.append(image);
@@ -2268,7 +2286,7 @@ function renderPlantPhotos() {
 }
 
 async function setPlantCover(photoId) {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   if (plantId === null) return;
   const response = await fetch(`/api/plants/${plantId}/cover`, {
     method: "PUT",
@@ -2277,7 +2295,7 @@ async function setPlantCover(photoId) {
   });
   if (!response.ok) return;
   await refreshPlantPhotos();
-  await refreshPlant();
+  if (pageFromLocation() === "plant") await refreshPlant();
 }
 
 /* Asked before removing, because the file goes with the row and a photograph
@@ -2288,7 +2306,7 @@ async function removePlantPhoto(photo) {
   const response = await fetch(`/api/photos/${photo.photo_id}`, { method: "DELETE" });
   if (!response.ok) return;
   await refreshPlantPhotos();
-  await refreshPlant();
+  if (pageFromLocation() === "plant") await refreshPlant();
 }
 
 /* A plant's configuration: what it is called, where it is, and which lights

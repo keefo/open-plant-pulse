@@ -469,6 +469,39 @@ class PlantApiTests(unittest.TestCase):
         self.assertIsNone(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"])
         self.assertEqual(self.call("GET", f"/api/plants/{plant_id}/photos")["items"], [])
 
+    def test_a_photograph_is_asked_for_by_its_contents(self) -> None:
+        # SQLite hands a deleted row's id to the next one, so an id alone is
+        # not a stable name for a picture the browser keeps for a year.
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        first = self.upload_photo(plant_id, PNG)
+        self.call("DELETE", f"/api/photos/{first['photo_id']}")
+        second = self.upload_photo(plant_id, JPEG)
+
+        self.assertEqual(second["photo_id"], first["photo_id"])
+        self.assertNotEqual(second["digest"], first["digest"])
+        # Which is why the page asks with the digest, and the plant carries
+        # its cover's so a card can do the same.
+        script = self.call_text("/app.js")
+        self.assertIn("function photoUrl(photoId, digest)", script)
+        self.assertIn("photoUrl(photo.photo_id, photo.digest)", script)
+        self.assertIn("photoUrl(plant.cover_photo_id, plant.cover_photo_digest)", script)
+        self.assertEqual(
+            self.call("GET", f"/api/plants/{plant_id}")["cover_photo_digest"],
+            second["digest"],
+        )
+        # And the query string is ignored by the hub itself.
+        with urlopen(self.base_url + f"/api/photos/{second['photo_id']}?v=whatever",
+                     timeout=2.0) as served:
+            self.assertEqual(served.read(), JPEG)
+
+    def test_a_plant_with_a_sensor_has_photographs_too(self) -> None:
+        # The photographs are the plant's, not the instrument's, so the
+        # sensored page shows the same section.
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        self.assertIn('class="plant-photos" data-page="plant detail"', page)
+        self.assertIn("selectedSensor?.plant_id", script)
+
     def test_it_refuses_what_is_not_a_picture(self) -> None:
         plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
         for body in (b"not a picture", b"\x00\x00\x00\x18ftypheic" + b"x" * 40):
