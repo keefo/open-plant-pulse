@@ -187,6 +187,7 @@ def create_server(
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
+                and not path.startswith("/api/photos/")
                 and not path.startswith("/api/lights/")
             ):
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -194,7 +195,12 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path.startswith("/api/plants/") and path.endswith("/cover"):
+                if path.startswith("/api/photos/"):
+                    result = store.set_photo_taken_at(
+                        self._plant_id(path[len("/api/photos/") :]),
+                        self._optional_str(payload.get("taken_at")),
+                    )
+                elif path.startswith("/api/plants/") and path.endswith("/cover"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/cover")])
                     cover = payload.get("photo_id")
                     result = store.set_cover_photo(

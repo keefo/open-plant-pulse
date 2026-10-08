@@ -519,6 +519,34 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual([p["photo_id"] for p in listed],
                          [recent["photo_id"], old_photo["photo_id"]])
 
+    def test_a_date_can_be_set_on_a_photograph_that_had_none(self) -> None:
+        # Pictures taken before any of this existed, or stripped of their
+        # metadata on the way here, have only somebody's memory to go on.
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        photo = self.upload_photo(plant_id, PNG)
+        self.assertIsNone(photo["taken_at"])
+
+        dated = self.call("PUT", f"/api/photos/{photo['photo_id']}",
+                          {"taken_at": "2019-07-14T12:00:00Z"})
+        self.assertEqual(dated["taken_at"], "2019-07-14T12:00:00Z")
+
+        # And unsaid, for a date given in error.
+        self.assertIsNone(
+            self.call("PUT", f"/api/photos/{photo['photo_id']}", {"taken_at": None})["taken_at"]
+        )
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", f"/api/photos/{photo['photo_id']}", {"taken_at": "2099-01-01T12:00:00Z"})
+        self.assertEqual(refused.exception.code, 400)
+
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        # A date to type on the way in, and the caption is the control that
+        # corrects it afterwards.
+        self.assertIn('id="plant-photo-date"', page)
+        self.assertIn("function chosenPhotoDate()", script)
+        self.assertIn("async function setPhotoDate(photoId, date)", script)
+
     def test_it_keeps_no_date_rather_than_a_wrong_one(self) -> None:
         plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
         # A camera with a flat clock, and one running ahead.

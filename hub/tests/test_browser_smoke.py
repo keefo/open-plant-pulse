@@ -181,7 +181,7 @@ class BrowserSmokeTests(unittest.TestCase):
         drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               photos: document.querySelectorAll(".photo-tile").length,
-              caption: document.querySelector(".photo-tile figcaption span")?.textContent || "",
+              caption: document.querySelector(".photo-tile figcaption .photo-date")?.value || "",
               weight: document.getElementById("plant-weight-latest").textContent,
               care: document.querySelectorAll("#plant-care-log .care-entry").length,
               name: document.getElementById("plant-page-name").textContent,

@@ -2413,6 +2413,17 @@ function currentPlantId() {
   return plantIdFromLocation() ?? selectedSensor?.plant_id ?? null;
 }
 
+/* A date typed beside the Add photos button, for pictures whose own date is
+ * gone or was never there. It is the whole upload's date, since a batch
+ * chosen together is usually one occasion. Midday local, so no time zone
+ * moves it to the day before. */
+function chosenPhotoDate() {
+  const chosen = document.getElementById("plant-photo-date")?.value;
+  if (!chosen) return null;
+  const [year, month, day] = chosen.split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0).toISOString();
+}
+
 async function uploadPlantPhotos(files) {
   const plantId = currentPlantId();
   const message = document.getElementById("plant-photo-message");
@@ -2430,7 +2441,9 @@ async function uploadPlantPhotos(files) {
         : `${file.name} is not a picture this browser can read.`);
       continue;
     }
-    const takenAt = await photographTakenAt(file);
+    // What somebody typed beats what the file says: a picture scanned
+    // years later has a date, and it is not the day it was scanned.
+    const takenAt = chosenPhotoDate() || await photographTakenAt(file);
     const where = `/api/plants/${plantId}/photos`
       + (takenAt ? `?taken_at=${encodeURIComponent(takenAt)}` : "");
     const response = await fetch(where, {
@@ -2445,6 +2458,9 @@ async function uploadPlantPhotos(files) {
     }
     added += 1;
   }
+  // Cleared, so the next upload is not filed under the last one's date.
+  const dated = document.getElementById("plant-photo-date");
+  if (dated) dated.value = "";
   setText(message, added ? `Added ${added}.` : "");
   await refreshPlantPhotos();
   if (pageFromLocation() === "plant") await refreshPlant();
@@ -2493,12 +2509,20 @@ function renderPlantPhotos() {
     link.append(image);
 
     const caption = document.createElement("figcaption");
-    const when = document.createElement("span");
-    setText(when, new Date(taken).toLocaleDateString(undefined, { dateStyle: "medium" }));
+    /* The date is the control that changes it. Most of these pictures will
+     * outlast anybody's memory of when they were taken, and the ones whose
+     * metadata was stripped before they arrived have nothing else to go on. */
+    const when = document.createElement("input");
+    when.type = "date";
+    when.className = "photo-date";
+    when.value = localDate(new Date(taken));
+    when.max = localDate(new Date());
+    setAttr(when, "aria-label", "Date this photograph was taken");
     setAttr(when, "title", photo.taken_at
       ? "Taken " + new Date(photo.taken_at).toLocaleString()
-      : "The camera gave no date; this is when it was added");
+      : "The camera gave no date; this is when it was added. Set it if you know.");
     if (!photo.taken_at) setData(when, "undated", "true");
+    when.addEventListener("change", () => setPhotoDate(photo.photo_id, when.value));
     const actions = document.createElement("div");
     if (photo.cover) {
       const mark = document.createElement("strong");
@@ -2523,6 +2547,24 @@ function renderPlantPhotos() {
     tile.append(link, caption);
     grid.append(tile);
   }
+}
+
+async function setPhotoDate(photoId, date) {
+  const message = document.getElementById("plant-photo-message");
+  const [year, month, day] = (date || "").split("-").map(Number);
+  const takenAt = date ? new Date(year, month - 1, day, 12, 0, 0).toISOString() : null;
+  const response = await fetch(`/api/photos/${photoId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ taken_at: takenAt }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That date could not be saved.");
+    return;
+  }
+  setText(message, "Date saved.");
+  await refreshPlantPhotos();
 }
 
 async function setPlantCover(photoId) {

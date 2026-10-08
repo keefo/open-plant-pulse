@@ -3073,6 +3073,30 @@ class ReadingStore:
             "taken_at": row[8],
         }
 
+    def set_photo_taken_at(self, photo_id: int, taken_at: Optional[str]) -> Dict[str, Any]:
+        """Say when a photograph was taken, or unsay it.
+
+        A camera that gave no date, a picture scanned years later, a file
+        whose metadata was stripped before it ever reached here: the only
+        source left is somebody who remembers, so they are allowed to say.
+        """
+        if self.plant_photo(photo_id) is None:
+            raise ValueError("no such photograph")
+        if taken_at:
+            checked = self._validate_taken_at(taken_at)
+            if checked is None:
+                raise ValueError("that is not a date a photograph was taken")
+        else:
+            checked = None
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE plant_photos SET taken_at = ? WHERE photo_id = ?",
+                (checked, photo_id),
+            )
+        photo = self.plant_photo(photo_id)
+        assert photo is not None
+        return photo
+
     def photo_digest_in_use(self, digest: str) -> bool:
         """Whether any row still refers to that file."""
         with self._condition:
