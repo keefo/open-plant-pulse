@@ -194,6 +194,33 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(drawn["name"], "Spider")
         self.assertEqual(tools.complaints, [])
 
+    def test_a_date_being_chosen_survives_the_poll(self) -> None:
+        """A phone's date sheet does not focus the field it belongs to.
+
+        So the page cannot tell somebody is using it by asking which element
+        has focus, and refilling the form every second put the old date back
+        while the wheel was still being turned.
+        """
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/plants/{self.plant_id}/config")
+        time.sleep(3.5)
+        # Changed the way a sheet changes it: a value and an input event,
+        # with the field itself not focused.
+        tools.call("Runtime.evaluate", expression="""
+            const field = document.getElementById("plant-config-acquired");
+            field.value = "2021-03-05";
+            field.dispatchEvent(new Event("input", {bubbles: true}));
+            document.body.focus();""")
+        time.sleep(4)
+        held = tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              value: document.getElementById("plant-config-acquired").value,
+              focused: document.activeElement.id,
+            })""")["result"]["value"]
+        self.assertEqual(json.loads(held)["value"], "2021-03-05")
+        self.assertNotEqual(json.loads(held)["focused"], "plant-config-acquired")
+        self.assertEqual(tools.complaints, [])
+
     def test_the_household_page_draws_a_tile_for_the_plant(self) -> None:
         tools = self.devtools()
         tools.call("Page.navigate", url=self.base_url + "/plants")

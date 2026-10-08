@@ -2605,6 +2605,9 @@ function plantSensor() {
 async function refreshPlantConfig() {
   const plantId = plantIdFromLocation();
   if (plantId === null) return;
+  if (plantConfigDraftPlantId !== null && plantConfigDraftPlantId !== plantId) {
+    plantConfigDraftPlantId = null;
+  }
   const [plantResponse] = await Promise.all([
     fetch(`/api/plants/${plantId}`),
     refreshPlantLighting(),
@@ -2697,6 +2700,24 @@ function fillPlantVarietySelect(variety) {
        + "how much light it wants, not what the roots will take.");
 }
 
+/* Which plant's form somebody has started filling in.
+ *
+ * The page refreshes every second, and a form refilled underneath whoever is
+ * using it loses what they were doing. Asking document.activeElement is not
+ * enough: on a phone a date opens a sheet of its own and the field is no
+ * longer the focused element, so a poll a second later would put the old
+ * date back while the wheel was still being turned. So the form is left
+ * alone from the first keystroke until it is saved, or until another plant's
+ * page is opened. */
+let plantConfigDraftPlantId = null;
+
+function setValue(element, value) {
+  // Assigning a date input the value it already holds still throws away a
+  // part-entered date, so nothing is written unless it changed.
+  const text = value == null ? "" : String(value);
+  if (element.value !== text) element.value = text;
+}
+
 function renderPlantConfig() {
   if (!selectedPlant) return;
   setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
@@ -2704,18 +2725,15 @@ function renderPlantConfig() {
   setAttr(document.getElementById("plant-config-back"), "href",
     sensor ? sensorPath(sensor.sensor_id) : `/plants/${selectedPlant.plant_id}`);
 
-  // Left alone while it is being filled in, so a refresh a second later does
-  // not snatch back a half-typed name.
-  const form = document.getElementById("plant-config-form");
-  if (form.contains(document.activeElement)) return;
-  document.getElementById("plant-config-display-name").value = selectedPlant.display_name;
+  if (plantConfigDraftPlantId === selectedPlant.plant_id) return;
+  setValue(document.getElementById("plant-config-display-name"), selectedPlant.display_name);
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
-  document.getElementById("plant-config-watering-days").value =
-    selectedPlant.expected_watering_days ?? "";
+  setValue(document.getElementById("plant-config-watering-days"),
+    selectedPlant.expected_watering_days ?? "");
   const acquired = document.getElementById("plant-config-acquired");
-  acquired.max = localDate(new Date());
-  acquired.value = selectedPlant.acquired_at
-    ? localDate(new Date(selectedPlant.acquired_at)) : "";
+  setAttr(acquired, "max", localDate(new Date()));
+  setValue(acquired, selectedPlant.acquired_at
+    ? localDate(new Date(selectedPlant.acquired_at)) : "");
   fillPlantProfileSelect(document.getElementById("plant-config-profile"), selectedPlant.profile_id);
   fillPlantVarietySelect(selectedPlant.variety);
 }
@@ -2752,7 +2770,8 @@ async function savePlantConfig(event) {
   }
   selectedPlant = payload;
   setText(message, "Saved.");
-  document.activeElement.blur();
+  // Saved, so the form is the hub's to refill again.
+  plantConfigDraftPlantId = null;
   renderPlantConfig();
 }
 
@@ -3230,6 +3249,13 @@ document.getElementById("plant-photo-file").addEventListener("change", (event) =
   uploadPlantPhotos(files);
 });
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
+// Touched by hand, and so no longer the hub's to rewrite. "input" covers a
+// date sheet on a phone, which never focuses the field it belongs to.
+for (const signal of ["input", "change", "focusin"]) {
+  document.getElementById("plant-config-form").addEventListener(signal, () => {
+    plantConfigDraftPlantId = plantIdFromLocation();
+  });
+}
 // Choosing a profile offers its varieties at once, before anything is saved.
 document.getElementById("plant-config-profile").addEventListener("change", () => fillPlantVarietySelect(null));
 document.getElementById("plant-config-variety").addEventListener("change", () => fillPlantVarietySelect());
