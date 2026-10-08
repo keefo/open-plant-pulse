@@ -2902,6 +2902,7 @@ class ReadingStore:
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
                        plants.variety,
+                       plants.acquired_at,
                        plants.cover_photo_id,
                        (SELECT digest FROM plant_photos
                         WHERE plant_photos.photo_id = plants.cover_photo_id)
@@ -2934,6 +2935,7 @@ class ReadingStore:
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
                        plants.variety,
+                       plants.acquired_at,
                        plants.cover_photo_id,
                        (SELECT digest FROM plant_photos
                         WHERE plant_photos.photo_id = plants.cover_photo_id)
@@ -2956,18 +2958,20 @@ class ReadingStore:
         size: int,
         added_at: str,
         caption: Optional[str] = None,
+        taken_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
+        taken_at = self._validate_taken_at(taken_at)
         with self._condition, self._database:
             cursor = self._database.execute(
                 """
                 INSERT INTO plant_photos
-                    (plant_id, digest, content_type, bytes, added_at, caption)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (plant_id, digest, content_type, bytes, added_at, caption, taken_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (plant_id, digest, content_type, size, added_at,
-                 (caption or "").strip() or None),
+                 (caption or "").strip() or None, taken_at),
             )
             photo_id = int(cursor.lastrowid)
             # The first photograph of a plant is its cover, because a plant
@@ -2983,14 +2987,38 @@ class ReadingStore:
         assert photo is not None
         return photo
 
+    @staticmethod
+    def _validate_taken_at(taken_at: Optional[str]) -> Optional[str]:
+        """When the camera says the picture was taken.
+
+        A camera with a flat clock, or one never set, reports 1970 or a date
+        in the future. Neither is worth keeping over knowing nothing: a
+        photograph with no date falls back to when it was uploaded, which is
+        at least true of something.
+        """
+        if not taken_at:
+            return None
+        try:
+            when = datetime.fromisoformat(str(taken_at).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        when = when.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        if when.year < 1990 or when > now + timedelta(days=1):
+            return None
+        return _timestamp(when)
+
     def plant_photos(self, plant_id: int) -> List[Dict[str, Any]]:
         with self._condition:
             rows = self._database.execute(
                 """
                 SELECT photo_id, plant_id, digest, content_type, bytes, added_at, caption,
-                       (SELECT cover_photo_id FROM plants WHERE plants.plant_id = ?)
+                       (SELECT cover_photo_id FROM plants WHERE plants.plant_id = ?),
+                       taken_at
                 FROM plant_photos WHERE plant_id = ?
-                ORDER BY added_at DESC, photo_id DESC
+                ORDER BY COALESCE(taken_at, added_at) DESC, photo_id DESC
                 """,
                 (plant_id, plant_id),
             ).fetchall()
@@ -3001,7 +3029,7 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT photo_id, plant_photos.plant_id, digest, content_type, bytes,
-                       added_at, caption, plants.cover_photo_id
+                       added_at, caption, plants.cover_photo_id, taken_at
                 FROM plant_photos
                 JOIN plants ON plants.plant_id = plant_photos.plant_id
                 WHERE photo_id = ?
@@ -3021,6 +3049,8 @@ class ReadingStore:
             "added_at": row[5],
             "caption": row[6],
             "cover": row[0] == row[7],
+            # When the camera says it was taken, where it said anything.
+            "taken_at": row[8],
         }
 
     def photo_digest_in_use(self, digest: str) -> bool:
@@ -3080,6 +3110,24 @@ class ReadingStore:
         plant = self.plant(plant_id)
         assert plant is not None
         return plant
+
+    @staticmethod
+    def _validate_acquired_at(acquired_at: Optional[str]) -> Optional[str]:
+        """The day the plant came home. Not tomorrow, and not before plants."""
+        if not acquired_at:
+            return None
+        try:
+            when = datetime.fromisoformat(str(acquired_at).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("at-home date must be a date") from error
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        when = when.astimezone(timezone.utc)
+        if when > datetime.now(timezone.utc) + timedelta(days=1):
+            raise ValueError("a plant cannot have come home tomorrow")
+        if when.year < 1900:
+            raise ValueError("that is not a date a houseplant came home")
+        return _timestamp(when)
 
     def _validate_plant_profile(self, profile_id: Optional[str]) -> Optional[str]:
         """A plant may have no profile; it may not have one that does not exist."""
@@ -3145,6 +3193,7 @@ class ReadingStore:
         expected_watering_days: Optional[int] = None,
         profile_id: Optional[str] = None,
         variety: Optional[str] = None,
+        acquired_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
@@ -3153,14 +3202,16 @@ class ReadingStore:
         expected_watering_days = self._validate_watering_days(expected_watering_days)
         profile_id = self._validate_plant_profile(profile_id)
         variety = self._validate_plant_variety(profile_id, variety)
+        acquired_at = self._validate_acquired_at(acquired_at)
         with self._condition, self._database:
             self._database.execute(
                 """
                 UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?,
-                                  profile_id = ?, variety = ?
+                                  profile_id = ?, variety = ?, acquired_at = ?
                 WHERE plant_id = ?
                 """,
-                (display_name, room_id, expected_watering_days, profile_id, variety, plant_id),
+                (display_name, room_id, expected_watering_days, profile_id, variety,
+                 acquired_at, plant_id),
             )
             # A sensor watching it shows the same name, profile and room, or
             # its pages and the plant's disagree about the same plant.
@@ -3246,11 +3297,13 @@ class ReadingStore:
             # Which kind of the kind: the profile is the species, the variety
             # the named plant within it.
             "variety": row[10],
-            "cover_photo_id": row[11],
+            # When it came home, as against when the hub first heard of it.
+            "acquired_at": row[11],
+            "cover_photo_id": row[12],
             # The cover's digest, so the card can ask for it by content. An
             # id is reused once its photograph is deleted; what the bytes are
             # is not.
-            "cover_photo_digest": row[12],
+            "cover_photo_digest": row[13],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

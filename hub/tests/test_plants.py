@@ -10,6 +10,7 @@ import json
 from threading import Thread
 import unittest
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from pathlib import Path
@@ -312,9 +313,10 @@ class PlantApiTests(unittest.TestCase):
         self.store.close()
         self.directory.cleanup()
 
-    def upload_photo(self, plant_id, body):
+    def upload_photo(self, plant_id, body, taken_at=None):
+        query = f"?taken_at={quote(taken_at)}" if taken_at else ""
         request = Request(
-            f"{self.base_url}/api/plants/{plant_id}/photos",
+            f"{self.base_url}/api/plants/{plant_id}/photos{query}",
             data=body,
             method="POST",
             headers={"Content-Type": "application/octet-stream"},
@@ -501,6 +503,47 @@ class PlantApiTests(unittest.TestCase):
         script = self.call_text("/app.js")
         self.assertIn('class="plant-photos" data-page="plant detail"', page)
         self.assertIn("selectedSensor?.plant_id", script)
+
+    def test_a_photograph_keeps_the_day_it_was_taken(self) -> None:
+        # A record meant to outlast the year it started in cannot file a
+        # picture from three summers ago under the day it was uploaded.
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        old_photo = self.upload_photo(plant_id, PNG, taken_at="2019-07-14T17:32:05Z")
+        self.assertEqual(old_photo["taken_at"], "2019-07-14T17:32:05Z")
+        self.assertNotEqual(old_photo["taken_at"][:4], old_photo["added_at"][:4])
+
+        # Newest first by when it was taken, so the uploading order does not
+        # decide the order the plant grew in.
+        recent = self.upload_photo(plant_id, JPEG, taken_at="2026-05-01T09:00:00Z")
+        listed = self.call("GET", f"/api/plants/{plant_id}/photos")["items"]
+        self.assertEqual([p["photo_id"] for p in listed],
+                         [recent["photo_id"], old_photo["photo_id"]])
+
+    def test_it_keeps_no_date_rather_than_a_wrong_one(self) -> None:
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        # A camera with a flat clock, and one running ahead.
+        for nonsense in ("1970-01-01T00:00:00Z", "2099-01-01T00:00:00Z", "whenever"):
+            photo = self.upload_photo(plant_id, PNG + nonsense.encode(), taken_at=nonsense)
+            self.assertIsNone(photo["taken_at"], nonsense)
+
+    def test_a_plant_says_how_long_it_has_lived_here(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})
+        path = f"/api/plants/{plant['plant_id']}"
+        self.assertIsNone(plant["acquired_at"])
+
+        saved = self.call("PUT", path, {
+            "display_name": "Spider", "acquired_at": "2019-07-14T12:00:00Z",
+        })
+        self.assertEqual(saved["acquired_at"], "2019-07-14T12:00:00Z")
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", path, {"display_name": "Spider",
+                                    "acquired_at": "2099-01-01T12:00:00Z"})
+        self.assertEqual(refused.exception.code, 400)
+
+        script = self.call_text("/app.js")
+        self.assertIn("function timeAtHome(since)", script)
+        self.assertIn("at home", script)
 
     def test_it_refuses_what_is_not_a_picture(self) -> None:
         plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]

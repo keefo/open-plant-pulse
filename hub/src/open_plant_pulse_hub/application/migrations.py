@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 28
+DATABASE_SCHEMA_VERSION = 30
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -921,6 +921,29 @@ MIGRATIONS: Dict[int, str] = {
         CREATE INDEX plant_photos_by_plant ON plant_photos(plant_id, added_at DESC);
         ALTER TABLE plants ADD COLUMN cover_photo_id INTEGER
             REFERENCES plant_photos(photo_id) ON DELETE SET NULL;
+    """,
+    29: """
+        /* When the photograph was taken, as against when it was uploaded.
+
+           A plant's record is meant to outlast the year it was started in,
+           and a picture from three summers ago filed under the day somebody
+           got round to uploading it would put it at the wrong end of that.
+           The camera knows; the browser reads it off the file and sends it,
+           because the picture itself arrives stripped of its metadata.
+
+           Null where nothing said: added_at stands in, and is not pretended
+           to be the same thing. */
+        ALTER TABLE plant_photos ADD COLUMN taken_at TEXT;
+    """,
+    30: """
+        /* When the plant came home, which is not when the hub met it.
+
+           created_at is the day a row was made, and most of these rows were
+           made long after the plant arrived. How long something has lived
+           here is worth saying on its card, and only its owner knows it, so
+           it is asked for rather than inferred. Null until then, and
+           created_at stands in. */
+        ALTER TABLE plants ADD COLUMN acquired_at TEXT;
     """,
 }
 

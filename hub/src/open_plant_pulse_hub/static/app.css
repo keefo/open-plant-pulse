@@ -47,7 +47,36 @@ body {
 .fleet-card strong { font-size: 20px; }
 .fleet-card code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .fleet-card span { margin-top: 8px; color: var(--muted); font-size: 13px; }
-.fleet-sort { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+
+/* The selects the page uses outside a form, which the browser would
+   otherwise draw in its own style beside everything else here: the same
+   border, radius and weight as a secondary action, with the chevron drawn
+   rather than left to the platform. */
+#plant-sort, #plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit {
+  padding: 9px 30px 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background-color: white;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23566' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 11px;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.2;
+  appearance: none;
+  cursor: pointer;
+}
+#plant-sort:hover, #plant-weight-unit:hover,
+#plant-weight-full-unit:hover, #plant-weight-thirsty-unit:hover { border-color: var(--leaf); }
+#plant-sort:focus-visible, #plant-weight-unit:focus-visible,
+#plant-weight-full-unit:focus-visible,
+#plant-weight-thirsty-unit:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+/* The unit sits beside a number field, so it is sized to its two words
+   rather than stretched to the row's input width. */
+#plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit { padding-block: 10px; }
 .fleet-card small { width: fit-content; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; text-transform: capitalize; }
 .fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
 /* The cover, when a plant has one: a fixed band so a grid of cards stays a

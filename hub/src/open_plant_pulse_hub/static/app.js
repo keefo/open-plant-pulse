@@ -305,6 +305,24 @@ function renderHousehold() {
   });
 }
 
+/* "4 days", "7 months", "3 years" -- the unit a plant's age is worth saying
+ * in changes as it gets older, and nobody counts a three-year-old plant in
+ * days. */
+function timeAtHome(since) {
+  if (!since) return null;
+  const days = Math.floor((Date.now() - Date.parse(since)) / 86400000);
+  if (!Number.isFinite(days) || days < 0) return null;
+  if (days < 1) return "home today";
+  if (days < 60) return `${days} day${days === 1 ? "" : "s"} at home`;
+  const months = Math.round(days / 30.44);
+  if (days < 730) return `${months} months at home`;
+  const years = Math.floor(days / 365.25);
+  const extra = Math.round((days - years * 365.25) / 30.44);
+  return extra >= 1 && extra < 12
+    ? `${years}y ${extra}m at home`
+    : `${years} year${years === 1 ? "" : "s"} at home`;
+}
+
 function tileKey(tile) {
   return tile.plant ? `plant-${tile.plant.plant_id}` : `sensor-${tile.sensor.sensor_id}`;
 }
@@ -399,9 +417,13 @@ function updateHouseholdCard(card, plant, sensor) {
 
   const name = card.querySelector("strong");
   setText(name, plant ? plant.display_name : (sensor.display_name || sensor.sensor_id));
+  /* How long it has lived here, which is the thing about a houseplant that
+   * a number can actually say. The room is the fallback, since a plant that
+   * has never been asked should not be given a made-up answer. */
   const where = card.querySelector("code");
-  setText(where, sensor ? sensor.sensor_id
-    : plant.room ? plant.room : "no room recorded");
+  const home = plant && timeAtHome(plant.acquired_at || plant.created_at);
+  setText(where, home
+    || (plant?.room || sensor?.room || "no room recorded"));
 
   /* The last thing that happened to this plant, by whichever instrument
    * knows. A pot can be weighed without the watering being logged, and a
@@ -2070,10 +2092,12 @@ function plantIdFromLocation() {
  * Remembered per browser, per box: if storage refuses, the choice simply does
  * not outlive the page. */
 const WEIGHT_UNIT_FIELDS = {
+  // The weighing field is left blank: a number already in the box is a
+  // number to be read past, and the unit beside it says what to type.
   "plant-weight-unit": {
     key: "open-plant-pulse.weight-unit",
     field: "plant-weight-input",
-    placeholder: { kg: "17.40", g: "17400" },
+    placeholder: { kg: "", g: "" },
   },
   "plant-weight-full-unit": {
     key: "open-plant-pulse.weight-unit.full",
@@ -2258,6 +2282,86 @@ function photoUrl(photoId, digest) {
 const PHOTO_QUALITY = 0.85;
 let plantPhotos = [];
 
+/* When the camera says the photograph was taken.
+ *
+ * The downsizing below re-encodes the picture through a canvas, which keeps
+ * none of the metadata -- a deliberate thing for the location tag, and a
+ * loss for this one. So the date is read off the original here and sent
+ * beside the bytes. A plant's record is meant to outlast the year it was
+ * started in, and a picture from three summers ago belongs at that end of
+ * it, not at today's.
+ *
+ * EXIF dates carry no time zone; they are local time where the shutter was
+ * pressed, and are read as local time here. */
+async function photographTakenAt(file) {
+  const head = new DataView(await file.slice(0, 262144).arrayBuffer());
+  let index = 2;
+  try {
+    if (head.getUint16(0) !== 0xFFD8) return fallbackTakenAt(file);
+    while (index + 4 <= head.byteLength && head.getUint8(index) === 0xFF) {
+      const marker = head.getUint8(index + 1);
+      if (marker === 0xD8 || (marker >= 0xD0 && marker <= 0xD7)) { index += 2; continue; }
+      if (marker === 0xDA) break;
+      const length = head.getUint16(index + 2);
+      if (marker === 0xE1) {
+        const text = String.fromCharCode(
+          head.getUint8(index + 4), head.getUint8(index + 5),
+          head.getUint8(index + 6), head.getUint8(index + 7));
+        if (text === "Exif") {
+          const taken = readExifDate(head, index + 10);
+          if (taken !== null) return taken;
+        }
+      }
+      index += 2 + length;
+    }
+  } catch (_error) {
+    /* A truncated or odd file simply has no date here. */
+  }
+  return fallbackTakenAt(file);
+}
+
+/* The file's own timestamp, which the Convert to JPEG service sets to the
+ * capture time, so a converted photograph keeps its date. Anything from this
+ * minute is the copy rather than the capture, and is not worth claiming. */
+function fallbackTakenAt(file) {
+  if (!file.lastModified) return null;
+  const when = new Date(file.lastModified);
+  return Date.now() - file.lastModified < 60_000 ? null : when.toISOString();
+}
+
+function readExifDate(view, start) {
+  const big = view.getUint16(start) === 0x4D4D;
+  const u16 = (at) => view.getUint16(at, !big);
+  const u32 = (at) => view.getUint32(at, !big);
+  const walk = (directory) => {
+    const count = u16(directory);
+    for (let entry = 0; entry < count; entry += 1) {
+      const at = directory + 2 + entry * 12;
+      const tag = u16(at);
+      // 0x9003 is when the shutter was pressed; 0x0132 is when the file was
+      // last written, which a camera sets to the same moment.
+      if (tag === 0x9003 || tag === 0x0132) {
+        const text = [];
+        const offset = start + u32(at + 8);
+        for (let i = 0; i < 19; i += 1) text.push(String.fromCharCode(view.getUint8(offset + i)));
+        const stamp = text.join("");
+        const match = stamp.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+        if (match) {
+          const [, y, mo, d, h, mi, s] = match.map(Number);
+          return new Date(y, mo - 1, d, h, mi, s).toISOString();
+        }
+      }
+      // The Exif sub-directory, where DateTimeOriginal actually lives.
+      if (tag === 0x8769) {
+        const nested = walk(start + u32(at + 8));
+        if (nested !== null) return nested;
+      }
+    }
+    return null;
+  };
+  return walk(start + u32(start + 4));
+}
+
 async function shrinkPhoto(file) {
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (bitmap === null) return null;
@@ -2298,7 +2402,10 @@ async function uploadPlantPhotos(files) {
         : `${file.name} is not a picture this browser can read.`);
       continue;
     }
-    const response = await fetch(`/api/plants/${plantId}/photos`, {
+    const takenAt = await photographTakenAt(file);
+    const where = `/api/plants/${plantId}/photos`
+      + (takenAt ? `?taken_at=${encodeURIComponent(takenAt)}` : "");
+    const response = await fetch(where, {
       method: "POST",
       headers: { "Content-Type": body.type || "application/octet-stream" },
       body,
@@ -2350,12 +2457,17 @@ function renderPlantPhotos() {
     const image = document.createElement("img");
     image.src = photoUrl(photo.photo_id, photo.digest);
     image.loading = "lazy";
-    image.alt = `${selectedPlant?.display_name || "This plant"}, ${daysSince(photo.added_at)}`;
+    image.alt = `${selectedPlant?.display_name || "This plant"}, ${daysSince(taken)}`;
     link.append(image);
 
     const caption = document.createElement("figcaption");
     const when = document.createElement("span");
-    setText(when, new Date(photo.added_at).toLocaleDateString(undefined, { dateStyle: "medium" }));
+    const taken = photo.taken_at || photo.added_at;
+    setText(when, new Date(taken).toLocaleDateString(undefined, { dateStyle: "medium" }));
+    setAttr(when, "title", photo.taken_at
+      ? "Taken " + new Date(photo.taken_at).toLocaleString()
+      : "The camera gave no date; this is when it was added");
+    if (!photo.taken_at) setData(when, "undated", "true");
     const actions = document.createElement("div");
     if (photo.cover) {
       const mark = document.createElement("strong");
@@ -2517,6 +2629,10 @@ function renderPlantConfig() {
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
   document.getElementById("plant-config-watering-days").value =
     selectedPlant.expected_watering_days ?? "";
+  const acquired = document.getElementById("plant-config-acquired");
+  acquired.max = localDate(new Date());
+  acquired.value = selectedPlant.acquired_at
+    ? localDate(new Date(selectedPlant.acquired_at)) : "";
   fillPlantProfileSelect(document.getElementById("plant-config-profile"), selectedPlant.profile_id);
   fillPlantVarietySelect(selectedPlant.variety);
 }
@@ -2536,6 +2652,14 @@ async function savePlantConfig(event) {
       expected_watering_days: days === "" ? null : Number(days),
       profile_id: document.getElementById("plant-config-profile").value || null,
       variety: document.getElementById("plant-config-variety").value || null,
+      // A date with no time of day is filed at midday local time, far enough
+      // from either midnight that no time zone moves it to the day before.
+      acquired_at: (() => {
+        const chosen = document.getElementById("plant-config-acquired").value;
+        if (!chosen) return null;
+        const [year, month, day] = chosen.split("-").map(Number);
+        return new Date(year, month - 1, day, 12, 0, 0).toISOString();
+      })(),
     }),
   });
   const payload = await response.json().catch(() => ({}));

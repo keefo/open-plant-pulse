@@ -218,6 +218,7 @@ def create_server(
                         self._optional_int(payload.get("expected_watering_days")),
                         self._optional_str(payload.get("profile_id")),
                         self._optional_str(payload.get("variety")),
+                        self._optional_str(payload.get("acquired_at")),
                     )
                 elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(
@@ -411,7 +412,8 @@ def create_server(
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/photos"):
                     result = self._store_photo(
-                        self._plant_id(path[len("/api/plants/") : -len("/photos")])
+                        self._plant_id(path[len("/api/plants/") : -len("/photos")]),
+                        parse_qs(urlparse(self.path).query).get("taken_at", [None])[0],
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/care"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/care")])
@@ -577,7 +579,7 @@ def create_server(
                 return
             self._send_json({"items": store.raw_sensor_reports(sensor_id)})
 
-        def _store_photo(self, plant_id: int) -> Dict[str, Any]:
+        def _store_photo(self, plant_id: int, taken_at: Optional[str] = None) -> Dict[str, Any]:
             """Take an uploaded photograph.
 
             What it is is read from the bytes, not from the Content-Type the
@@ -588,7 +590,10 @@ def create_server(
             content_length = int(self.headers.get("Content-Length", "0"))
             if content_length <= 0 or content_length > MAX_PHOTO_UPLOAD_BYTES:
                 raise ValueError("photograph upload size is invalid")
-            return photos.add(plant_id, self.rfile.read(content_length))
+            # When the camera says it was taken travels beside the bytes
+            # rather than inside them: the browser strips the metadata when it
+            # downsizes, and the one field worth keeping is this one.
+            return photos.add(plant_id, self.rfile.read(content_length), taken_at=taken_at)
 
         def _send_plant_photos(self, raw: str) -> None:
             try:

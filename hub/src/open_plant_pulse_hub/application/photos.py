@@ -62,7 +62,13 @@ class PhotoLibrary:
     def directory(self) -> Path:
         return self._directory
 
-    def add(self, plant_id: int, data: bytes, caption: Optional[str] = None) -> Dict[str, Any]:
+    def add(
+        self,
+        plant_id: int,
+        data: bytes,
+        caption: Optional[str] = None,
+        taken_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if not data:
             raise ValueError("that upload was empty")
         if len(data) > MAX_PHOTO_BYTES:
@@ -85,6 +91,7 @@ class PhotoLibrary:
             len(data),
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             caption,
+            taken_at,
         )
 
     def photos(self, plant_id: int) -> List[Dict[str, Any]]:
