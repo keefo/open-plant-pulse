@@ -46,6 +46,10 @@ body {
 .fleet-card span { margin-top: 8px; color: var(--muted); }
 .fleet-card small { width: fit-content; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; text-transform: capitalize; }
 .fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
+/* The cover, when a plant has one: a fixed band so a grid of cards stays a
+   grid whatever shape the photographs are. */
+.fleet-card-cover { width: 100%; height: 150px; margin-bottom: 4px; border-radius: 6px; object-fit: cover; background: #eceff0; }
+
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
 /* A pot with water left reads as well as a sensor reporting in; one nearly
@@ -547,3 +551,18 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 @media (max-width: 440px) {
   .plant-lighting-summary { padding: 16px; }
 }
+
+/* Photographs of a plant. The tiles are a fixed shape and the pictures are
+   cropped into them, because a row of different aspect ratios reads as a
+   mess however good the photographs are. */
+.plant-photos { padding: 24px; margin-bottom: 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.photo-tile { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.photo-tile[data-cover="true"] { border-color: var(--leaf); box-shadow: 0 0 0 1px var(--leaf); }
+.photo-tile img { display: block; width: 100%; height: 180px; border-radius: 6px; object-fit: cover; background: #eceff0; }
+.photo-tile figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+.photo-tile figcaption div { display: flex; align-items: center; gap: 10px; }
+.photo-tile figcaption strong { color: var(--leaf); }
+.link-button { padding: 0; border: 0; color: var(--muted); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.link-button:hover { color: var(--ink); }
+#plant-photo-message { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; }

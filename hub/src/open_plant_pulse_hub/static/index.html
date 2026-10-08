@@ -524,6 +524,20 @@
       </div>
     </section>
 
+    <section class="plant-photos" data-page="plant" aria-labelledby="plant-photos-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">PHOTOGRAPHS</p><h2 id="plant-photos-title">How it looks</h2></div>
+        <div class="settings-sensor-actions">
+          <button id="plant-photo-add" class="secondary-action" type="button">Add photos</button>
+          <input id="plant-photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
+        </div>
+      </div>
+      <output id="plant-photo-message" aria-live="polite"></output>
+      <div id="plant-photo-grid" class="photo-grid">
+        <p class="care-log-empty">No photographs yet.</p>
+      </div>
+    </section>
+
     <section class="care-log" data-page="plant" aria-label="Plant care history" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>

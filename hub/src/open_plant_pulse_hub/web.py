@@ -20,6 +20,9 @@ APPLICATION_PAGES = ("/sensors", "/plants", "/settings", "/onboarding")
 # with room to spare, so an accidental upload of something enormous is refused
 # before it is read rather than after.
 MAX_FIRMWARE_UPLOAD_BYTES = 4 * 1024 * 1024
+# The browser downsizes a photograph before sending it, so this is a ceiling
+# on something gone wrong rather than on an ordinary picture.
+MAX_PHOTO_UPLOAD_BYTES = 12 * 1024 * 1024
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -69,6 +72,7 @@ def create_server(
     firmware: Optional[Any] = None,
     allow_network: bool = False,
     lights: Optional[Any] = None,
+    photos: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -110,6 +114,10 @@ def create_server(
                 self._send_json({"items": store.rooms()})
             elif path == "/api/plants":
                 self._send_json({"items": store.plants()})
+            elif path.startswith("/api/photos/"):
+                self._send_photo(path[len("/api/photos/") :])
+            elif path.startswith("/api/plants/") and path.endswith("/photos"):
+                self._send_plant_photos(path[len("/api/plants/") : -len("/photos")])
             elif path.startswith("/api/plants/") and path.endswith("/lighting"):
                 self._send_plant_lighting_of(path[len("/api/plants/") : -len("/lighting")])
             elif path.startswith("/api/plants/"):
@@ -186,7 +194,13 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path.startswith("/api/plants/") and path.endswith("/lighting"):
+                if path.startswith("/api/plants/") and path.endswith("/cover"):
+                    plant_id = self._plant_id(path[len("/api/plants/") : -len("/cover")])
+                    cover = payload.get("photo_id")
+                    result = store.set_cover_photo(
+                        plant_id, None if cover in (None, "") else int(cover)
+                    )
+                elif path.startswith("/api/plants/") and path.endswith("/lighting"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/lighting")])
                     store.set_plant_lighting_of(
                         plant_id,
@@ -278,6 +292,22 @@ def create_server(
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            if path.startswith("/api/photos/"):
+                try:
+                    self._require_same_origin()
+                    if photos is None:
+                        raise ValueError("this hub is not storing photographs")
+                    if not photos.delete(self._plant_id(path[len("/api/photos/") :])):
+                        self._send_json({"error": "no such photograph"}, HTTPStatus.NOT_FOUND)
+                        return
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/api/lights/"):
                 try:
                     self._require_same_origin()
@@ -340,7 +370,10 @@ def create_server(
                 self._require_same_origin()
                 # An image is megabytes of binary, so this one route reads its
                 # own body; everything else here is a small JSON object.
-                payload = {} if path == "/api/firmware" else self._read_json()
+                raw_upload = path.startswith("/api/plants/") and path.endswith("/photos")
+                payload = (
+                    {} if path == "/api/firmware" or raw_upload else self._read_json()
+                )
                 if path.startswith("/api/sensors/") and path.endswith("/archive"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/archive")])
                     archived = payload.get("archived")
@@ -375,6 +408,10 @@ def create_server(
                         str(payload.get("display_name", "")),
                         self._optional_int(payload.get("room_id")),
                         self._optional_int(payload.get("expected_watering_days")),
+                    )
+                elif path.startswith("/api/plants/") and path.endswith("/photos"):
+                    result = self._store_photo(
+                        self._plant_id(path[len("/api/plants/") : -len("/photos")])
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/care"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/care")])
@@ -539,6 +576,51 @@ def create_server(
                 self._send_json({"error": "sensor not found"}, HTTPStatus.NOT_FOUND)
                 return
             self._send_json({"items": store.raw_sensor_reports(sensor_id)})
+
+        def _store_photo(self, plant_id: int) -> Dict[str, Any]:
+            """Take an uploaded photograph.
+
+            What it is is read from the bytes, not from the Content-Type the
+            uploader chose, so the hub serves back what it was actually given.
+            """
+            if photos is None:
+                raise ValueError("this hub is not storing photographs")
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0 or content_length > MAX_PHOTO_UPLOAD_BYTES:
+                raise ValueError("photograph upload size is invalid")
+            return photos.add(plant_id, self.rfile.read(content_length))
+
+        def _send_plant_photos(self, raw: str) -> None:
+            try:
+                plant_id = self._plant_id(raw)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"items": store.plant_photos(plant_id)})
+
+        def _send_photo(self, raw: str) -> None:
+            """The photograph itself.
+
+            Named by a number the hub issued, and held in the browser for a
+            year: the bytes behind an id never change, since editing a
+            photograph here means uploading another one.
+            """
+            try:
+                photo_id = self._plant_id(raw)
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                return
+            found = None if photos is None else photos.read(photo_id)
+            if found is None:
+                self._send_json({"error": "no such photograph"}, HTTPStatus.NOT_FOUND)
+                return
+            body, content_type = found
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _store_firmware(self) -> Optional[Dict[str, Any]]:
             """Take an uploaded image, or say why it is not one.

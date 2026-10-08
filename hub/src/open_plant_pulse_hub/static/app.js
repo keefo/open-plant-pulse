@@ -1589,7 +1589,7 @@ async function refresh() {
       await refreshFleet();
     }
     if (page === "plant") {
-      await refreshPlant();
+      await Promise.all([refreshPlant(), refreshPlantPhotos()]);
       return;
     }
     if (page === "plant-config") {
@@ -1892,6 +1892,17 @@ function renderManualPlants() {
     const card = document.createElement("a");
     card.className = "fleet-card";
     card.href = `/plants/${plant.plant_id}`;
+    /* The cover, where there is one. A wall of names is harder to read than
+     * a wall of plants, and the picture is the quickest way to know which
+     * "marble queen small pot" this is. */
+    if (plant.cover_photo_id != null) {
+      const cover = document.createElement("img");
+      cover.className = "fleet-card-cover";
+      cover.src = `/api/photos/${plant.cover_photo_id}`;
+      cover.loading = "lazy";
+      cover.alt = "";
+      card.append(cover);
+    }
     const name = document.createElement("strong");
     setText(name, plant.display_name);
     const where = document.createElement("code");
@@ -2127,6 +2138,152 @@ function renderPlantPage() {
   const button = document.getElementById("plant-fertilized");
   setText(button, fed ? "Fertilized today ✓" : "Fertilized today");
   setDisabled(button, fed);
+}
+
+/* Photographs of a plant.
+ *
+ * A photograph off a phone is several megabytes of detail nobody looking at a
+ * plant page needs, so it is shrunk here before it is sent: the hub keeps
+ * what the browser would have had to download anyway. The original stays on
+ * the camera, which is where the archive belongs. */
+const PHOTO_MAX_EDGE = 1600;
+const PHOTO_QUALITY = 0.85;
+let plantPhotos = [];
+
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (bitmap === null) return null;
+  const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const shrunk = await new Promise((resolve) =>
+    canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
+  // A picture that grew in the shrinking -- a small PNG screenshot, say -- is
+  // sent as it came rather than made worse.
+  return shrunk !== null && shrunk.size < file.size ? shrunk : file;
+}
+
+async function uploadPlantPhotos(files) {
+  const plantId = plantIdFromLocation();
+  const message = document.getElementById("plant-photo-message");
+  if (plantId === null || !files.length) return;
+  let added = 0;
+  for (const [index, file] of [...files].entries()) {
+    setText(message, `Sending ${index + 1} of ${files.length}…`);
+    const body = await shrinkPhoto(file);
+    if (body === null) {
+      setText(message, `${file.name} is not a picture this browser can read.`);
+      continue;
+    }
+    const response = await fetch(`/api/plants/${plantId}/photos`, {
+      method: "POST",
+      headers: { "Content-Type": body.type || "application/octet-stream" },
+      body,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setText(message, payload.error || `${file.name} could not be stored.`);
+      continue;
+    }
+    added += 1;
+  }
+  setText(message, added ? `Added ${added}.` : "");
+  await refreshPlantPhotos();
+  await refreshPlant();
+}
+
+async function refreshPlantPhotos() {
+  const plantId = plantIdFromLocation();
+  if (plantId === null) return;
+  const response = await fetch(`/api/plants/${plantId}/photos`);
+  if (!response.ok) return;
+  plantPhotos = (await response.json()).items;
+  renderPlantPhotos();
+}
+
+function renderPlantPhotos() {
+  const grid = document.getElementById("plant-photo-grid");
+  if (grid === null) return;
+  if (!renderKeyChanged(grid, plantPhotos)) return;
+  grid.replaceChildren();
+  if (!plantPhotos.length) {
+    const empty = document.createElement("p");
+    empty.className = "care-log-empty";
+    setText(empty, "No photographs yet.");
+    grid.append(empty);
+    return;
+  }
+  for (const photo of plantPhotos) {
+    const tile = document.createElement("figure");
+    tile.className = "photo-tile";
+    if (photo.cover) tile.dataset.cover = "true";
+
+    /* Opening the picture at its own address rather than in a viewer of our
+     * own: the browser already has one, with zoom and save. */
+    const link = document.createElement("a");
+    link.href = `/api/photos/${photo.photo_id}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    const image = document.createElement("img");
+    image.src = `/api/photos/${photo.photo_id}`;
+    image.loading = "lazy";
+    image.alt = `${selectedPlant?.display_name || "This plant"}, ${daysSince(photo.added_at)}`;
+    link.append(image);
+
+    const caption = document.createElement("figcaption");
+    const when = document.createElement("span");
+    setText(when, new Date(photo.added_at).toLocaleDateString(undefined, { dateStyle: "medium" }));
+    const actions = document.createElement("div");
+    if (photo.cover) {
+      const mark = document.createElement("strong");
+      setText(mark, "Cover");
+      actions.append(mark);
+    } else {
+      const choose = document.createElement("button");
+      choose.type = "button";
+      choose.className = "link-button";
+      setText(choose, "Make cover");
+      choose.addEventListener("click", () => setPlantCover(photo.photo_id));
+      actions.append(choose);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "link-button";
+    setText(remove, "Remove");
+    remove.addEventListener("click", () => removePlantPhoto(photo));
+    actions.append(remove);
+    caption.append(when, actions);
+
+    tile.append(link, caption);
+    grid.append(tile);
+  }
+}
+
+async function setPlantCover(photoId) {
+  const plantId = plantIdFromLocation();
+  if (plantId === null) return;
+  const response = await fetch(`/api/plants/${plantId}/cover`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photo_id: photoId }),
+  });
+  if (!response.ok) return;
+  await refreshPlantPhotos();
+  await refreshPlant();
+}
+
+/* Asked before removing, because the file goes with the row and a photograph
+ * is the one thing on this page that cannot be measured again. */
+async function removePlantPhoto(photo) {
+  const taken = new Date(photo.added_at).toLocaleDateString(undefined, { dateStyle: "medium" });
+  if (!window.confirm(`Remove the photograph from ${taken}? This cannot be undone.`)) return;
+  const response = await fetch(`/api/photos/${photo.photo_id}`, { method: "DELETE" });
+  if (!response.ok) return;
+  await refreshPlantPhotos();
+  await refreshPlant();
 }
 
 /* A plant's configuration: what it is called, where it is, and which lights
@@ -2729,6 +2886,14 @@ document.getElementById("plant-note").addEventListener("click", () => recordPlan
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
 document.getElementById("plant-weight-set-thirsty").addEventListener("click", () => setPlantAnchor("thirsty"));
+document.getElementById("plant-photo-add").addEventListener("click",
+  () => document.getElementById("plant-photo-file").click());
+document.getElementById("plant-photo-file").addEventListener("change", (event) => {
+  const files = event.target.files;
+  // Cleared first, so choosing the same file twice in a row still counts.
+  event.target.value = "";
+  uploadPlantPhotos(files);
+});
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 // Choosing a profile offers its varieties at once, before anything is saved.
 document.getElementById("plant-config-profile").addEventListener("change", () => fillPlantVarietySelect(null));

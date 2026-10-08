@@ -12,7 +12,11 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -128,6 +132,11 @@ class ManualPlantTests(unittest.TestCase):
         ):
             with self.subTest(description), self.assertRaises(ValueError):
                 call()
+
+
+# The smallest things the hub will recognise as pictures.
+PNG = bytes.fromhex("89504e470d0a1a0a") + b"a png, as far as anyone here cares"
+JPEG = b"\xff\xd8\xff" + b"a jpeg, as far as anyone here cares"
 
 
 def ago(days: float) -> str:
@@ -285,7 +294,12 @@ class PlantWeightTests(unittest.TestCase):
 class PlantApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
-        self.server = create_server(self.store, "127.0.0.1", 0)
+        self.directory = TemporaryDirectory()
+        self.photo_directory = Path(self.directory.name)
+        self.server = create_server(
+            self.store, "127.0.0.1", 0,
+            photos=PhotoLibrary(self.store, self.photo_directory),
+        )
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
@@ -296,6 +310,17 @@ class PlantApiTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=1.0)
         self.store.close()
+        self.directory.cleanup()
+
+    def upload_photo(self, plant_id, body):
+        request = Request(
+            f"{self.base_url}/api/plants/{plant_id}/photos",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        with urlopen(request, timeout=2.0) as response:
+            return json.load(response)
 
     def call(self, method, path, body=None):
         data = json.dumps(body).encode() if body is not None else None
@@ -413,6 +438,61 @@ class PlantApiTests(unittest.TestCase):
             for kind in profile.get("varieties", []):
                 self.assertEqual({"id", "name", "note"} >= set(kind), True)
                 self.assertTrue(kind["id"] and kind["name"])
+
+    def test_a_plant_keeps_photographs_and_one_of_them_is_the_cover(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})
+        plant_id = plant["plant_id"]
+        self.assertIsNone(plant["cover_photo_id"])
+
+        first = self.upload_photo(plant_id, PNG)
+        second = self.upload_photo(plant_id, JPEG)
+        # The first photograph is the cover, since a plant with one picture
+        # and no cover is a question nobody wants asked.
+        self.assertTrue(first["cover"])
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         first["photo_id"])
+
+        self.call("PUT", f"/api/plants/{plant_id}/cover", {"photo_id": second["photo_id"]})
+        listed = self.call("GET", f"/api/plants/{plant_id}/photos")["items"]
+        self.assertEqual([photo["cover"] for photo in listed], [True, False])
+
+        # The bytes come back as what they are, not as what was declared.
+        with urlopen(self.base_url + f"/api/photos/{first['photo_id']}", timeout=2.0) as served:
+            self.assertEqual(served.headers["Content-Type"], "image/png")
+            self.assertEqual(served.read(), PNG)
+
+        # Removing the cover falls back to what is left rather than to nothing.
+        self.call("DELETE", f"/api/photos/{second['photo_id']}")
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         first["photo_id"])
+        self.call("DELETE", f"/api/photos/{first['photo_id']}")
+        self.assertIsNone(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"])
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}/photos")["items"], [])
+
+    def test_it_refuses_what_is_not_a_picture(self) -> None:
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        for body in (b"not a picture", b"\x00\x00\x00\x18ftypheic" + b"x" * 40):
+            with self.assertRaises(HTTPError) as refused:
+                self.upload_photo(plant_id, body)
+            self.assertEqual(refused.exception.code, 400)
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}/photos")["items"], [])
+
+    def test_the_same_photograph_under_two_plants_is_one_file(self) -> None:
+        first = self.call("POST", "/api/plants", {"display_name": "One"})["plant_id"]
+        second = self.call("POST", "/api/plants", {"display_name": "Two"})["plant_id"]
+
+        kept = self.upload_photo(first, PNG)
+        shared = self.upload_photo(second, PNG)
+        self.assertEqual(kept["digest"], shared["digest"])
+        self.assertEqual(len(list(self.photo_directory.glob("*"))), 1)
+
+        # And the file stays while anything still refers to it.
+        self.call("DELETE", f"/api/photos/{shared['photo_id']}")
+        self.assertEqual(len(list(self.photo_directory.glob("*"))), 1)
+        with urlopen(self.base_url + f"/api/photos/{kept['photo_id']}", timeout=2.0) as served:
+            self.assertEqual(served.read(), PNG)
+        self.call("DELETE", f"/api/photos/{kept['photo_id']}")
+        self.assertEqual(list(self.photo_directory.glob("*")), [])
 
     def test_a_plant_with_no_sensor_still_has_lights(self) -> None:
         # The lights were always the plant's; only the address was the

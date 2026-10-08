@@ -5,6 +5,7 @@ from threading import Thread
 
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
+from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
 from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
@@ -35,6 +36,11 @@ def main() -> None:
         default=str(Path.home() / ".open-plant-pulse" / "firmware"),
         help="where uploaded firmware images are kept",
     )
+    parser.add_argument(
+        "--photo-directory",
+        default=str(Path.home() / ".open-plant-pulse" / "photos"),
+        help="where uploaded plant photographs are kept",
+    )
     # A sensor downloads its firmware over the household network, so this one
     # server listens there while the management interface stays on loopback.
     parser.add_argument("--firmware-host", default="0.0.0.0")
@@ -59,6 +65,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     store = ReadingStore(database_path=args.database)
     firmware = FirmwareLibrary(store, args.firmware_directory)
+    photos = PhotoLibrary(store, args.photo_directory)
 
     firmware_server = None
     firmware_port = None
@@ -105,6 +112,7 @@ def main() -> None:
         firmware,
         allow_network=args.allow_network,
         lights=lights,
+        photos=photos,
     )
     host, port = server_address(server)
     shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host

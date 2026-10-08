@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 27
+DATABASE_SCHEMA_VERSION = 28
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -895,6 +895,32 @@ MIGRATIONS: Dict[int, str] = {
            will take. The profile holds the list; the plant holds the choice,
            by id, so renaming one in the catalog does not rename it here. */
         ALTER TABLE plants ADD COLUMN variety TEXT;
+    """,
+    28: """
+        /* Photographs of a plant, and which one stands for it.
+
+           A plant's history here is otherwise all numbers, and numbers do not
+           show a new leaf or a scorched one. The file lives on disk named by
+           the digest of its contents; this table says what it is a picture
+           of. Two plants may be filed under the same photograph -- a shelf of
+           them -- which is two rows and one file.
+
+           The cover is the one shown where there is room for only one. It is
+           a column on the plant rather than a flag on the photo, because
+           "which is the cover" is a question about the plant and a flag would
+           let two of them answer yes. */
+        CREATE TABLE plant_photos (
+            photo_id INTEGER PRIMARY KEY,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+            digest TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            bytes INTEGER NOT NULL CHECK (bytes > 0),
+            added_at TEXT NOT NULL,
+            caption TEXT
+        );
+        CREATE INDEX plant_photos_by_plant ON plant_photos(plant_id, added_at DESC);
+        ALTER TABLE plants ADD COLUMN cover_photo_id INTEGER
+            REFERENCES plant_photos(photo_id) ON DELETE SET NULL;
     """,
 }
 

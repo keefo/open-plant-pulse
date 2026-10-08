@@ -2901,7 +2901,8 @@ class ReadingStore:
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
-                       plants.variety
+                       plants.variety,
+                       plants.cover_photo_id
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -2930,7 +2931,8 @@ class ReadingStore:
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'watering'),
-                       plants.variety
+                       plants.variety,
+                       plants.cover_photo_id
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -2938,6 +2940,142 @@ class ReadingStore:
                 (plant_id,),
             ).fetchone()
         return None if row is None else self._plant_payload(row)
+
+    # Photographs. The bytes are the photo library's business; these are the
+    # rows that say what each one is a picture of.
+
+    def add_plant_photo(
+        self,
+        plant_id: int,
+        digest: str,
+        content_type: str,
+        size: int,
+        added_at: str,
+        caption: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        with self._condition, self._database:
+            cursor = self._database.execute(
+                """
+                INSERT INTO plant_photos
+                    (plant_id, digest, content_type, bytes, added_at, caption)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (plant_id, digest, content_type, size, added_at,
+                 (caption or "").strip() or None),
+            )
+            photo_id = int(cursor.lastrowid)
+            # The first photograph of a plant is its cover, because a plant
+            # with one picture and no cover is a question nobody wants asked.
+            self._database.execute(
+                """
+                UPDATE plants SET cover_photo_id = ?
+                WHERE plant_id = ? AND cover_photo_id IS NULL
+                """,
+                (photo_id, plant_id),
+            )
+        photo = self.plant_photo(photo_id)
+        assert photo is not None
+        return photo
+
+    def plant_photos(self, plant_id: int) -> List[Dict[str, Any]]:
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT photo_id, plant_id, digest, content_type, bytes, added_at, caption,
+                       (SELECT cover_photo_id FROM plants WHERE plants.plant_id = ?)
+                FROM plant_photos WHERE plant_id = ?
+                ORDER BY added_at DESC, photo_id DESC
+                """,
+                (plant_id, plant_id),
+            ).fetchall()
+        return [self._photo_payload(row) for row in rows]
+
+    def plant_photo(self, photo_id: int) -> Optional[Dict[str, Any]]:
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT photo_id, plant_photos.plant_id, digest, content_type, bytes,
+                       added_at, caption, plants.cover_photo_id
+                FROM plant_photos
+                JOIN plants ON plants.plant_id = plant_photos.plant_id
+                WHERE photo_id = ?
+                """,
+                (photo_id,),
+            ).fetchone()
+        return None if row is None else self._photo_payload(row)
+
+    @staticmethod
+    def _photo_payload(row: Tuple[Any, ...]) -> Dict[str, Any]:
+        return {
+            "photo_id": row[0],
+            "plant_id": row[1],
+            "digest": row[2],
+            "content_type": row[3],
+            "bytes": row[4],
+            "added_at": row[5],
+            "caption": row[6],
+            "cover": row[0] == row[7],
+        }
+
+    def photo_digest_in_use(self, digest: str) -> bool:
+        """Whether any row still refers to that file."""
+        with self._condition:
+            row = self._database.execute(
+                "SELECT 1 FROM plant_photos WHERE digest = ? LIMIT 1", (digest,)
+            ).fetchone()
+        return row is not None
+
+    def delete_plant_photo(self, photo_id: int) -> bool:
+        with self._condition, self._database:
+            # A plant whose cover is removed falls back to its newest
+            # remaining photograph rather than to nothing.
+            row = self._database.execute(
+                """
+                SELECT plant_photos.plant_id, plants.cover_photo_id = photo_id
+                FROM plant_photos
+                JOIN plants ON plants.plant_id = plant_photos.plant_id
+                WHERE photo_id = ?
+                """,
+                (photo_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            plant_id, was_cover = row[0], bool(row[1])
+            self._database.execute("DELETE FROM plant_photos WHERE photo_id = ?", (photo_id,))
+            # Asked before the delete, because the foreign key clears the
+            # plant's cover on its way out and there would be nothing left to
+            # recognise.
+            if was_cover:
+                self._database.execute(
+                    """
+                    UPDATE plants SET cover_photo_id = (
+                        SELECT photo_id FROM plant_photos WHERE plant_id = ?
+                        ORDER BY added_at DESC, photo_id DESC LIMIT 1
+                    )
+                    WHERE plant_id = ?
+                    """,
+                    (plant_id, plant_id),
+                )
+        return True
+
+    def set_cover_photo(self, plant_id: int, photo_id: Optional[int]) -> Dict[str, Any]:
+        """Choose the one picture that stands for the plant."""
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        if photo_id is not None:
+            photo = self.plant_photo(photo_id)
+            if photo is None or photo["plant_id"] != plant_id:
+                raise ValueError("that photograph is not this plant's")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE plants SET cover_photo_id = ? WHERE plant_id = ?",
+                (photo_id, plant_id),
+            )
+        plant = self.plant(plant_id)
+        assert plant is not None
+        return plant
 
     def _validate_plant_profile(self, profile_id: Optional[str]) -> Optional[str]:
         """A plant may have no profile; it may not have one that does not exist."""
@@ -3104,6 +3242,7 @@ class ReadingStore:
             # Which kind of the kind: the profile is the species, the variety
             # the named plant within it.
             "variety": row[10],
+            "cover_photo_id": row[11],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

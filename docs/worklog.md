@@ -887,3 +887,74 @@
   and the sensor's console is off so it cannot be reached over the air either.
   The saving, and what the first pH after each power-on is worth, are both
   unverified.
+
+## 2026-10-07
+
+Hub only. No firmware change: the sensor is untouched by everything below.
+
+### A plant the hub has no sensor for
+
+- A plant is the subject and a sensor an instrument attached to it, so
+  `care_events` and `plant_journey` are keyed by plant, and a plant with no
+  sensor has a page, a care log, a journey and a configuration page of its own
+  (`/plants/<id>` and `/plants/<id>/config`).
+- Lighting was already keyed by plant in the tables; only its address was the
+  sensor's. `plant_lighting_of(plant_id)` is now the real function and the
+  sensor route delegates, so a plant with no sensor chooses its own lights.
+  One form serves both pages: a section may name more than one page.
+- Rooms, profiles and varieties are set on the plant. A plant may be in no
+  room and be no particular kind of plant; a profile that does not exist, or
+  a variety the chosen profile does not list, is refused rather than stored.
+
+### Weighing a pot
+
+- Three numbers: full, thirsty, and what it weighs now. Capacity is the
+  distance between the anchors, water left is measured from thirsty, and
+  every figure is absent rather than guessed.
+- Grams are stored and sent; kilograms or grams is a per-field keypad choice,
+  remembered per browser. The label was "Dry at" and is now "Thirsty at",
+  which is what the kind has always been called: for a jasmine, "dry" reads
+  as the weight of a plant in trouble rather than the weight at which to
+  water it.
+- A weighing carries the day it was taken, defaulting to today and refusing
+  tomorrow. Backdated weighings are filed at midday local time, far enough
+  from either midnight that no time zone files them under the wrong day.
+- `observed` (schema 26) separates a weighing from a claim: typing a full
+  weight from memory anchors the scale but is not what the pot weighs now,
+  is no part of the drying rate, and is not a watering. Entering a thirsty
+  weight used to become "Weighs now", which is what prompted the column.
+- A month of weighings is charted the way the probe's moisture is, with full
+  and thirsty as the band between them.
+
+### Photographs (schema 28)
+
+- `plant_photos` plus `plants.cover_photo_id`. The file is named by the digest
+  of its contents and lives in `~/.open-plant-pulse/photos/`, so the same
+  photograph under two plants is two rows and one file, and the file goes when
+  the last row referring to it does.
+- The type is read from the first bytes rather than taken from the uploader.
+  HEIC is refused by name, since a photograph taken on an iPhone is one and
+  most browsers will not show it.
+- The browser downsizes to 1600 px and JPEG before sending, which keeps the
+  hub free of an image library. The original is not kept: the camera has it.
+- The first photograph of a plant becomes its cover; removing the cover falls
+  back to the newest remaining one. Covers show on the household cards.
+
+### Measured, not assumed
+
+- The plants page painted its sensors before its manual plants. Startup walked
+  five independent fetches in a chain, then the sensors, then the plants:
+  seven sequential round trips for one screen. Asked together now. First card
+  1380 ms -> 666 ms at 150 ms of emulated latency, and the two grids land 5 ms
+  apart rather than 153 ms.
+- Navigating re-rendered without fetching, so a page arrived at waited for the
+  next tick of the one-second poll. Click to first manual card: 256 ms -> 22 ms
+  locally, 158 ms at 150 ms latency, which is one round trip and the floor.
+
+### Profiles
+
+- `pothos` (Epipremnum aureum), `spider_plant` (Chlorophytum comosum) and
+  `jasmine` (Jasminum spp.), and a `varieties` list on every profile but the
+  generic one. Golden and Marble Queen are one profile and two varieties: the
+  same species, differing in growth rate and the light the variegation wants,
+  neither of which is a root-zone tolerance.
