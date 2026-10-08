@@ -222,51 +222,220 @@ function sensorState(sensor) {
   return alerts.length ? alerts.join(", ") : "Healthy";
 }
 
-function updateFleetCard(card, sensor) {
-  setAttr(card, "href", `/sensors/${encodeURIComponent(sensor.sensor_id)}`);
-  setText(card.children[0], sensor.display_name || sensor.sensor_id);
-  setText(card.children[1], sensor.sensor_id);
-  const reportedAt = sensor.latest?.received_at || sensor.last_seen_at;
-  setText(card.children[2], reportedAt
-    ? `Last report ${new Date(reportedAt).toLocaleString()}`
-    : "No reports received");
-  const state = sensorState(sensor);
-  setText(card.children[3], state);
-  setData(card.children[3], "state", state.toLowerCase());
-}
 
-function createFleetCard(sensor) {
-  const card = document.createElement("a");
-  card.className = "fleet-card";
-  setData(card, "sensorId", sensor.sensor_id);
-  card.innerHTML = `<strong></strong><code></code><span></span><small></small>`;
-  updateFleetCard(card, sensor);
-  return card;
-}
-
-function renderFleet() {
-  setText(document.getElementById("inbox-count"), unclaimedSensors.length);
-  const grid = document.getElementById("fleet-grid");
-  const cardsBySensorId = new Map(
-    Array.from(grid.querySelectorAll(".fleet-card"), (card) => [card.dataset.sensorId, card])
-  );
-  if (!fleetSensors.length) {
-    for (const card of cardsBySensorId.values()) card.remove();
-    updateFleetEmptyState();
+/* Every card opens with a cover, photograph or not.
+ *
+ * A plant without one gets the same band holding a leaf, so the tiles are a
+ * grid rather than a ragged edge, and so the gap is plainly a photograph
+ * waiting to be taken rather than something missing. */
+function setFleetCardCover(card, photoId, digest) {
+  const existing = card.querySelector(".fleet-card-cover");
+  const wanted = photoId == null ? "" : photoUrl(photoId, digest);
+  if (existing !== null && (existing.getAttribute("src") || "") === wanted) return;
+  existing?.remove();
+  if (photoId == null) {
+    const blank = document.createElement("div");
+    blank.className = "fleet-card-cover fleet-card-cover-blank";
+    blank.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+      + '<path d="M12 21c0-6 2-10 7-13-1 7-3 11-7 13z"/>'
+      + '<path d="M12 21C8 18 5 14 5 9c4 2 6 6 7 12z"/>'
+      + '<path d="M12 21v-3"/></svg>';
+    card.prepend(blank);
     return;
   }
+  const cover = document.createElement("img");
+  cover.className = "fleet-card-cover";
+  setAttr(cover, "src", wanted);
+  cover.loading = "lazy";
+  cover.alt = "";
+  card.prepend(cover);
+}
 
-  grid.querySelector(".empty-state")?.remove();
-  const currentSensorIds = new Set(fleetSensors.map((sensor) => sensor.sensor_id));
-  for (const [sensorId, card] of cardsBySensorId) {
-    if (!currentSensorIds.has(sensorId)) card.remove();
+
+
+/* The household, as one grid.
+ *
+ * A plant with a sensor and a plant without are the same kind of thing and
+ * get the same tile: the sensor changes what the tile can say, not how big
+ * it is or which list it belongs to. The plants are the subject, so the list
+ * comes from /api/plants and a sensor is looked up against it.
+ */
+function renderHousehold() {
+  setText(document.getElementById("inbox-count"), unclaimedSensors.length);
+  const grid = document.getElementById("fleet-grid");
+  if (grid === null) return;
+  const sensorsByPlant = new Map(
+    fleetSensors.filter((sensor) => sensor.plant_id != null)
+      .map((sensor) => [sensor.plant_id, sensor])
+  );
+  // A sensor the hub has not yet matched to a plant still deserves a tile,
+  // or enrolling one would appear to do nothing.
+  const orphans = fleetSensors.filter((sensor) => sensor.plant_id == null);
+  const tiles = sortHousehold([
+    ...householdPlants.map((plant) => ({ plant, sensor: sensorsByPlant.get(plant.plant_id) })),
+    ...orphans.map((sensor) => ({ plant: null, sensor })),
+  ]);
+
+  /* Cards are kept and updated rather than rebuilt. The page refreshes every
+   * second, and replacing the grid would reload every cover photograph and
+   * lose whatever the pointer was over. */
+  const existing = new Map(
+    Array.from(grid.querySelectorAll(".fleet-card"), (card) => [card.dataset.key, card])
+  );
+  const keys = new Set(tiles.map(tileKey));
+  for (const [key, card] of existing) {
+    if (!keys.has(key)) card.remove();
   }
-  fleetSensors.forEach((sensor, index) => {
-    const card = cardsBySensorId.get(sensor.sensor_id) || createFleetCard(sensor);
-    updateFleetCard(card, sensor);
+  if (!tiles.length) {
+    if (grid.querySelector(".empty-state") === null) {
+      const empty = document.createElement("p");
+      empty.className = "empty-state";
+      setText(empty, "No plants yet. Add one, or open the sensor inbox to enrol a sensor.");
+      grid.append(empty);
+    }
+    return;
+  }
+  grid.querySelector(".empty-state")?.remove();
+  tiles.forEach((tile, index) => {
+    const key = tileKey(tile);
+    const card = existing.get(key) || createHouseholdCard(key);
+    updateHouseholdCard(card, tile.plant, tile.sensor);
     const cardAtIndex = grid.children[index];
     if (cardAtIndex !== card) grid.insertBefore(card, cardAtIndex || null);
   });
+}
+
+function tileKey(tile) {
+  return tile.plant ? `plant-${tile.plant.plant_id}` : `sensor-${tile.sensor.sensor_id}`;
+}
+
+function createHouseholdCard(key) {
+  const card = document.createElement("a");
+  card.className = "fleet-card";
+  setData(card, "key", key);
+  card.innerHTML = "<strong></strong><code></code><span></span><small></small>";
+  return card;
+}
+
+const HOUSEHOLD_SORT_KEY = "open-plant-pulse.plant-sort";
+
+function householdSort() {
+  const chosen = document.getElementById("plant-sort");
+  return chosen ? chosen.value : "name";
+}
+
+function tileName(tile) {
+  return (tile.plant ? tile.plant.display_name
+    : tile.sensor.display_name || tile.sensor.sensor_id).toLowerCase();
+}
+
+/* How much water is left, as a percentage, for ordering only.
+ *
+ * A weighed pot and a probe are not measuring the same quantity -- one is
+ * the water in the whole pot, the other the water around two centimetres of
+ * needle -- so this is a rough answer to "who needs me first", not a figure
+ * to show. A plant that cannot say sorts last rather than sorting as zero
+ * and jumping the queue. */
+function tileThirst(tile) {
+  const left = tile.plant?.weight?.remaining_percent;
+  if (left != null) return left;
+  const moisture = tile.sensor?.latest?.reading?.moisture_percent;
+  return moisture != null ? Number(moisture) : Infinity;
+}
+
+function sortHousehold(tiles) {
+  const by = householdSort();
+  const compareName = (a, b) => tileName(a).localeCompare(tileName(b));
+  const sorted = [...tiles];
+  if (by === "thirst") {
+    sorted.sort((a, b) => tileThirst(a) - tileThirst(b) || compareName(a, b));
+  } else if (by === "watered") {
+    // Never watered is the longest of all, so it sorts to the front.
+    const when = (tile) => tile.plant?.last_watered_at
+      ? Date.parse(tile.plant.last_watered_at) : -Infinity;
+    sorted.sort((a, b) => when(a) - when(b) || compareName(a, b));
+  } else if (by === "room") {
+    const room = (tile) => (tile.plant?.room || tile.sensor?.room || "\uffff").toLowerCase();
+    sorted.sort((a, b) => room(a).localeCompare(room(b)) || compareName(a, b));
+  } else {
+    sorted.sort(compareName);
+  }
+  return sorted;
+}
+
+function restoreHouseholdSort() {
+  const chosen = document.getElementById("plant-sort");
+  if (chosen === null) return;
+  try {
+    const remembered = window.localStorage.getItem(HOUSEHOLD_SORT_KEY);
+    if (remembered && [...chosen.options].some((option) => option.value === remembered)) {
+      chosen.value = remembered;
+    }
+  } catch (_error) {
+    /* Name is the default either way. */
+  }
+  chosen.addEventListener("change", () => {
+    try {
+      window.localStorage.setItem(HOUSEHOLD_SORT_KEY, chosen.value);
+    } catch (_error) {
+      /* The order still changes; it just forgets. */
+    }
+    renderHousehold();
+  });
+}
+
+function updateHouseholdCard(card, plant, sensor) {
+  // A sensor's page is where its measurements are, so that is where a plant
+  // with one leads.
+  setAttr(card, "href", sensor
+    ? `/sensors/${encodeURIComponent(sensor.sensor_id)}`
+    : `/plants/${plant.plant_id}`);
+
+  /* A wall of names is harder to read than a wall of plants, and the picture
+   * is the quickest way to know which "marble queen small pot" this is. */
+  setFleetCardCover(card,
+    plant ? plant.cover_photo_id : sensor.cover_photo_id,
+    plant ? plant.cover_photo_digest : sensor.cover_photo_digest);
+
+  const name = card.querySelector("strong");
+  setText(name, plant ? plant.display_name : (sensor.display_name || sensor.sensor_id));
+  const where = card.querySelector("code");
+  setText(where, sensor ? sensor.sensor_id
+    : plant.room ? plant.room : "no room recorded");
+
+  /* The last thing that happened to this plant, by whichever instrument
+   * knows. A pot can be weighed without the watering being logged, and a
+   * card that says "not watered yet" beside "47% water left" is two true
+   * sentences that read as nonsense together. */
+  const when = card.querySelector("span");
+  if (sensor) {
+    const reportedAt = sensor.latest?.received_at || sensor.last_seen_at;
+    setText(when, reportedAt
+      ? `Last report ${new Date(reportedAt).toLocaleString()}`
+      : "No reports received");
+  } else {
+    const watered = daysSince(plant.last_watered_at);
+    const weighed = daysSince(plant.weight?.latest?.at);
+    setText(when, watered ? "Watered " + watered
+      : weighed ? "Weighed " + weighed
+        : "Not watered yet");
+  }
+
+  const badge = card.querySelector("small");
+  if (sensor) {
+    const state = sensorState(sensor);
+    setText(badge, state);
+    setData(badge, "state", state.toLowerCase());
+  } else {
+    /* What the pot weighs answers the question the card is really asked:
+     * does this plant need me today. */
+    const weight = plant.weight || {};
+    setText(badge, weight.remaining_percent != null
+      ? `${weight.remaining_percent}% water left`
+      : weight.used_grams ? `${weight.used_grams} ml used` : "No sensor");
+    setData(badge, "state", weight.remaining_percent == null ? "manual"
+      : weight.remaining_percent <= 15 ? "thirsty" : "watered");
+  }
 }
 
 function renderInbox() {
@@ -533,7 +702,7 @@ async function refreshFleet() {
       setText(document.getElementById("scientific-name"), profile.scientific_name);
     }
   }
-  renderFleet();
+  renderHousehold();
   renderInbox();
   renderSensorSettings();
   renderSettingsSensors();
@@ -1846,97 +2015,25 @@ async function cancelFirmwareUpdate() {
   await refreshFleet();
 }
 
-/* The household has nothing only when it has neither a sensor nor a plant.
- * Telling somebody to enrol a sensor above a list of their own plants reads
- * as though the plants are not there. */
-function updateFleetEmptyState() {
-  const grid = document.getElementById("fleet-grid");
-  if (grid === null) return;
-  const nothing = !fleetSensors.length && !manualPlants.length;
-  const existing = grid.querySelector(".empty-state");
-  if (!nothing) {
-    existing?.remove();
-    return;
-  }
-  if (existing) return;
-  const empty = document.createElement("p");
-  empty.className = "empty-state";
-  setText(empty, "No plants yet. Add one, or open the sensor inbox to enrol a sensor.");
-  grid.append(empty);
-}
 
 /* Plants nothing is watching, beside the ones that are.
  *
  * A card cannot say "healthy" about a plant with no readings, so it says what
  * is actually known: when it was last watered, and how much water the pot has
  * left when the scale can answer that. */
-let manualPlants = [];
+let householdPlants = [];
 
 async function refreshPlants() {
   try {
     const response = await fetch("/api/plants");
     if (!response.ok) return;
-    manualPlants = (await response.json()).items.filter((plant) => plant.sensor_id === null);
+    householdPlants = (await response.json()).items;
   } catch (_error) {
     return;
   }
-  renderManualPlants();
+  renderHousehold();
 }
 
-function renderManualPlants() {
-  const grid = document.getElementById("plant-grid");
-  if (grid === null) return;
-  if (!renderKeyChanged(grid, manualPlants)) return;
-  grid.replaceChildren();
-  updateFleetEmptyState();
-  for (const plant of manualPlants) {
-    const card = document.createElement("a");
-    card.className = "fleet-card";
-    card.href = `/plants/${plant.plant_id}`;
-    /* The cover, where there is one. A wall of names is harder to read than
-     * a wall of plants, and the picture is the quickest way to know which
-     * "marble queen small pot" this is. */
-    if (plant.cover_photo_id != null) {
-      const cover = document.createElement("img");
-      cover.className = "fleet-card-cover";
-      cover.src = photoUrl(plant.cover_photo_id, plant.cover_photo_digest);
-      cover.loading = "lazy";
-      cover.alt = "";
-      card.append(cover);
-    }
-    const name = document.createElement("strong");
-    setText(name, plant.display_name);
-    const where = document.createElement("code");
-    setText(where, plant.room ? plant.room : "no room recorded");
-    /* The last thing that happened to this plant, by whichever instrument
-     * knows. A pot can be weighed without the watering being logged, and a
-     * card that says "not watered yet" beside "47% water left" is two true
-     * sentences that read as nonsense together. */
-    const when = document.createElement("span");
-    const watered = daysSince(plant.last_watered_at);
-    const weighed = daysSince(plant.weight?.latest?.at);
-    setText(when, watered
-      ? "Watered " + watered
-      : weighed
-        ? "Weighed " + weighed
-        : "Not watered yet");
-    /* What the pot weighs answers the question the card is really asked --
-     * does this plant need me today -- so it is shown in place of the bare
-     * "No sensor" whenever the weighings can answer it. */
-    const state = document.createElement("small");
-    const weight = plant.weight || {};
-    setText(state, weight.remaining_percent != null
-      ? `${weight.remaining_percent}% water left`
-      : weight.used_grams
-        ? `${weight.used_grams} ml used`
-        : "No sensor");
-    state.dataset.state = weight.remaining_percent == null
-      ? "manual"
-      : weight.remaining_percent <= 15 ? "thirsty" : "watered";
-    card.append(name, where, when, state);
-    grid.append(card);
-  }
-}
 
 async function addPlant() {
   const name = window.prompt("What is this plant called?");
@@ -2790,7 +2887,7 @@ sensorSettingsForm.addEventListener("submit", async (event) => {
   fleetSensors = fleetSensors.map((sensor) => sensor.sensor_id === sensorId ? payload : sensor);
   selectedSensor = payload;
   renderedSettingsKey = null;
-  renderFleet();
+  renderHousehold();
   renderSensorSettings();
   renderPage();
   setText(message, payload.device_config_status === "applied"
@@ -2933,6 +3030,7 @@ document.getElementById("plant-config-variety").addEventListener("change", () =>
 document.getElementById("firmware-install").addEventListener("click", installFirmware);
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnits();
+restoreHouseholdSort();
 trackRawReportsDisclosure();
 /* Five things the page needs before it can draw, none of which depends on
  * another: asked for together, they cost one round trip rather than five. */

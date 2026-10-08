@@ -38,17 +38,24 @@ body {
 .fleet-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
 .fleet-overview h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
 .fleet-overview .section-heading p:last-child { margin: 0; color: var(--muted); }
-.fleet-grid { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+/* auto-fill, not auto-fit: an empty track is kept rather than collapsed, so
+   the one plant with a sensor is a tile the size of every other tile instead
+   of a banner across the window. The two grids share the rhythm. */
+.fleet-grid { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .fleet-card { min-height: 165px; padding: 19px; display: grid; align-content: start; gap: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; text-decoration: none; transition: border-color 150ms ease, transform 150ms ease; }
 .fleet-card:hover { border-color: var(--leaf); transform: translateY(-2px); }
 .fleet-card strong { font-size: 20px; }
 .fleet-card code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.fleet-card span { margin-top: 8px; color: var(--muted); }
+.fleet-card span { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.fleet-sort { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .fleet-card small { width: fit-content; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; text-transform: capitalize; }
 .fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
 /* The cover, when a plant has one: a fixed band so a grid of cards stays a
    grid whatever shape the photographs are. */
 .fleet-card-cover { width: 100%; height: 150px; margin-bottom: 4px; border-radius: 6px; object-fit: cover; background: #eceff0; }
+/* The same band, waiting for a photograph. */
+.fleet-card-cover-blank { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); background: #f3f6f3; }
+.fleet-card-cover-blank svg { width: 34px; height: 34px; fill: none; stroke: #b9c7bc; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }

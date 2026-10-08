@@ -110,10 +110,19 @@
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
       <div class="section-heading">
         <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
-        <button id="add-plant" class="secondary-action" type="button">Add a plant</button>
+        <div class="settings-sensor-actions">
+          <label class="fleet-sort" for="plant-sort">Sort by
+            <select id="plant-sort">
+              <option value="name">Name</option>
+              <option value="thirst">Thirstiest first</option>
+              <option value="watered">Longest since watering</option>
+              <option value="room">Room</option>
+            </select>
+          </label>
+          <button id="add-plant" class="secondary-action" type="button">Add a plant</button>
+        </div>
       </div>
       <div id="fleet-grid" class="fleet-grid"></div>
-      <div id="plant-grid" class="fleet-grid"></div>
     </section>
     <section class="settings-page" data-page="settings" aria-labelledby="settings-title" hidden>
       <div class="section-heading">

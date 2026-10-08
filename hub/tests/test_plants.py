@@ -484,7 +484,7 @@ class PlantApiTests(unittest.TestCase):
         script = self.call_text("/app.js")
         self.assertIn("function photoUrl(photoId, digest)", script)
         self.assertIn("photoUrl(photo.photo_id, photo.digest)", script)
-        self.assertIn("photoUrl(plant.cover_photo_id, plant.cover_photo_digest)", script)
+        self.assertIn("setFleetCardCover(card,", script)
         self.assertEqual(
             self.call("GET", f"/api/plants/{plant_id}")["cover_photo_digest"],
             second["digest"],
@@ -631,8 +631,13 @@ class PlantApiTests(unittest.TestCase):
 
     def test_a_plant_with_no_sensor_is_offered_on_the_household_page(self) -> None:
         script = self.call_text("/app.js")
+        page = self.call_text("/")
 
-        self.assertIn('plant.sensor_id === null', script)
+        # One grid, one kind of tile: a plant with a sensor and a plant
+        # without are the same kind of thing and sit side by side.
+        self.assertIn("function renderHousehold()", script)
+        self.assertNotIn('plant-grid"', page)
+        self.assertIn("sensorsByPlant.get(plant.plant_id)", script)
         self.assertIn("/plants/${plant.plant_id}", script)
         # A plant is not faulty for having no sensor, and the page must not
         # tell somebody to enrol one above a list of their own plants.

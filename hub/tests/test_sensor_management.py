@@ -469,14 +469,20 @@ class SensorManagementWebTests(unittest.TestCase):
             self.assertIn(guard, body, renderer)
             self.assertLess(body.index(guard), body.index("replaceChildren("), renderer)
 
-    def test_dashboard_polling_updates_fleet_cards_without_replacing_grid(self) -> None:
+    def test_dashboard_polling_updates_cards_without_replacing_grid(self) -> None:
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
-        render_fleet = app[app.index("function renderFleet()") : app.index("function renderInbox()")]
+        render = app[app.index("function renderHousehold()") : app.index("function tileKey(")]
 
-        self.assertNotIn("grid.replaceChildren()", render_fleet)
-        self.assertIn('grid.querySelectorAll(".fleet-card")', render_fleet)
-        self.assertIn("updateFleetCard(card, sensor);", render_fleet)
-        self.assertIn("if (cardAtIndex !== card)", render_fleet)
+        # The page refreshes every second; rebuilding the grid would reload
+        # every cover photograph and lose whatever the pointer was over.
+        self.assertNotIn("grid.replaceChildren()", render)
+        self.assertIn('grid.querySelectorAll(".fleet-card")', render)
+        self.assertIn("updateHouseholdCard(card, tile.plant, tile.sensor);", render)
+        self.assertIn("if (cardAtIndex !== card)", render)
+        # And a cover is left alone unless it is a different photograph.
+        cover = app[app.index("function setFleetCardCover("):]
+        self.assertIn('(existing.getAttribute("src") || "") === wanted) return;',
+                      cover[: cover.index("\n}")])
 
     def test_dashboard_uses_profile_alert_thresholds_without_sensor_threshold_inputs(self) -> None:
         static_dir = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"

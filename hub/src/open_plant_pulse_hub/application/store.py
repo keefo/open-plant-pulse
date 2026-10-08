@@ -3724,6 +3724,23 @@ class ReadingStore:
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:
+        # The plant's cover, so a card shows the plant whether the hub knows
+        # it through a sensor or not. The picture belongs to the plant; the
+        # sensor is only how this card found it.
+        sensor["cover_photo_id"] = None
+        sensor["cover_photo_digest"] = None
+        if sensor["plant_id"] is not None:
+            cover = self._database.execute(
+                """
+                SELECT plants.cover_photo_id, plant_photos.digest
+                FROM plants
+                LEFT JOIN plant_photos ON plant_photos.photo_id = plants.cover_photo_id
+                WHERE plants.plant_id = ?
+                """,
+                (sensor["plant_id"],),
+            ).fetchone()
+            if cover is not None:
+                sensor["cover_photo_id"], sensor["cover_photo_digest"] = cover
         latest = self.latest(sensor["sensor_id"])
         received_at = latest["received_at"] if latest is not None else sensor["last_seen_at"]
         received = self._observation_datetime(received_at, datetime.now(timezone.utc))
