@@ -302,6 +302,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .care-event.watering_due::before { background: var(--coral); box-shadow: 0 0 0 4px #f3dfd9; }
 .care-event.drainage_assessment::before { background: var(--leaf); box-shadow: 0 0 0 4px #dcecdf; }
 .care-event.lighting::before { background: var(--gold); box-shadow: 0 0 0 4px #f5ead0; }
+/* A reading rather than an event: the same water blue the use chart uses. */
+.care-event.observation::before { background: #7fb6cf; box-shadow: 0 0 0 4px #dceaf1; }
 .care-event time { grid-row: span 2; color: var(--muted); font-size: 12px; }
 .care-event-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .care-event-heading strong { font-size: 15px; }
@@ -480,6 +482,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 /* A bar is a span of time at a rate, not a day: it is drawn edge to edge
    across the days it covers, and the gaps are the days nobody measured. */
 .water-use-bar { fill: #7fb6cf; }
+.water-use-findings:empty { display: none; }
+.water-use-finding { margin-top: 14px; padding: 14px 16px; border-left: 3px solid #7fb6cf; border-radius: 0 6px 6px 0; background: #f1f6f9; }
+.water-use-finding p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+/* A plant not drinking with a full pot is the one worth stopping at. */
+.water-use-finding[data-code="drinking_less_while_full"] { border-left-color: var(--coral); background: #faefeb; }
 .water-use .journey-stats { margin-bottom: 18px; }
 .weight-trend { margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 .weight-trend > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }

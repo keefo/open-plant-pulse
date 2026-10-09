@@ -1532,6 +1532,8 @@ const plantLabel = document.getElementById("plant-label");
  * readings is a matter of confidence. */
 function careEventNote(event) {
   if (event.changes?.source === "manual") return "Recorded by hand";
+  // Not something that happened to the plant: something the weighings imply.
+  if (event.changes?.source === "water-use") return "Read from the weighings";
   if (event.kind === "drainage_assessment") return "Estimated response";
   if (event.kind === "lighting") {
     return event.confidence === "high" ? "Light confirmed" : "No answer from the light";
@@ -2814,6 +2816,27 @@ function resetWeighingDate() {
  * knows the week's total and nothing about Wednesday. The gaps between bars
  * are honest -- they are the stretches nobody measured, or the ones with a
  * watering in them. */
+/* What the change in rate suggests, shown where the rate is. It is also
+ * written into the care log, so a plant that was off its water in March can
+ * be found again in September. */
+function renderWaterUseFindings(findings) {
+  const list = document.getElementById("water-use-findings");
+  if (list === null) return;
+  if (!renderKeyChanged(list, findings)) return;
+  list.replaceChildren();
+  for (const finding of findings) {
+    const note = document.createElement("div");
+    note.className = "water-use-finding";
+    setData(note, "code", finding.code);
+    const title = document.createElement("strong");
+    setText(title, finding.title);
+    const summary = document.createElement("p");
+    setText(summary, finding.summary);
+    note.append(title, summary);
+    list.append(note);
+  }
+}
+
 function renderWaterUse() {
   const use = selectedPlant?.water_use;
   const chart = document.getElementById("water-use-chart");
@@ -2837,6 +2860,7 @@ function renderWaterUse() {
 
   setHidden(chart, intervals.length === 0);
   setHidden(empty, intervals.length !== 0);
+  renderWaterUseFindings(use?.findings || []);
   if (!intervals.length) {
     setText(document.getElementById("water-use-summary"), "");
     chart.replaceChildren();
@@ -2910,6 +2934,7 @@ function renderWaterUse() {
       .format(new Date(time))));
   });
 
+  renderWaterUseFindings(use.findings || []);
   const longest = intervals.reduce((a, b) => (b.days > a.days ? b : a));
   setText(document.getElementById("water-use-summary"),
     `${intervals.length} span${intervals.length === 1 ? "" : "s"} measured · `

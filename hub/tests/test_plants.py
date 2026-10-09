@@ -288,6 +288,69 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual(use["daily_grams"], 56)
         self.assertEqual((use["lowest_daily_grams"], use["highest_daily_grams"]), (50, 80))
 
+    def water_history(self, pattern):
+        for days, grams in pattern:
+            self.store.record_plant_weight(self.plant_id, grams, at=ago(days))
+
+    def test_a_plant_that_stops_drinking_with_a_full_pot_is_worth_saying(self) -> None:
+        # The one case where the obvious response makes things worse: water
+        # the plant is not taking is not water the plant is short of.
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
+                            (4, 2_590), (0.2, 2_585)])
+
+        findings = self.store.water_use_findings(self.plant_id)
+        self.assertEqual([f["code"] for f in findings], ["drinking_less_while_full"])
+        self.assertIn("before adding more", findings[0]["summary"])
+
+        # And it is in the care log, as a reading rather than an event.
+        logged = [e for e in self.store.care_log(10, plant_id=self.plant_id)
+                  if e["kind"] == "observation"]
+        self.assertEqual(len(logged), 1)
+        self.assertEqual(logged[0]["changes"]["source"], "water-use")
+        self.assertEqual(logged[0]["confidence"], "derived")
+        # Saying it twice on one day adds nothing.
+        self.store.record_water_use_findings(self.plant_id)
+        self.assertEqual(
+            len([e for e in self.store.care_log(10, plant_id=self.plant_id)
+                 if e["kind"] == "observation"]), 1)
+
+    def test_the_same_slowdown_with_an_empty_pot_means_the_opposite(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(20, 2_900), (16, 2_750), (12, 2_600), (8, 2_450),
+                            (4, 2_120), (0.2, 2_100)])
+
+        findings = self.store.water_use_findings(self.plant_id)
+        self.assertEqual([f["code"] for f in findings], ["drinking_less_and_low"])
+
+    def test_steady_drinking_is_not_worth_a_word(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
+                            (4, 2_500), (0.05, 2_401)])
+
+        self.assertEqual(self.store.water_use_findings(self.plant_id), [])
+        self.assertEqual([e for e in self.store.care_log(10, plant_id=self.plant_id)
+                          if e["kind"] == "observation"], [])
+
+    def test_a_weighing_written_down_late_says_nothing_about_today(self) -> None:
+        # Filling in last week should not have the hub announcing findings
+        # against a history it is halfway through being given.
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
+                            (4, 2_590), (0.2, 2_585)])
+        before = len([e for e in self.store.care_log(20, plant_id=self.plant_id)
+                      if e["kind"] == "observation"])
+
+        self.store.record_plant_weight(self.plant_id, 2_850, at=ago(17))
+
+        self.assertEqual(
+            len([e for e in self.store.care_log(20, plant_id=self.plant_id)
+                 if e["kind"] == "observation"]), before)
+
     def test_water_use_says_nothing_before_there_is_anything_to_say(self) -> None:
         empty = self.store.water_use(self.plant_id)
         self.assertEqual(empty["intervals"], [])

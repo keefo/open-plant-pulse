@@ -2785,6 +2785,13 @@ class ReadingStore:
             )
         if kind == "watered" and observed:
             self.record_plant_care(plant_id, "watering", at)
+        if observed and self._is_current_weighing(plant_id, at):
+            # A new weighing is the only thing that can change what the water
+            # use says, so it is the moment to look. A weighing written down
+            # late is not: filling in last week says nothing about today, and
+            # the part-built history it is read against would have the hub
+            # announcing findings it will contradict two rows later.
+            self.record_water_use_findings(plant_id)
         return self.plant_weight_status(plant_id)
 
     @staticmethod
@@ -3004,6 +3011,157 @@ class ReadingStore:
                 (i["grams_per_day"] for i in intervals), default=None
             ),
         }
+
+    def _is_current_weighing(self, plant_id: int, at: str) -> bool:
+        """Whether this weighing is the plant's newest, and of about now."""
+        now = datetime.now(timezone.utc)
+        when = self._observation_datetime(at, now)
+        if now - when > timedelta(days=2):
+            return False
+        with self._condition:
+            newest = self._database.execute(
+                """
+                SELECT MAX(at) FROM plant_weights WHERE plant_id = ? AND observed = 1
+                """,
+                (plant_id,),
+            ).fetchone()[0]
+        return newest is None or self._observation_datetime(newest, now) <= when
+
+    def water_use_findings(self, plant_id: int) -> List[Dict[str, Any]]:
+        """What a change in water use suggests, where it suggests anything.
+
+        A plant that stops drinking is saying one of two things, and which
+        one depends on whether there is water left to drink.
+
+        With a full pot it is not thirst: the water is there and the plant is
+        not taking it. Roots that have drowned or rotted cannot, and neither
+        can a plant that has gone dormant in a cold dark week. Watering it
+        again is the one response that makes the first case worse, which is
+        why this is worth saying out loud.
+
+        With a near-empty pot it is the ordinary thing: the plant has taken
+        what it can reach. Soil scientists call the turn from a rate set by
+        the air to one set by what is left in the soil the move from
+        energy-limited to supply-limited drying, and the weight it happens at
+        is this pot's real thirst threshold -- better evidence than anybody's
+        guess at one.
+
+        Drinking more is rarely a problem, but it means the next watering
+        comes sooner than the last gap suggests.
+
+        None of this is said from one measurement. It takes a baseline of
+        three earlier spans, a latest span of a day or more, and a change of
+        at least a third; below that it is the weather, the scale, or
+        nothing.
+        """
+        use = self.water_use(plant_id, days=60)
+        intervals = use["intervals"]
+        if len(intervals) < 4:
+            return []
+        latest = intervals[-1]
+        if latest["days"] < 0.75:
+            return []
+        earlier = sorted(interval["grams_per_day"] for interval in intervals[:-1])
+        middle = len(earlier) // 2
+        baseline = (
+            earlier[middle]
+            if len(earlier) % 2
+            else (earlier[middle - 1] + earlier[middle]) / 2
+        )
+        if baseline <= 0:
+            return []
+        rate = latest["grams_per_day"]
+        share = rate / baseline
+        status = self.plant_weight_status(plant_id)
+        left = status["remaining_percent"]
+
+        evidence = {
+            "grams_per_day": rate,
+            "baseline_grams_per_day": round(baseline),
+            "share_of_usual": round(share, 2),
+            "remaining_percent": left,
+            "from": latest["from"],
+            "to": latest["to"],
+        }
+        shortfall = f"{rate} ml a day against {round(baseline)} usually"
+
+        if share <= 0.67:
+            if left is not None and left <= 30:
+                return [{
+                    "code": "drinking_less_and_low",
+                    "title": "Drinking less, and nearly empty",
+                    "summary": (
+                        f"{shortfall}, with about {left}% of its water left. The pot "
+                        "is down to what the roots cannot easily reach, which is "
+                        "this plant telling you when it is thirsty rather than you "
+                        "deciding for it."
+                    ),
+                    "evidence": evidence,
+                }]
+            if left is not None and left >= 50:
+                return [{
+                    "code": "drinking_less_while_full",
+                    "title": "Drinking less with water still in the pot",
+                    "summary": (
+                        f"{shortfall}, with about {left}% of its water left. Water "
+                        "it is not taking is worth looking into before adding more: "
+                        "roots that are drowned or rotting cannot drink, and nor can "
+                        "a plant that has gone dormant in a cold or dark week."
+                    ),
+                    "evidence": evidence,
+                }]
+            return [{
+                "code": "drinking_less",
+                "title": "Drinking less than usual",
+                "summary": (
+                    f"{shortfall}. Cooler, darker or damper air will do this, and so "
+                    "will a plant in trouble; a weighing or two more will say which."
+                ),
+                "evidence": evidence,
+            }]
+
+        if share >= 1.5:
+            return [{
+                "code": "drinking_more",
+                "title": "Drinking more than usual",
+                "summary": (
+                    f"{rate} ml a day against {round(baseline)} usually. Warmth, "
+                    "light, dry air and new growth all raise it. The next watering "
+                    "will come sooner than the last gap suggests."
+                ),
+                "evidence": evidence,
+            }]
+        return []
+
+    def record_water_use_findings(self, plant_id: int) -> List[Dict[str, Any]]:
+        """Put what the water use implies into the plant's care log.
+
+        One of each finding a day: saying the same thing twice on a Tuesday
+        adds nothing, but a plant that was drinking less this morning and
+        more this evening has changed its mind, and that is worth the second
+        line.
+        """
+        findings = self.water_use_findings(plant_id)
+        now = _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            for finding in findings:
+                self._save_event(
+                    CareEvent(
+                        event_id=(
+                            f"observation-{finding['code']}-plant-{plant_id}"
+                            f"-{self._local_day(now)}"
+                        ),
+                        sensor_id="",
+                        kind="observation",
+                        detected_at=now,
+                        title=finding["title"],
+                        summary=finding["summary"],
+                        confidence="derived",
+                        changes={"source": "water-use", **finding["evidence"]},
+                    ),
+                    plant_id=plant_id,
+                )
+        return findings
 
     def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Every plant the household has, instrumented or not."""
