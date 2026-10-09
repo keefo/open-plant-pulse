@@ -17,6 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application.store import vapour_pressure_deficit
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.web import create_server, server_address
 
@@ -350,6 +351,72 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual(
             len([e for e in self.store.care_log(20, plant_id=self.plant_id)
                  if e["kind"] == "observation"]), before)
+
+    def air_in_the_room(self, room_id, early, late, switch_days=4, span_days=21):
+        """A sensor in the room, reporting the air hourly."""
+        self.store._database.execute(
+            "INSERT INTO sensors (sensor_id, identity_kind, identity_value,"
+            " enrollment_status, display_name, room_id, transport, contract_version,"
+            " first_seen_at, last_seen_at) VALUES"
+            " ('sensor-air','mac','aa','enrolled','Air',?,'ble',1,?,?)",
+            (room_id, ago(60), ago(0)))
+        for hour in range(span_days * 24):
+            days = span_days - hour / 24
+            celsius, humidity = early if days > switch_days else late
+            self.store._database.execute(
+                "INSERT INTO sensor_readings (sensor_id, observed_at, received_at,"
+                " air_temperature_c, air_humidity_percent) VALUES (?,?,?,?,?)",
+                ("sensor-air", ago(days), ago(days), celsius, humidity))
+        self.store._database.commit()
+
+    def test_the_drying_power_of_a_room_is_worked_out_from_its_air(self) -> None:
+        # Tetens, against the textbook figures.
+        for celsius, humidity, expected in [(21, 50, 1.24), (25, 40, 1.90), (18, 65, 0.72)]:
+            self.assertAlmostEqual(
+                vapour_pressure_deficit(celsius, humidity), expected, places=2)
+        # Saturated air pulls nothing, whatever its temperature.
+        self.assertEqual(vapour_pressure_deficit(30, 100), 0.0)
+
+    def test_a_change_the_room_explains_is_reported_as_the_room(self) -> None:
+        """The air belongs to the room, so a sensor in it speaks for this pot."""
+        room = self.store.create_room("Living", "south", "bright")["room_id"]
+        self.store.update_plant(self.plant_id, "Spider", room_id=room)
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        # Cool and damp, then warm and dry.
+        self.air_in_the_room(room, (18, 80), (26, 30))
+        self.water_history([(20, 2_900), (16, 2_850), (12, 2_800), (8, 2_750),
+                            (4, 2_700), (0.2, 2_500)])
+
+        findings = self.store.water_use_findings(self.plant_id)
+        self.assertEqual([f["code"] for f in findings], ["the_air_changed"])
+        # Four times the water, and nearly all of it the air.
+        self.assertGreater(findings[0]["evidence"]["share_of_usual"], 3)
+        self.assertLess(abs(findings[0]["evidence"]["share_against_air"] - 1), 0.35)
+
+    def test_a_change_the_room_does_not_explain_is_still_the_plant(self) -> None:
+        room = self.store.create_room("Living", "south", "bright")["room_id"]
+        self.store.update_plant(self.plant_id, "Spider", room_id=room)
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        # The room did turn damper, but nowhere near enough to account for
+        # a plant that all but stopped drinking.
+        self.air_in_the_room(room, (26, 30), (19, 78))
+        self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
+                            (4, 2_590), (0.2, 2_585)])
+
+        findings = self.store.water_use_findings(self.plant_id)
+        self.assertEqual([f["code"] for f in findings], ["drinking_less_while_full"])
+        self.assertLess(findings[0]["evidence"]["share_against_air"], 0.5)
+
+    def test_a_plant_in_a_room_with_no_sensor_keeps_its_raw_rate(self) -> None:
+        # Nothing is borrowed from another room's air.
+        self.store.record_plant_weight(self.plant_id, 2_800, at=ago(8))
+        self.store.record_plant_weight(self.plant_id, 2_400, at=ago(4))
+        use = self.store.water_use(self.plant_id)
+        self.assertFalse(use["drying_known"])
+        self.assertIsNone(use["intervals"][0]["drying_kpa"])
+        self.assertIsNone(use["intervals"][0]["grams_per_day_per_kpa"])
 
     def test_water_use_says_nothing_before_there_is_anything_to_say(self) -> None:
         empty = self.store.water_use(self.plant_id)

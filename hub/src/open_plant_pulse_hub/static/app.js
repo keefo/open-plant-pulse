@@ -2854,8 +2854,10 @@ function renderWaterUse() {
     intervals.length ? String(intervals[intervals.length - 1].grams_per_day) : "--");
   /* Said rather than hidden: a mean over four measured days out of ninety is
    * a different claim from one over eighty. */
+  const latestDrying = [...intervals].reverse().find((i) => i.drying_kpa != null);
   setText(document.getElementById("water-use-coverage"), intervals.length
     ? `Measured across ${use.measured_days} of the last ${use.window_days} days`
+      + (latestDrying ? ` · room air ${latestDrying.drying_kpa} kPa` : "")
     : "");
 
   setHidden(chart, intervals.length === 0);
@@ -2938,7 +2940,10 @@ function renderWaterUse() {
   const longest = intervals.reduce((a, b) => (b.days > a.days ? b : a));
   setText(document.getElementById("water-use-summary"),
     `${intervals.length} span${intervals.length === 1 ? "" : "s"} measured · `
-    + `longest ${longest.days} days`);
+    + `longest ${longest.days} days`
+    + (use.drying_known
+      ? " · rates held against the room's drying power before anything is read into them"
+      : ""));
 }
 
 /* The pot's weight over a month, which is this plant's moisture history.

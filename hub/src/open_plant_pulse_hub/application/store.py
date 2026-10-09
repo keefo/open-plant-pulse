@@ -3,6 +3,7 @@ from dataclasses import asdict, replace, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from math import ceil
 from pathlib import Path
 import sqlite3
@@ -161,6 +162,23 @@ EMPTY_JOURNEY = {
 # What a weighing was for. The ceiling is the pot once drainage has stopped,
 # the floor is the pot when the plant wanted water, and everything else is
 # simply where it is now.
+def vapour_pressure_deficit(celsius: float, humidity_percent: float) -> float:
+    """How hard the air is pulling water out of things, in kilopascals.
+
+    Saturation vapour pressure by the Tetens equation, times the share of it
+    the air is short of. Warm dry air pulls hard; cool damp air barely at
+    all, and the same plant will drink two or three times as much on the
+    first kind of day as on the second without anything having changed about
+    the plant.
+
+    This is the deficit of the air. The deficit at the leaf, which is what
+    the stomata actually answer to, needs the leaf's own temperature and a
+    houseplant hub has no way to measure that.
+    """
+    saturated = 0.6108 * math.exp(17.27 * celsius / (celsius + 237.3))
+    return max(0.0, saturated * (1.0 - max(0.0, min(100.0, humidity_percent)) / 100.0))
+
+
 WEIGHT_KINDS = ("reading", "watered", "thirsty")
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
@@ -2961,6 +2979,10 @@ class ReadingStore:
                 )
             ]
 
+        plant = self.plant(plant_id)
+        drying_hours = self._room_drying_hours(
+            plant["room_id"] if plant else None, since, now
+        )
         points = [(self._observation_datetime(row[0], now), row[1]) for row in rows]
         watered_at = [self._observation_datetime(stamp, now) for stamp in waterings]
         intervals: List[Dict[str, Any]] = []
@@ -2984,12 +3006,22 @@ class ReadingStore:
             seconds = (end_at - start_at).total_seconds()
             lost = start_grams - end_grams
             if not poured and lost >= 0 and seconds > 0:
+                per_day = lost / (seconds / 86400.0)
+                drying, covered = self._mean_drying(drying_hours, start_at, end_at)
                 intervals.append({
                     "from": _timestamp(start_at),
                     "to": _timestamp(end_at),
                     "days": round(seconds / 86400.0, 2),
                     "grams": lost,
-                    "grams_per_day": round(lost / (seconds / 86400.0)),
+                    "grams_per_day": round(per_day),
+                    # How hard the air was pulling while this was measured,
+                    # and the rate with that divided out: millilitres a day
+                    # per kilopascal is the plant's own part of it.
+                    "drying_kpa": drying,
+                    "air_coverage": covered,
+                    "grams_per_day_per_kpa": (
+                        round(per_day / drying, 1) if drying else None
+                    ),
                 })
             index = step
 
@@ -3004,6 +3036,9 @@ class ReadingStore:
             "measured_days": round(measured_days, 1),
             "used_grams": used,
             "daily_grams": round(used / measured_days) if measured_days else None,
+            # Whether the air was measured at all, so the page can say
+            # whether the rates have been held against it.
+            "drying_known": any(i["drying_kpa"] is not None for i in intervals),
             "lowest_daily_grams": min(
                 (i["grams_per_day"] for i in intervals), default=None
             ),
@@ -3026,6 +3061,62 @@ class ReadingStore:
                 (plant_id,),
             ).fetchone()[0]
         return newest is None or self._observation_datetime(newest, now) <= when
+
+    def _room_drying_hours(
+        self, room_id: Optional[int], start: datetime, end: datetime
+    ) -> Dict[str, float]:
+        """The room's drying power, hour by hour, from whatever is in it.
+
+        The air belongs to the room, not to the sensor that happens to
+        report it: one probe on a windowsill speaks for every pot on it. A
+        plant in a room with no sensor gets nothing, and is left to its raw
+        rate rather than a borrowed one.
+
+        Averaged by the hour before the deficit is worked out, because the
+        deficit does not average linearly and an hour is short enough for
+        that not to matter.
+        """
+        if room_id is None:
+            return {}
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT substr(sensor_readings.observed_at, 1, 13) AS hour,
+                       AVG(air_temperature_c), AVG(air_humidity_percent)
+                FROM sensor_readings
+                JOIN sensors ON sensors.sensor_id = sensor_readings.sensor_id
+                WHERE sensors.room_id = ?
+                  AND sensor_readings.observed_at >= ?
+                  AND sensor_readings.observed_at <= ?
+                  AND air_temperature_c IS NOT NULL
+                  AND air_humidity_percent IS NOT NULL
+                GROUP BY hour
+                """,
+                (room_id, _timestamp(start), _timestamp(end)),
+            ).fetchall()
+        return {
+            row[0]: vapour_pressure_deficit(row[1], row[2])
+            for row in rows
+            if row[1] is not None and row[2] is not None
+        }
+
+    @staticmethod
+    def _mean_drying(hours: Dict[str, float], start: datetime, end: datetime):
+        """The room's mean drying power across one span, if it was measured.
+
+        Half a span's worth of readings is not a mean for the span, so a
+        span the sensor was mostly away for gets nothing rather than a
+        figure drawn from the hours it happened to be there.
+        """
+        wanted = []
+        hour = start.replace(minute=0, second=0, microsecond=0)
+        while hour <= end:
+            wanted.append(_timestamp(hour)[:13])
+            hour += timedelta(hours=1)
+        found = [hours[key] for key in wanted if key in hours]
+        if not wanted or len(found) < max(2, len(wanted) * 0.5):
+            return None, round(len(found) / len(wanted), 2) if wanted else 0.0
+        return round(sum(found) / len(found), 3), round(len(found) / len(wanted), 2)
 
     def water_use_findings(self, plant_id: int) -> List[Dict[str, Any]]:
         """What a change in water use suggests, where it suggests anything.
@@ -3061,29 +3152,82 @@ class ReadingStore:
         latest = intervals[-1]
         if latest["days"] < 0.75:
             return []
-        earlier = sorted(interval["grams_per_day"] for interval in intervals[:-1])
-        middle = len(earlier) // 2
-        baseline = (
-            earlier[middle]
-            if len(earlier) % 2
-            else (earlier[middle - 1] + earlier[middle]) / 2
-        )
-        if baseline <= 0:
+        def middle_of(values):
+            ordered = sorted(values)
+            if not ordered:
+                return None
+            half = len(ordered) // 2
+            return (
+                ordered[half]
+                if len(ordered) % 2
+                else (ordered[half - 1] + ordered[half]) / 2
+            )
+
+        baseline = middle_of([i["grams_per_day"] for i in intervals[:-1]])
+        if not baseline:
             return []
         rate = latest["grams_per_day"]
         share = rate / baseline
         status = self.plant_weight_status(plant_id)
         left = status["remaining_percent"]
 
+        # The same plant drinks two or three times as much in warm dry air
+        # as in cool damp air. Where the room was measured, that is divided
+        # out before anything is concluded: what is left is the plant's own
+        # share, and a change in it is a change in the plant.
+        held = middle_of([
+            i["grams_per_day_per_kpa"] for i in intervals[:-1]
+            if i["grams_per_day_per_kpa"] is not None
+        ])
+        normalised = latest["grams_per_day_per_kpa"]
+        against_air = (normalised / held) if (held and normalised) else None
+
         evidence = {
             "grams_per_day": rate,
             "baseline_grams_per_day": round(baseline),
             "share_of_usual": round(share, 2),
             "remaining_percent": left,
+            "drying_kpa": latest["drying_kpa"],
+            "baseline_per_kpa": round(held, 1) if held else None,
+            "share_against_air": round(against_air, 2) if against_air else None,
             "from": latest["from"],
             "to": latest["to"],
         }
         shortfall = f"{rate} ml a day against {round(baseline)} usually"
+
+        # A change that would have been worth reporting, and stops being so
+        # once the room is divided out, is the weather. Saying that is more
+        # use than saying nothing: a fourfold jump in the chart wants an
+        # explanation, and "the room got drier" is the explanation.
+        #
+        # "Stops being so" is deliberately loose. Transpiration does not
+        # rise in step with the deficit -- stomata close as the air dries,
+        # so the rate per kilopascal sags at the dry end for a perfectly
+        # well plant. A change counts as the room's when dividing it out
+        # takes it most of the way back and leaves it somewhere unremarkable,
+        # not when the two cancel exactly.
+        alarming = share <= 0.67 or share >= 1.5
+        explained = (
+            against_air is not None
+            and 0.67 < against_air < 1.5
+            and abs(math.log(against_air)) <= 0.5 * abs(math.log(share))
+        )
+        if alarming and explained:
+            drier = "drier" if share > 1 else "damper"
+            return [{
+                "code": "the_air_changed",
+                "title": f"Drinking {'more' if share > 1 else 'less'}, but so is the room",
+                "summary": (
+                    f"{shortfall}, in air that is {drier} by about as much "
+                    f"({latest['drying_kpa']} kPa of drying power now). Held against "
+                    "the air the plant is drinking as it was, so this is the room "
+                    "changing rather than the plant."
+                ),
+                "evidence": evidence,
+            }]
+        # Where the air is known, the plant's own share is what is judged.
+        if against_air is not None:
+            share = against_air
 
         if share <= 0.67:
             if left is not None and left <= 30:
