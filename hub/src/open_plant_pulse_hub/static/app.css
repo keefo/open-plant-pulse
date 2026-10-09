@@ -182,7 +182,29 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-pot-shell { filter: drop-shadow(0 0 3px #17211b8f) drop-shadow(0 10px 9px #17211b61); }
 .moisture-vessel { --fill: 0%; --target-low: 55%; --target-size: 15%; --cycle-low: 35%; --cycle-size: 35%; --refill: 35%; position: relative; min-height: 238px; overflow: hidden; border: 4px solid #506c62; background: #edf3f3; box-shadow: inset 0 0 0 4px #ffffffaa; clip-path: polygon(2% 0, 98% 0, 91% 91%, 89% 96%, 85% 100%, 15% 100%, 11% 96%, 9% 91%); }
 .moisture-fill { position: absolute; z-index: 1; inset-inline: 0; bottom: 0; height: var(--fill); background: linear-gradient(180deg, #4aa9c8, #277b9d); transition: height 700ms ease; }
-.moisture-fill::before { content: ""; position: absolute; left: -5%; top: -8px; width: 110%; height: 16px; border-radius: 48%; background: #72bdd3; animation: water-surface 6s ease-in-out infinite alternate; }
+/* The surface, as two waves rather than one.
+ *
+ * A single crest rocking from side to side reads as a slab of water being
+ * tilted. Two sine waves of different wavelengths, drifting at different
+ * speeds in opposite directions, drift in and out of step with each other
+ * and never visibly repeat -- which is what water looks like. Each tiles
+ * horizontally, so the drift of exactly one wavelength loops seamlessly. */
+.moisture-fill::before, .moisture-fill i {
+  content: ""; position: absolute; inset-inline: 0; pointer-events: none;
+  background-repeat: repeat-x;
+}
+.moisture-fill::before {
+  top: -7px; height: 14px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 14' preserveAspectRatio='none'><path d='M0 7 Q 15 1 30 7 T 60 7 L60 14 L0 14 Z' fill='%2372bdd3'/></svg>");
+  background-size: 60px 14px;
+  animation: water-drift 9s linear infinite;
+}
+.moisture-fill i {
+  top: -5px; height: 11px; opacity: 0.5;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 86 11' preserveAspectRatio='none'><path d='M0 5 Q 21.5 10 43 5 T 86 5 L86 11 L0 11 Z' fill='%234aa9c8'/></svg>");
+  background-size: 86px 11px;
+  animation: water-drift-back 14s linear infinite;
+}
 /* The comfortable cycle is the green zone: anywhere in it the plant is fine.
    The after-watering target is only a bracket at its edge, what a watering
    should reach, not where the soil has to stay. */
@@ -200,8 +222,10 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-caption { display: grid; gap: 2px; }
 .moisture-caption b { color: var(--ink); font-size: 15px; }
 .moisture-caption span { color: var(--muted); font-size: 11px; }
-@keyframes water-surface { from { transform: translateX(-1.5%) skewX(-2deg); } to { transform: translateX(1.5%) skewX(2deg); } }
-@media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .care-event.new { animation: none; transition: none; } }
+/* One whole wavelength, so the loop has no seam. */
+@keyframes water-drift { from { background-position-x: 0; } to { background-position-x: 60px; } }
+@keyframes water-drift-back { from { background-position-x: 0; } to { background-position-x: -86px; } }
+@media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .moisture-fill i, .care-event.new { animation: none; transition: none; } }
 .soil-temp { border-top: 4px solid var(--coral); }
 .conductivity { border-top: 4px solid var(--sun); }
 .root-zone-gauge { min-height: 190px; gap: 9px; }
