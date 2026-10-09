@@ -222,10 +222,45 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-caption { display: grid; gap: 2px; }
 .moisture-caption b { color: var(--ink); font-size: 15px; }
 .moisture-caption span { color: var(--muted); font-size: 11px; }
+/* The reading, floating on the line it belongs to.
+ *
+ * It bobs on the longer of the two waves and leans with it, a beat behind,
+ * the way something floating lags the water carrying it. Kept small and out
+ * of the way of the bands' own labels: the figure to read is the big one
+ * above the pot. */
+/* Named with its parent so it outweighs ".metric b", which resets the font
+   of every bold thing in a metric card and would otherwise make this one
+   full size. */
+.moisture-vessel .moisture-waterline {
+  /* A sibling of the fill rather than a child of it, and above the bands:
+     inside the fill it sits in that element's stacking context, under the
+     comfortable band's green, which washes it out.
+
+     Centred, because the pot tapers and a label against the left edge falls
+     outside the clip that shapes it. Positioned with translate rather than
+     a transform, so the bob animation has the transform to itself, and it
+     follows the water down at the same pace the water falls. */
+  position: absolute; z-index: 4; left: 50%; translate: -50% 0;
+  bottom: var(--fill); margin-bottom: 4px;
+  padding: 1px 6px; border-radius: 8px;
+  color: #10465c; background: #ffffffee;
+  font-size: 10px; font-weight: 700; font-style: normal; letter-spacing: 0.02em;
+  animation: water-bob 14s ease-in-out infinite;
+  transition: bottom 700ms ease;
+}
+
+@keyframes water-bob {
+  0%   { transform: translateY(0) rotate(-1.5deg); }
+  25%  { transform: translateY(2.5px) rotate(1.5deg); }
+  50%  { transform: translateY(0) rotate(1.5deg); }
+  75%  { transform: translateY(-2.5px) rotate(-1.5deg); }
+  100% { transform: translateY(0) rotate(-1.5deg); }
+}
+
 /* One whole wavelength, so the loop has no seam. */
 @keyframes water-drift { from { background-position-x: 0; } to { background-position-x: 60px; } }
 @keyframes water-drift-back { from { background-position-x: 0; } to { background-position-x: -86px; } }
-@media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .moisture-fill i, .care-event.new { animation: none; transition: none; } }
+@media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .moisture-fill i, .moisture-waterline, .care-event.new { animation: none; transition: none; } }
 .soil-temp { border-top: 4px solid var(--coral); }
 .conductivity { border-top: 4px solid var(--sun); }
 .root-zone-gauge { min-height: 190px; gap: 9px; }

@@ -878,6 +878,9 @@ function renderMoistureVessel(profile) {
   setStyle(vessel, "--cycle-low", `${clamp(cycleLow)}%`);
   setStyle(vessel, "--cycle-size", `${clamp(cycleHigh) - clamp(cycleLow)}%`);
   setStyle(vessel, "--refill", `${clamp(watering.refill_below)}%`);
+  // The reading itself, riding the surface it describes. The big figure
+  // above the pot is the one to read; this one says which line is the water.
+  setText(document.getElementById("moisture-waterline"), `${Math.round(value)}%`);
   setAttr(vessel, "aria-label", `Soil moisture ${value.toFixed(1)} percent. ${wateringPhase(watering, value)}.`);
   setData(vessel, "phase", wateringPhase(watering, value).toLowerCase().replaceAll(" ", "-"));
   setText(document.getElementById("moisture-cycle-label"), `Comfortable ${cycleLow}–${cycleHigh}%`);
