@@ -338,6 +338,19 @@ function timeAtHome(since) {
     : `${years} year${years === 1 ? "" : "s"} at home`;
 }
 
+/* When it was last watered and when it was last weighed: two different
+ * facts, so both are said where both are known. Either on its own reads as
+ * the whole story, which is how a card came to say "not watered yet" beside
+ * a figure for how much water was left. */
+function lastCaredFor(plant) {
+  const watered = daysSince(plant.last_watered_at);
+  const weighed = daysSince(plant.weight?.latest?.at);
+  if (watered && weighed) return `Watered ${watered} · weighed ${weighed}`;
+  if (watered) return `Watered ${watered}`;
+  if (weighed) return `Weighed ${weighed}`;
+  return "Not watered yet";
+}
+
 function tileKey(tile) {
   return tile.plant ? `plant-${tile.plant.plant_id}` : `sensor-${tile.sensor.sensor_id}`;
 }
@@ -451,11 +464,7 @@ function updateHouseholdCard(card, plant, sensor) {
       ? `Last report ${new Date(reportedAt).toLocaleString()}`
       : "No reports received");
   } else {
-    const watered = daysSince(plant.last_watered_at);
-    const weighed = daysSince(plant.weight?.latest?.at);
-    setText(when, watered ? "Watered " + watered
-      : weighed ? "Weighed " + weighed
-        : "Not watered yet");
+    setText(when, lastCaredFor(plant));
   }
 
   const badge = card.querySelector("small");
@@ -2230,9 +2239,7 @@ function renderPlantPage() {
     variety?.name,
     selectedPlant.room ? "in the " + selectedPlant.room : "no room recorded",
   ].filter(Boolean).join(" · "));
-  const watered = daysSince(selectedPlant.last_watered_at);
-  setText(document.getElementById("plant-page-watered"),
-    watered ? "Watered " + watered : "Never watered");
+  setText(document.getElementById("plant-page-watered"), lastCaredFor(selectedPlant));
 
   /* The headline says the most actionable true thing, and nothing more: how
    * long the water will last if that is known, what is left if only that is,

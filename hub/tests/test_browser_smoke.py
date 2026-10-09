@@ -230,11 +230,15 @@ class BrowserSmokeTests(unittest.TestCase):
               cards: document.querySelectorAll("#fleet-grid .fleet-card").length,
               covers: document.querySelectorAll("#fleet-grid img.fleet-card-cover").length,
               name: document.querySelector("#fleet-grid .fleet-card strong")?.textContent || "",
+              cared: document.querySelector("#fleet-grid .fleet-card span")?.textContent || "",
             })""")["result"]["value"])
 
         self.assertEqual(drawn["cards"], 1)
         self.assertEqual(drawn["covers"], 1)
         self.assertEqual(drawn["name"], "Spider")
+        # Watered and weighed are different facts, and the card says both.
+        self.assertIn("Watered", drawn["cared"])
+        self.assertIn("weighed", drawn["cared"])
         self.assertEqual(tools.complaints, [])
 
 
