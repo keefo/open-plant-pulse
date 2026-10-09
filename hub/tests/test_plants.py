@@ -277,17 +277,31 @@ class PlantWeightTests(unittest.TestCase):
         use = self.store.water_use(self.plant_id, days=30)
         spans = [(i["days"], i["grams"], i["grams_per_day"]) for i in use["intervals"]]
 
-        self.assertEqual(spans, [(3.0, 150, 50), (3.0, 150, 50), (4.0, 200, 50),
+        self.assertEqual(spans, [(3.0, 150, 50), (3.0, 150, 50), (3.99, 195, 49),
                                  (2.5, 200, 80)])
-        # The pair minutes apart was folded into the span around it rather
-        # than reported as a rate over four minutes.
+        # The pair minutes apart is one weighing, not a span: the later
+        # figure stands and the span starts from it.
         self.assertNotIn(0.0, [span[0] for span in spans])
         # Nothing claims to know about the days between the watering and the
         # weighing after it.
         self.assertEqual(use["measured_days"], 12.5)
-        self.assertEqual(use["used_grams"], 700)
+        self.assertEqual(use["used_grams"], 695)
         self.assertEqual(use["daily_grams"], 56)
-        self.assertEqual((use["lowest_daily_grams"], use["highest_daily_grams"]), (50, 80))
+        self.assertEqual((use["lowest_daily_grams"], use["highest_daily_grams"]), (49, 80))
+
+    def test_a_pot_reweighed_minutes_later_is_not_drinking(self) -> None:
+        """2762 grams and then 2055 twelve minutes later is a correction."""
+        self.store.record_plant_weight(self.plant_id, 2_762, "watered", at=ago(2))
+        self.store.record_plant_weight(self.plant_id, 2_055, at=ago(2 - 0.008))
+        self.store.record_plant_weight(self.plant_id, 1_932, at=ago(1))
+        self.store.record_plant_weight(self.plant_id, 1_850, at=ago(0.02))
+
+        rates = [i["grams_per_day"] for i in
+                 self.store.water_use(self.plant_id)["intervals"]]
+
+        # Not 700 grams of water before lunch.
+        self.assertTrue(all(rate < 200 for rate in rates), rates)
+        self.assertEqual(len(rates), 2)
 
     def water_history(self, pattern):
         for days, grams in pattern:

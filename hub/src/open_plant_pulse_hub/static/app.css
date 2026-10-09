@@ -47,6 +47,8 @@ body {
 .fleet-card strong { font-size: 20px; }
 .fleet-card code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .fleet-card span { margin-top: 8px; color: var(--muted); font-size: 13px; }
+/* The two tags sit together: what the pot has left, and what it drinks. */
+.fleet-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
 
 /* The selects the page uses outside a form, which the browser would
@@ -86,6 +88,9 @@ body {
 .fleet-card-cover-blank { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); background: #f3f6f3; }
 .fleet-card-cover-blank svg { width: 34px; height: 34px; fill: none; stroke: #b9c7bc; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
+/* How much it drinks is not a verdict on it, so it is water-coloured rather
+   than caught by the rule above that reddens anything not "healthy". */
+.fleet-card small[data-state="rate"] { color: #2b6c86; background: #e4eff4; text-transform: none; }
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
 /* A pot with water left reads as well as a sensor reporting in; one nearly

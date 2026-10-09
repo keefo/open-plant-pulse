@@ -2934,7 +2934,9 @@ class ReadingStore:
                     status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
         return status
 
-    def water_use(self, plant_id: int, days: int = 90) -> Dict[str, Any]:
+    def water_use(
+        self, plant_id: int, days: int = 90, with_air: bool = True
+    ) -> Dict[str, Any]:
         """How much water this plant has been using, and over what.
 
         A pot on a scale is a weighing lysimeter: what it loses between two
@@ -2980,26 +2982,36 @@ class ReadingStore:
             ]
 
         plant = self.plant(plant_id)
+        # Aggregating a season of air readings costs more than everything
+        # else here together, and the household list wants only the mean
+        # rate. It asks without the air.
         drying_hours = self._room_drying_hours(
             plant["room_id"] if plant else None, since, now
-        )
+        ) if with_air else {}
         points = [(self._observation_datetime(row[0], now), row[1]) for row in rows]
         watered_at = [self._observation_datetime(stamp, now) for stamp in waterings]
         intervals: List[Dict[str, Any]] = []
 
-        # Weighings close together are mostly scale noise, so an interval is
-        # extended until it is long enough to say something, rather than
-        # reported as a wild rate over four minutes.
+        # Weighings close together are not a span, and the last of them is
+        # the one to believe: a pot weighed twice within the hour was
+        # weighed again because the first figure was wrong, or put on the
+        # scale for a different reason. Taking the first would have a pot
+        # that read 2762 and then 2055 twelve minutes later losing 700
+        # grams of water before lunch.
+        #
+        # So a cluster collapses to its last member, and a span runs from
+        # there to the next weighing far enough away to mean something.
         index = 0
-        while index < len(points) - 1:
-            start_at, start_grams = points[index]
-            step = index + 1
-            while step < len(points):
-                end_at, end_grams = points[step]
-                if end_at - start_at >= MIN_WATER_USE_SPAN:
-                    break
+        while index < len(points):
+            cluster = index
+            while (cluster + 1 < len(points)
+                   and points[cluster + 1][0] - points[index][0] < MIN_WATER_USE_SPAN):
+                cluster += 1
+            start_at, start_grams = points[cluster]
+            step = cluster + 1
+            while step < len(points) and points[step][0] - start_at < MIN_WATER_USE_SPAN:
                 step += 1
-            else:
+            if step >= len(points):
                 break
             end_at, end_grams = points[step]
             poured = any(start_at < when <= end_at for when in watered_at)
@@ -3337,7 +3349,15 @@ class ReadingStore:
         # its weighings know. One small indexed query per plant, and a house
         # has tens of plants, not thousands.
         return [
-            {**self._plant_payload(row), "weight": self.plant_weight_status(row[0])}
+            {
+                **self._plant_payload(row),
+                "weight": self.plant_weight_status(row[0]),
+                # The mean rate only, over the same window the plant's own
+                # page uses, so the two cannot disagree. Without the air,
+                # which costs more than everything else here together and
+                # changes nothing the card shows.
+                "daily_grams": self.water_use(row[0], with_air=False)["daily_grams"],
+            }
             for row in rows
         ]
 

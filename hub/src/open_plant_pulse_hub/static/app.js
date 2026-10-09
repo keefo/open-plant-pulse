@@ -359,7 +359,9 @@ function createHouseholdCard(key) {
   const card = document.createElement("a");
   card.className = "fleet-card";
   setData(card, "key", key);
-  card.innerHTML = "<strong></strong><code></code><span></span><small></small>";
+  card.innerHTML = "<strong></strong><code></code><span></span>"
+    + '<div class="fleet-card-tags"><small></small>'
+    + '<small class="fleet-card-rate" data-state="rate"></small></div>';
   return card;
 }
 
@@ -467,7 +469,7 @@ function updateHouseholdCard(card, plant, sensor) {
     setText(when, lastCaredFor(plant));
   }
 
-  const badge = card.querySelector("small");
+  const badge = card.querySelector("small:not(.fleet-card-rate)");
   if (sensor) {
     const state = sensorState(sensor);
     setText(badge, state);
@@ -482,6 +484,12 @@ function updateHouseholdCard(card, plant, sensor) {
     setData(badge, "state", weight.remaining_percent == null ? "manual"
       : weight.remaining_percent <= 15 ? "thirsty" : "watered");
   }
+
+  /* What it drinks, beside what it has left: one is the plant's habit and
+   * the other where it has got to, and they read together. */
+  const rate = card.querySelector(".fleet-card-rate");
+  setText(rate, plant?.daily_grams != null ? `${plant.daily_grams} ml/d` : "");
+  setHidden(rate, plant?.daily_grams == null);
 }
 
 function renderInbox() {
