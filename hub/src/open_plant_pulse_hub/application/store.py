@@ -165,6 +165,9 @@ WEIGHT_KINDS = ("reading", "watered", "thirsty")
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
 MIN_WEIGHT_SPAN = timedelta(hours=12)
+# Two weighings minutes apart differ mostly by what the scale felt like
+# saying; a rate drawn from them would be noise with a decimal point.
+MIN_WATER_USE_SPAN = timedelta(hours=8)
 # Care a person records themselves, because no probe could have seen it.
 MANUAL_CARE_KINDS = {"watering": "Watered", "fertilizing": "Fertilized", "note": "Note"}
 # Care that happens at most once in a day, whoever noticed it. A rise the probe
@@ -2905,6 +2908,102 @@ class ReadingStore:
                 if thirsty and newest[1] > thirsty[1]:
                     status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
         return status
+
+    def water_use(self, plant_id: int, days: int = 90) -> Dict[str, Any]:
+        """How much water this plant has been using, and over what.
+
+        A pot on a scale is a weighing lysimeter: what it loses between two
+        weighings, with nothing added, is water that left through the leaves
+        and the soil surface. Soil scientists call that evapotranspiration --
+        transpiration by the plant and evaporation from the pot, which
+        gravimetry cannot tell apart without a second pot of bare soil to
+        compare against.
+
+        A gram of water is a millilitre, so no conversion is needed and none
+        is invented.
+
+        The awkward part is that nobody weighs a pot every day. The honest
+        answer is a rate per interval between weighings rather than a figure
+        per day: five days and 400 ml says 80 ml a day on average, and says
+        nothing about which of the five days was thirstiest. Intervals that
+        span a watering are left out entirely -- water went in as well as
+        out, and one weighing cannot separate them.
+        """
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=max(1, min(days, 3650)))
+        with self._condition:
+            if self.plant(plant_id) is None:
+                raise ValueError("unknown plant")
+            rows = self._database.execute(
+                """
+                SELECT at, grams FROM plant_weights
+                WHERE plant_id = ? AND observed = 1 AND at >= ?
+                ORDER BY at, weight_id
+                """,
+                (plant_id, _timestamp(since)),
+            ).fetchall()
+            waterings = [
+                row[0]
+                for row in self._database.execute(
+                    """
+                    SELECT detected_at FROM care_events
+                    WHERE plant_id = ? AND kind = 'watering' AND detected_at >= ?
+                    ORDER BY detected_at
+                    """,
+                    (plant_id, _timestamp(since)),
+                )
+            ]
+
+        points = [(self._observation_datetime(row[0], now), row[1]) for row in rows]
+        watered_at = [self._observation_datetime(stamp, now) for stamp in waterings]
+        intervals: List[Dict[str, Any]] = []
+
+        # Weighings close together are mostly scale noise, so an interval is
+        # extended until it is long enough to say something, rather than
+        # reported as a wild rate over four minutes.
+        index = 0
+        while index < len(points) - 1:
+            start_at, start_grams = points[index]
+            step = index + 1
+            while step < len(points):
+                end_at, end_grams = points[step]
+                if end_at - start_at >= MIN_WATER_USE_SPAN:
+                    break
+                step += 1
+            else:
+                break
+            end_at, end_grams = points[step]
+            poured = any(start_at < when <= end_at for when in watered_at)
+            seconds = (end_at - start_at).total_seconds()
+            lost = start_grams - end_grams
+            if not poured and lost >= 0 and seconds > 0:
+                intervals.append({
+                    "from": _timestamp(start_at),
+                    "to": _timestamp(end_at),
+                    "days": round(seconds / 86400.0, 2),
+                    "grams": lost,
+                    "grams_per_day": round(lost / (seconds / 86400.0)),
+                })
+            index = step
+
+        measured_days = sum(interval["days"] for interval in intervals)
+        used = sum(interval["grams"] for interval in intervals)
+        return {
+            "intervals": intervals,
+            "window_days": days,
+            # What the average rests on, said plainly: a mean over four
+            # measured days out of ninety is not the same claim as one over
+            # eighty, and the page should be able to say which it has.
+            "measured_days": round(measured_days, 1),
+            "used_grams": used,
+            "daily_grams": round(used / measured_days) if measured_days else None,
+            "lowest_daily_grams": min(
+                (i["grams_per_day"] for i in intervals), default=None
+            ),
+            "highest_daily_grams": max(
+                (i["grams_per_day"] for i in intervals), default=None
+            ),
+        }
 
     def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Every plant the household has, instrumented or not."""

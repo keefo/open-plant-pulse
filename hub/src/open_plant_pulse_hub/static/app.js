@@ -1834,7 +1834,7 @@ async function refresh() {
     await Promise.all([
       refreshClimateHistory(), refreshMoistureTrend(), refreshWateringCalendar(),
       refreshPotResponse(), refreshPlantJourney(), refreshPlantLighting(),
-      refreshPlantPhotos()
+      refreshPlantPhotos(), refreshPlant()
     ]);
   } catch (error) {
     // Said out loud as well as shown. This catch is here for a hub that has
@@ -2277,6 +2277,7 @@ function renderPlantPage() {
   dateField.max = localDate(new Date());
   if (!dateField.value) resetWeighingDate();
   renderPlantWeightChart();
+  renderWaterUse();
   fillPlantAnchorFields();
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
 
@@ -2805,6 +2806,116 @@ function resetWeighingDate() {
   field.value = today;
 }
 
+/* What the plant has been drinking.
+ *
+ * Each bar spans the time between two weighings and stands at the average
+ * rate over that span. Drawn as spans rather than as a line of daily points
+ * because the daily points do not exist: a pot weighed on Monday and Friday
+ * knows the week's total and nothing about Wednesday. The gaps between bars
+ * are honest -- they are the stretches nobody measured, or the ones with a
+ * watering in them. */
+function renderWaterUse() {
+  const use = selectedPlant?.water_use;
+  const chart = document.getElementById("water-use-chart");
+  if (chart === null) return;
+  const empty = document.getElementById("water-use-empty");
+  const intervals = use?.intervals || [];
+
+  setText(document.getElementById("water-use-daily"),
+    use?.daily_grams == null ? "--" : String(use.daily_grams));
+  setText(document.getElementById("water-use-range"),
+    intervals.length ? `${use.lowest_daily_grams}–${use.highest_daily_grams}` : "--");
+  setText(document.getElementById("water-use-total"),
+    intervals.length ? String(use.used_grams) : "--");
+  setText(document.getElementById("water-use-latest"),
+    intervals.length ? String(intervals[intervals.length - 1].grams_per_day) : "--");
+  /* Said rather than hidden: a mean over four measured days out of ninety is
+   * a different claim from one over eighty. */
+  setText(document.getElementById("water-use-coverage"), intervals.length
+    ? `Measured across ${use.measured_days} of the last ${use.window_days} days`
+    : "");
+
+  setHidden(chart, intervals.length === 0);
+  setHidden(empty, intervals.length !== 0);
+  if (!intervals.length) {
+    setText(document.getElementById("water-use-summary"), "");
+    chart.replaceChildren();
+    return;
+  }
+
+  const width = Math.max(320, Math.round(chart.getBoundingClientRect().width) || 640);
+  const height = 170;
+  if (!renderKeyChanged(chart, [intervals, width])) return;
+  chart.replaceChildren();
+  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
+
+  const starts = intervals.map((i) => Date.parse(i.from));
+  const ends = intervals.map((i) => Date.parse(i.to));
+  const startTime = Math.min(...starts);
+  const endTime = Math.max(...ends);
+  const top = Math.max(...intervals.map((i) => i.grams_per_day)) * 1.15 || 1;
+
+  const plot = { left: 44, right: 10, top: 10, bottom: 22 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const x = (time) =>
+    plot.left + ((time - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
+  const y = (rate) => plot.top + (1 - rate / top) * plotHeight;
+
+  for (const rate of [0, top / 2, top]) {
+    chart.append(
+      svgElement("line", {
+        class: "grid-line", x1: plot.left, x2: width - plot.right, y1: y(rate), y2: y(rate),
+      }),
+      svgElement("text", {
+        class: "axis-label", x: plot.left - 6, y: y(rate) + 4, "text-anchor": "end",
+      }, String(Math.round(rate)))
+    );
+  }
+
+  for (const interval of intervals) {
+    const left = x(Date.parse(interval.from));
+    const right = x(Date.parse(interval.to));
+    const bar = svgElement("rect", {
+      class: "water-use-bar",
+      x: left + 0.5,
+      // A span of a few hours would otherwise be invisible.
+      width: Math.max(2, right - left - 1),
+      y: y(interval.grams_per_day),
+      height: Math.max(1, y(0) - y(interval.grams_per_day)),
+    });
+    bar.append(svgElement("title", {},
+      `${interval.grams} ml over ${interval.days} days · ${interval.grams_per_day} ml a day`));
+    chart.append(bar);
+  }
+
+  // The average across everything measured, for the bars to be read against.
+  if (selectedPlant.water_use.daily_grams != null) {
+    const mean = selectedPlant.water_use.daily_grams;
+    chart.append(
+      svgElement("line", {
+        class: "trend-refill", x1: plot.left, x2: width - plot.right, y1: y(mean), y2: y(mean),
+      }),
+      svgElement("text", {
+        class: "trend-refill-label", x: plot.left + 4, y: y(mean) - 4, "text-anchor": "start",
+      }, `${mean} ml a day on average`)
+    );
+  }
+
+  [startTime, endTime].forEach((time, index) => {
+    chart.append(svgElement("text", {
+      class: "axis-label", x: x(time), y: height - 5,
+      "text-anchor": index === 0 ? "start" : "end",
+    }, new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
+      .format(new Date(time))));
+  });
+
+  const longest = intervals.reduce((a, b) => (b.days > a.days ? b : a));
+  setText(document.getElementById("water-use-summary"),
+    `${intervals.length} span${intervals.length === 1 ? "" : "s"} measured · `
+    + `longest ${longest.days} days`);
+}
+
 /* The pot's weight over a month, which is this plant's moisture history.
  *
  * The sensored page plots what the probe read; here the pot itself is the
@@ -2946,7 +3057,7 @@ function renderPlantWeightChart() {
  * weighs full, or dry. It is not a weighing taken now, so it does not become
  * what the pot weighs now, and setting the full weight is not watering it. */
 async function setPlantAnchor(kind) {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   const full = kind === "watered";
   const field = document.getElementById(full ? "plant-weight-full" : "plant-weight-thirsty");
   const unit = unitOf(full ? "plant-weight-full-unit" : "plant-weight-thirsty-unit");
@@ -2992,7 +3103,7 @@ function fillPlantAnchorFields() {
 }
 
 async function refreshPlant() {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   if (plantId === null) return;
   try {
     const response = await fetch(`/api/plants/${plantId}`);
@@ -3008,7 +3119,7 @@ async function refreshPlant() {
 }
 
 async function recordPlantCare(kind) {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   if (plantId === null) return;
   let note = null;
   if (kind === "note") {
@@ -3027,7 +3138,7 @@ async function recordPlantCare(kind) {
  * full -- the ceiling everything else is measured against, and a watering in
  * the care log with it. */
 async function recordPlantWeight() {
-  const plantId = plantIdFromLocation();
+  const plantId = currentPlantId();
   const field = document.getElementById("plant-weight-input");
   const watered = document.getElementById("plant-weight-watered");
   const message = document.getElementById("plant-weight-message");

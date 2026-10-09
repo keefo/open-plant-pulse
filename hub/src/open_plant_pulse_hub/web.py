@@ -674,6 +674,7 @@ def create_server(
             plant["journey"] = store.plant_journey_of(plant_id)
             plant["care_log"] = store.care_log(50, plant_id=plant_id)
             plant["weight"] = store.plant_weight_status(plant_id)
+            plant["water_use"] = store.water_use(plant_id)
             plant["weights"] = store.plant_weights(plant_id, 30)
             self._send_json(plant)
 

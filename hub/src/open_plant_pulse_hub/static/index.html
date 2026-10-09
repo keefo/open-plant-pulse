@@ -467,7 +467,7 @@
       </div>
     </section>
 
-    <section class="plant-weight" data-page="plant" aria-labelledby="plant-weight-title" hidden>
+    <section class="plant-weight" data-page="plant detail" aria-labelledby="plant-weight-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
         <span id="plant-weight-summary">Nothing weighed yet</span>
@@ -518,6 +518,34 @@
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
       <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
+    </section>
+
+    <section class="plant-weight water-use" data-page="plant detail" aria-labelledby="water-use-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>
+        <span id="water-use-coverage"></span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="water-use-daily">--</strong><span>Typical a day</span></div>
+        <div><strong id="water-use-range">--</strong><span>Range a day</span></div>
+        <div><strong id="water-use-total">--</strong><span>Used in all</span></div>
+        <div><strong id="water-use-latest">--</strong><span>Most recent rate</span></div>
+      </div>
+      <div class="weight-trend">
+        <span>Millilitres a day · each bar is one span between weighings</span>
+        <svg id="water-use-chart" class="history-chart" viewBox="0 0 640 170" role="img" aria-label="Water use between weighings" hidden></svg>
+        <p id="water-use-empty" class="history-chart-empty">Weigh the pot twice, a day or more apart, and its water use shows here.</p>
+        <p id="water-use-summary" class="range-status"></p>
+      </div>
+      <p class="settings-note">What the pot loses between two weighings, with
+        nothing poured in, is water gone through the leaves and off the soil:
+        <b>evapotranspiration</b>, measured the way a weighing lysimeter
+        measures it. A gram of water is a millilitre, so the scale reads in
+        the units the watering can does. Each bar is the average over its own
+        span, because five days and 400 ml says 80 ml a day and says nothing
+        about which day was thirstiest. Spans containing a watering are left
+        out: water went in as well as out, and one weighing cannot separate
+        them.</p>
     </section>
 
     <section class="plant-journey" data-page="plant" aria-labelledby="plant-journey-plant-title" hidden>

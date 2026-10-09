@@ -477,6 +477,10 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .plant-weight .journey-stats { margin-bottom: 18px; }
 /* The pot's own history, in the shape the probe's chart uses, because it is
    the same question answered by a different instrument. */
+/* A bar is a span of time at a rate, not a day: it is drawn edge to edge
+   across the days it covers, and the gaps are the days nobody measured. */
+.water-use-bar { fill: #7fb6cf; }
+.water-use .journey-stats { margin-bottom: 18px; }
 .weight-trend { margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 .weight-trend > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .weight-trend .history-chart { width: 100%; height: auto; }

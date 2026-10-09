@@ -261,6 +261,48 @@ class PlantWeightTests(unittest.TestCase):
         )
         self.assertEqual(len(self.store.plant_weights(self.plant_id)), 2)
 
+    def test_water_use_is_measured_between_weighings(self) -> None:
+        """A pot on a scale is a weighing lysimeter; this is what it reads."""
+        self.store.record_plant_weight(self.plant_id, 2_800, "watered", at=ago(14))
+        self.store.record_plant_weight(self.plant_id, 2_650, at=ago(11))
+        self.store.record_plant_weight(self.plant_id, 2_500, at=ago(8))
+        # Minutes apart: scale noise, not a day's drinking.
+        self.store.record_plant_weight(self.plant_id, 2_495, at=ago(8 - 0.01))
+        self.store.record_plant_weight(self.plant_id, 2_300, at=ago(4))
+        # A watering, so the span that holds it cannot be measured at all.
+        self.store.record_plant_weight(self.plant_id, 2_900, "watered", at=ago(3))
+        self.store.record_plant_weight(self.plant_id, 2_700, at=ago(0.5))
+
+        use = self.store.water_use(self.plant_id, days=30)
+        spans = [(i["days"], i["grams"], i["grams_per_day"]) for i in use["intervals"]]
+
+        self.assertEqual(spans, [(3.0, 150, 50), (3.0, 150, 50), (4.0, 200, 50),
+                                 (2.5, 200, 80)])
+        # The pair minutes apart was folded into the span around it rather
+        # than reported as a rate over four minutes.
+        self.assertNotIn(0.0, [span[0] for span in spans])
+        # Nothing claims to know about the days between the watering and the
+        # weighing after it.
+        self.assertEqual(use["measured_days"], 12.5)
+        self.assertEqual(use["used_grams"], 700)
+        self.assertEqual(use["daily_grams"], 56)
+        self.assertEqual((use["lowest_daily_grams"], use["highest_daily_grams"]), (50, 80))
+
+    def test_water_use_says_nothing_before_there_is_anything_to_say(self) -> None:
+        empty = self.store.water_use(self.plant_id)
+        self.assertEqual(empty["intervals"], [])
+        self.assertIsNone(empty["daily_grams"])
+        self.assertEqual(empty["measured_days"], 0)
+
+        # One weighing is a weight, not a rate.
+        self.store.record_plant_weight(self.plant_id, 2_400, at=ago(2))
+        self.assertEqual(self.store.water_use(self.plant_id)["intervals"], [])
+
+        # A pot that gained weight with no watering recorded is not drinking
+        # backwards; it is something the scale cannot explain, so it is left out.
+        self.store.record_plant_weight(self.plant_id, 2_600, at=ago(1))
+        self.assertEqual(self.store.water_use(self.plant_id)["intervals"], [])
+
     def test_a_weighing_can_be_written_down_late(self) -> None:
         # The number was on a scrap of paper from Tuesday.
         self.store.record_plant_weight(self.plant_id, 2_400, at=ago(9))
