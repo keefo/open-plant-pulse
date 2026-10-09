@@ -1705,6 +1705,7 @@ class ReadingStore:
         conductivity_high_us_cm: Optional[int],
         expected_interval_seconds: int,
         room_id: Optional[int] = None,
+        attach_to_plant_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Adopt a sensor, or change what the hub asks of the device.
 
@@ -1712,8 +1713,23 @@ class ReadingStore:
         it is belong to the plant and are edited on the plant's own page.
         They are still taken here, because adopting a sensor is where a plant
         is born; left out, they are kept as they are rather than cleared.
+
+        Unless it is not. A plant tracked by hand for a season -- weighings,
+        photographs, a care log, the day it came home -- is the same plant
+        when a probe finally goes into it, so attach_to_plant_id puts the
+        sensor on that record rather than starting a second one beside it.
         """
+        # What to fall back on for the plant's own fields. Joining an
+        # existing plant, they are that plant's: a sensor arriving at a
+        # plant called Spider does not get to leave it nameless.
         held = self._database.execute(
+            """
+            SELECT plants.display_name, rooms.name, plants.profile_id, plants.room_id
+            FROM plants LEFT JOIN rooms ON rooms.room_id = plants.room_id
+            WHERE plants.plant_id = ?
+            """,
+            (attach_to_plant_id,),
+        ).fetchone() if attach_to_plant_id is not None else self._database.execute(
             """
             SELECT sensors.display_name, sensors.room, sensors.profile_id, sensors.room_id
             FROM sensors WHERE sensor_id = ?
@@ -1767,6 +1783,16 @@ class ReadingStore:
             if current is None:
                 raise ValueError("sensor_id has not been observed")
             plant_id = current[0]
+            if attach_to_plant_id is not None:
+                if plant_id is not None and plant_id != attach_to_plant_id:
+                    raise ValueError("this sensor already belongs to another plant")
+                attached = self._database.execute(
+                    "SELECT display_name FROM plants WHERE plant_id = ?",
+                    (attach_to_plant_id,),
+                ).fetchone()
+                if attached is None:
+                    raise ValueError("unknown plant")
+                plant_id = attach_to_plant_id
             # Adopting a sensor always re-delivers its configuration, even when
             # every field matches what the hub last sent. A sensor being adopted
             # has just been reset or has come from another hub, so whatever it

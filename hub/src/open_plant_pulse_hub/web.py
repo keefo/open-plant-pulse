@@ -276,6 +276,7 @@ def create_server(
                         self._optional_int(payload.get("conductivity_high_us_cm")),
                         int(payload.get("expected_interval_seconds", 1800)),
                         self._optional_int(payload.get("room_id")),
+                        self._optional_int(payload.get("plant_id")),
                     )
             except LookupError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.NOT_FOUND)

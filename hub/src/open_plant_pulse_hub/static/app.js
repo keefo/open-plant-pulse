@@ -473,14 +473,17 @@ function updateHouseholdCard(card, plant, sensor) {
   if (sensor) {
     const state = sensorState(sensor);
     setText(badge, state);
+    setHidden(badge, false);
     setData(badge, "state", state.toLowerCase());
   } else {
     /* What the pot weighs answers the question the card is really asked:
      * does this plant need me today. */
     const weight = plant.weight || {};
-    setText(badge, weight.remaining_percent != null
+    const left = weight.remaining_percent != null
       ? `${weight.remaining_percent}% water left`
-      : weight.used_grams ? `${weight.used_grams} ml used` : "No sensor");
+      : weight.used_grams ? `${weight.used_grams} ml used` : "";
+    setText(badge, left);
+    setHidden(badge, left === "");
     setData(badge, "state", weight.remaining_percent == null ? "manual"
       : weight.remaining_percent <= 15 ? "thirsty" : "watered");
   }
@@ -3298,6 +3301,7 @@ document.getElementById("room-list").addEventListener("click", (event) => {
   if (remove) deleteRoom(Number(remove.dataset.roomId));
 });
 document.getElementById("onboarding-room").addEventListener("change", renderRoomChoices);
+document.getElementById("onboarding-plant").addEventListener("change", applyPlantChoice);
 document.getElementById("detail-console-toggle").addEventListener("change", (event) => {
   renderedSettingsKey = null;
   setSensorConsole(event.target.dataset.sensorId, event.target.checked);

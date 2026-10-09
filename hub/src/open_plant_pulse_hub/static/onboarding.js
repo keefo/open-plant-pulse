@@ -51,6 +51,7 @@ async function refreshRooms() {
   rooms = (await response.json()).items;
   renderRooms();
   renderRoomChoices();
+  renderPlantChoices();
 }
 
 function renderRooms() {
@@ -114,6 +115,56 @@ function renderRooms() {
 
 /* The room is picked, never typed, so two sensors in one room always agree on
  * which room that is. */
+/* The plants the hub already knows and nothing is watching, offered as
+ * somewhere to put this sensor. A plant kept by hand for a season has
+ * weighings, photographs, a care log and the day it came home; enrolling a
+ * sensor as a brand new plant would leave all of that beside it under the
+ * same name. */
+async function renderPlantChoices() {
+  const select = document.getElementById("onboarding-plant");
+  if (select === null) return;
+  const response = await fetch("/api/plants");
+  if (!response.ok) return;
+  const loose = (await response.json()).items.filter((plant) => plant.sensor_id === null);
+  const renderKey = JSON.stringify(loose.map((plant) => [plant.plant_id, plant.display_name]));
+  if (select.dataset.renderKey === renderKey) return;
+  setData(select, "renderKey", renderKey);
+  const chosen = select.value;
+  select.replaceChildren();
+  const fresh = document.createElement("option");
+  fresh.value = "";
+  setText(fresh, "A plant the hub has not met");
+  select.append(fresh);
+  for (const plant of loose) {
+    const option = document.createElement("option");
+    option.value = plant.plant_id;
+    setText(option, plant.display_name);
+    select.append(option);
+  }
+  if (chosen) select.value = chosen;
+}
+
+/* Joining an existing plant, the plant's own details are its own: they are
+ * filled in from it and left alone, and changed afterwards on its page. */
+function applyPlantChoice() {
+  const select = document.getElementById("onboarding-plant");
+  const name = document.getElementById("onboarding-name");
+  const room = document.getElementById("onboarding-room");
+  const profile = document.getElementById("onboarding-profile");
+  const note = document.getElementById("onboarding-plant-note");
+  const joining = select.value !== "";
+  for (const field of [name, room, profile]) setDisabled(field, joining);
+  if (!joining) {
+    setText(note, "Put this sensor on a plant the hub already knows and it "
+      + "keeps everything recorded about it so far.");
+    return;
+  }
+  const label = select.options[select.selectedIndex].textContent;
+  name.value = label;
+  setText(note, `This sensor joins ${label}, keeping its weighings, photographs `
+    + "and care log. Its name, room and kind stay as they are.");
+}
+
 function renderRoomChoices() {
   const select = document.getElementById("onboarding-room");
   if (select === null) return;
@@ -741,6 +792,9 @@ async function finishOnboarding() {
       room_id: Number(document.getElementById("onboarding-room").value) || null,
       profile_id: document.getElementById("onboarding-profile").value,
       expected_interval_seconds: Number(document.getElementById("onboarding-interval").value),
+      // A plant tracked by hand is the same plant once a probe goes into
+      // it, so the sensor joins that record rather than starting another.
+      plant_id: Number(document.getElementById("onboarding-plant").value) || null,
     }),
   });
   const payload = await response.json();

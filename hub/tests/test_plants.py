@@ -682,6 +682,54 @@ class PlantApiTests(unittest.TestCase):
                      timeout=2.0) as served:
             self.assertEqual(served.read(), JPEG)
 
+    def test_a_sensor_can_join_a_plant_the_hub_already_knows(self) -> None:
+        """A plant kept by hand for a season is the same plant with a probe in it."""
+        room = self.store.create_room("Living", "south", "bright")["room_id"]
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})
+        plant_id = plant["plant_id"]
+        self.call("PUT", f"/api/plants/{plant_id}", {
+            "display_name": "Spider", "room_id": room, "profile_id": "spider_plant",
+            "variety": "vittatum", "acquired_at": "2019-07-14T12:00:00Z",
+        })
+        self.call("POST", f"/api/plants/{plant_id}/weight", {"grams": 2_400, "kind": "watered"})
+        self.upload_photo(plant_id, PNG)
+        self.store._database.execute(
+            "INSERT INTO sensors (sensor_id, identity_kind, identity_value,"
+            " enrollment_status, display_name, transport, contract_version,"
+            " first_seen_at, last_seen_at) VALUES"
+            " ('sensor-new','mac','bb','unclaimed','','ble',1,?,?)", (ago(1), ago(0)))
+        self.store._database.commit()
+
+        self.call("PUT", "/api/sensors/sensor-new", {
+            "expected_interval_seconds": 1800, "room_id": room, "plant_id": plant_id,
+        })
+
+        # One plant, not two, and everything about it still there.
+        self.assertEqual(len(self.call("GET", "/api/plants")["items"]), 1)
+        joined = self.call("GET", f"/api/plants/{plant_id}")
+        self.assertEqual(joined["sensor_id"], "sensor-new")
+        self.assertEqual(joined["variety"], "vittatum")
+        self.assertEqual(joined["acquired_at"], "2019-07-14T12:00:00Z")
+        self.assertEqual(joined["weight"]["watered"]["grams"], 2_400)
+        self.assertEqual(len(joined["photos"] if "photos" in joined else
+                             self.call("GET", f"/api/plants/{plant_id}/photos")["items"]), 1)
+
+        # And a sensor already on one plant is not quietly moved to another.
+        spare = self.call("POST", "/api/plants", {"display_name": "Fern"})["plant_id"]
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", "/api/sensors/sensor-new", {
+                "expected_interval_seconds": 1800, "plant_id": spare})
+        self.assertEqual(refused.exception.code, 400)
+
+    def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
+        script = self.call_text("/app.js")
+        page = self.call_text("/")
+
+        self.assertNotIn('"No sensor"', script)
+        # The sensor's own setup offers the plants nothing is watching.
+        self.assertIn('id="onboarding-plant"', page)
+        self.assertIn("async function renderPlantChoices()", self.call_text("/onboarding.js"))
+
     def test_a_plant_with_a_sensor_has_photographs_too(self) -> None:
         # The photographs are the plant's, not the instrument's, so the
         # sensored page shows the same section.
