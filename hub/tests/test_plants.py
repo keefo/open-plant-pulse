@@ -721,6 +721,53 @@ class PlantApiTests(unittest.TestCase):
                 "expected_interval_seconds": 1800, "plant_id": spare})
         self.assertEqual(refused.exception.code, 400)
 
+    def test_a_sensor_moves_from_one_plant_to_another(self) -> None:
+        """Adopting a probe and aiming it are separate decisions."""
+        first = self.call("POST", "/api/plants", {"display_name": "Plant A"})["plant_id"]
+        second = self.call("POST", "/api/plants", {"display_name": "Plant B"})["plant_id"]
+        self.store._database.execute(
+            "INSERT INTO sensors (sensor_id, identity_kind, identity_value,"
+            " enrollment_status, display_name, transport, contract_version,"
+            " first_seen_at, last_seen_at, plant_id) VALUES"
+            " ('probe','mac','cc','enrolled','Probe','ble',1,?,?,?)",
+            (ago(9), ago(0), first))
+        self.store._database.commit()
+        self.store.record_plant_care(first, "watering", at=ago(5))
+        self.call("POST", f"/api/plants/{first}/weight", {"grams": 2_400})
+
+        self.call("PUT", "/api/sensors/probe/plant", {"plant_id": second})
+
+        self.assertIsNone(self.call("GET", f"/api/plants/{first}")["sensor_id"])
+        self.assertEqual(self.call("GET", f"/api/plants/{second}")["sensor_id"], "probe")
+        # What happened to the first plant happened to it: moving the probe
+        # does not move the watering it detected.
+        kept = self.call("GET", f"/api/plants/{first}")
+        self.assertEqual(len(kept["care_log"]), 1)
+        self.assertEqual(kept["weight"]["latest"]["grams"], 2_400)
+
+        # And off entirely, without being released or set up again.
+        self.call("PUT", "/api/sensors/probe/plant", {"plant_id": None})
+        self.assertIsNone(self.call("GET", f"/api/plants/{second}")["sensor_id"])
+
+    def test_only_an_adopted_sensor_can_be_pointed_at_a_plant(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Plant"})["plant_id"]
+        self.store._database.execute(
+            "INSERT INTO sensors (sensor_id, identity_kind, identity_value,"
+            " enrollment_status, display_name, transport, contract_version,"
+            " first_seen_at, last_seen_at) VALUES"
+            " ('stranger','mac','dd','unclaimed','','ble',1,?,?)", (ago(1), ago(0)))
+        self.store._database.commit()
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", "/api/sensors/stranger/plant", {"plant_id": plant})
+        self.assertEqual(refused.exception.code, 400)
+
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        self.assertIn('id="plant-sensor-attach"', page)
+        self.assertIn('id="plant-sensor-detach"', page)
+        self.assertIn("function renderFreeSensors()", script)
+
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")
         page = self.call_text("/")

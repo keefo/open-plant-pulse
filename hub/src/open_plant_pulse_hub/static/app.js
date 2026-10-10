@@ -169,13 +169,16 @@ function renderPage() {
     }
   }
   if (page === "plant-config") {
-    // A plant with no sensor has no sensor sections, rather than empty ones.
+    // A plant with no sensor gets the one panel it can use -- somewhere to
+    // attach one -- rather than empty versions of the rest.
     const watched = plantSensor() !== null;
     for (const id of ["sensor-settings-panel", "sensor-firmware-panel", "raw-report-log"]) {
       const panel = document.getElementById(id);
       if (panel !== null) setHidden(panel, !watched);
     }
+    setHidden(document.getElementById("plant-sensor-attach"), watched);
     if (watched) renderSensorFirmware();
+    else renderFreeSensors();
   }
   if (page === "config") {
     setText(document.getElementById("config-plant-name"), selectedSensor
@@ -2626,6 +2629,53 @@ function plantSensor() {
     : fleetSensors.find((sensor) => sensor.plant_id === plantId) || null;
 }
 
+/* The sensors this hub has adopted and pointed at nothing. A sensor it has
+ * never met is not offered here: adopting one is the inbox's job, and the
+ * two steps are deliberately separate. */
+function renderFreeSensors() {
+  const select = document.getElementById("plant-sensor-choice");
+  if (select === null) return;
+  const free = fleetSensors.filter((sensor) => sensor.plant_id == null);
+  const renderKey = JSON.stringify(free.map((s) => [s.sensor_id, s.display_name]));
+  if (select.dataset.renderKey !== renderKey) {
+    setData(select, "renderKey", renderKey);
+    select.replaceChildren();
+    if (!free.length) {
+      const none = document.createElement("option");
+      none.value = "";
+      setText(none, "No spare sensor — adopt one in Sensor inbox");
+      select.append(none);
+    }
+    for (const sensor of free) {
+      const option = document.createElement("option");
+      option.value = sensor.sensor_id;
+      setText(option, sensor.display_name
+        ? `${sensor.display_name} · ${sensor.sensor_id}` : sensor.sensor_id);
+      select.append(option);
+    }
+  }
+  setDisabled(select, free.length === 0);
+  setDisabled(document.getElementById("plant-sensor-attach-save"), free.length === 0);
+}
+
+async function pointSensorAtPlant(sensorId, plantId) {
+  const message = document.getElementById("plant-sensor-message");
+  const response = await fetch(`/api/sensors/${encodeURIComponent(sensorId)}/plant`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plant_id: plantId }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That could not be done.");
+    return;
+  }
+  setText(message, "");
+  await refreshFleet();
+  await refreshPlantConfig();
+  renderPage();
+}
+
 async function refreshPlantConfig() {
   const plantId = plantIdFromLocation();
   if (plantId === null) return;
@@ -3410,6 +3460,18 @@ document.getElementById("plant-photo-file").addEventListener("change", (event) =
   // Cleared so that choosing the same file twice in a row still counts.
   event.target.value = "";
   uploadPlantPhotos(files);
+});
+document.getElementById("plant-sensor-attach-save").addEventListener("click", () => {
+  const chosen = document.getElementById("plant-sensor-choice").value;
+  const plantId = plantIdFromLocation();
+  if (chosen && plantId !== null) pointSensorAtPlant(chosen, plantId);
+});
+document.getElementById("plant-sensor-detach").addEventListener("click", () => {
+  const sensor = plantSensor();
+  if (sensor === null) return;
+  if (!window.confirm(`Take ${sensor.display_name || sensor.sensor_id} off this plant? `
+    + "Everything recorded about the plant stays; the sensor keeps its readings.")) return;
+  pointSensorAtPlant(sensor.sensor_id, null);
 });
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 // Touched by hand, and so no longer the hub's to rewrite. "input" covers a

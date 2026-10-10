@@ -232,6 +232,13 @@ def create_server(
                         str(payload.get("display_name", "")),
                         payload.get("config", {}),
                     )
+                elif path.startswith("/api/sensors/") and path.endswith("/plant"):
+                    # Which plant a sensor is watching, set on its own: a
+                    # probe moves between pots without being re-adopted.
+                    result = store.attach_sensor(
+                        unquote(path[len("/api/sensors/") : -len("/plant")]),
+                        self._optional_int(payload.get("plant_id")),
+                    )
                 elif path.startswith("/api/sensors/") and path.endswith("/lighting"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/lighting")])
                     store.set_plant_lighting(

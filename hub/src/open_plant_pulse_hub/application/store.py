@@ -2064,6 +2064,54 @@ class ReadingStore:
         assert result is not None
         return result
 
+    def attach_sensor(self, sensor_id: str, plant_id: Optional[int]) -> Dict[str, Any]:
+        """Say which plant a sensor is watching, or that it is watching none.
+
+        Adopting a device and deciding what it is pointed at are different
+        decisions, made at different times: a probe moves from one pot to
+        another, or comes out while a plant is repotted, without stopping
+        being the hub's sensor.
+
+        What each side keeps when they part is what it was always about.
+        The readings are the sensor's. The care log, the weighings, the
+        photographs and the journey are the plant's, including the events
+        this sensor detected while it was there -- that watering did happen
+        to that plant, and moving the probe does not unhappen it. Only what
+        the sensor notices from now on belongs to wherever it has gone.
+        """
+        with self._condition, self._database:
+            sensor = self._database.execute(
+                "SELECT enrollment_status, plant_id FROM sensors WHERE sensor_id = ?",
+                (sensor_id,),
+            ).fetchone()
+            if sensor is None:
+                raise ValueError("sensor_id has not been observed")
+            if sensor[0] != "enrolled":
+                raise ValueError("a sensor must be enrolled before it watches a plant")
+            if plant_id is not None:
+                if self.plant(plant_id) is None:
+                    raise ValueError("unknown plant")
+                # Anything it saw before it was pointed anywhere belongs to
+                # the plant it has been pointed at.
+                self._database.execute(
+                    "UPDATE care_events SET plant_id = ? WHERE sensor_id = ? AND plant_id IS NULL",
+                    (plant_id, sensor_id),
+                )
+            self._database.execute(
+                "UPDATE sensors SET plant_id = ? WHERE sensor_id = ?",
+                (plant_id, sensor_id),
+            )
+        if plant_id is not None:
+            # The plant's kept figures were counted without this sensor's
+            # events in them, or with the last plant's; they are counted
+            # again rather than patched.
+            self.rebuild_journey_of(plant_id)
+        if sensor[1] is not None and sensor[1] != plant_id:
+            self.rebuild_journey_of(sensor[1])
+        found = self.sensor(sensor_id)
+        assert found is not None
+        return found
+
     def set_sensor_profile(self, sensor_id: str, profile_id: str) -> Dict[str, Any]:
         catalog = load_plant_profiles()
         profile = catalog["profiles"].get(profile_id)

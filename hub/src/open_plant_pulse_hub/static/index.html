@@ -657,10 +657,28 @@
     </section>
 
 
+    <section class="sensor-settings" data-page="plant-config" id="plant-sensor-attach" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SENSOR</p><h2>No sensor on this plant</h2></div>
+      </div>
+      <div class="inline-control">
+        <label for="plant-sensor-choice">Attach</label>
+        <select id="plant-sensor-choice"></select>
+        <button id="plant-sensor-attach-save" type="button">Attach</button>
+        <output id="plant-sensor-message" aria-live="polite"></output>
+      </div>
+      <p class="settings-note">Adopting a sensor and deciding which plant it
+        watches are separate: a probe can be moved from one pot to another, or
+        taken out while a plant is repotted, without being set up again. Only
+        a sensor this hub has already adopted can be attached — new ones go
+        through <b>Sensor inbox</b> first.</p>
+    </section>
+
     <section class="sensor-settings" data-page="plant-config" id="sensor-settings-panel" aria-labelledby="sensor-settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Sensor configuration</h2></div>
         <div class="sensor-identity">
+          <button id="plant-sensor-detach" class="secondary-action" type="button">Detach</button>
           <code id="settings-sensor-id"></code>
           <span id="settings-config-revision" class="config-revision" aria-live="polite"></span>
         </div>
