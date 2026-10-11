@@ -3666,7 +3666,10 @@ class ReadingStore:
                        plants.acquired_at,
                        plants.cover_photo_id,
                        (SELECT digest FROM plant_photos
-                        WHERE plant_photos.photo_id = plants.cover_photo_id)
+                        WHERE plant_photos.photo_id = plants.cover_photo_id),
+                       (SELECT MAX(detected_at) FROM care_events
+                        WHERE care_events.plant_id = plants.plant_id
+                          AND kind = 'fertilizing')
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -3708,7 +3711,10 @@ class ReadingStore:
                        plants.acquired_at,
                        plants.cover_photo_id,
                        (SELECT digest FROM plant_photos
-                        WHERE plant_photos.photo_id = plants.cover_photo_id)
+                        WHERE plant_photos.photo_id = plants.cover_photo_id),
+                       (SELECT MAX(detected_at) FROM care_events
+                        WHERE care_events.plant_id = plants.plant_id
+                          AND kind = 'fertilizing')
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -4098,6 +4104,9 @@ class ReadingStore:
             # id is reused once its photograph is deleted; what the bytes are
             # is not.
             "cover_photo_digest": row[13],
+            # When it was last fed, which is the other thing a plant is
+            # given and the one nobody remembers.
+            "last_fed_at": row[14],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

@@ -47,6 +47,12 @@ body {
 .fleet-card strong { font-size: 20px; }
 .fleet-card code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .fleet-card span { margin-top: 8px; color: var(--muted); font-size: 13px; }
+/* Watered, fed and weighed as marks: the words are the same on every card
+   and the dates are what differ, so the dates get the room. */
+.care-mark { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap; }
+.care-mark svg { width: 13px; height: 13px; flex: none; fill: none; stroke: #5d7a86; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.care-mark svg.filled { fill: #5d7a86; stroke: none; }
+.care-mark i { font-style: normal; }
 /* The two tags sit together: what the pot has left, and what it drinks. */
 .fleet-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }

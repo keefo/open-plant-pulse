@@ -1010,6 +1010,25 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('id="weighing-log"', page)
         self.assertIn("async function removeWeighing(weighing)", script)
 
+    def test_a_card_marks_watering_feeding_and_weighing(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.call("POST", f"/api/plants/{plant}/care", {"kind": "fertilizing"})
+
+        # When it was last fed travels with the plant, like when it was
+        # last watered: it is the other thing a plant is given, and the one
+        # nobody remembers.
+        self.assertIsNotNone(self.call("GET", "/api/plants")["items"][0]["last_fed_at"])
+
+        script = self.call_text("/app.js")
+        # Marks rather than words on a card, because the words are the same
+        # on every card and the dates are what differ.
+        self.assertIn("const CARE_MARKS = {", script)
+        for word in ('word: "Watered"', 'word: "Fed"', 'word: "Weighed"'):
+            self.assertIn(word, script)
+        # Each mark keeps its word for a pointer and for a screen reader.
+        self.assertIn('setAttr(wrapper, "title", `${mark.word} ${since}`)', script)
+        self.assertIn('said.className = "visually-hidden"', script)
+
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")
         page = self.call_text("/")

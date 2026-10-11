@@ -360,13 +360,86 @@ function timeAtHomeParts(since) {
  * facts, so both are said where both are known. Either on its own reads as
  * the whole story, which is how a card came to say "not watered yet" beside
  * a figure for how much water was left. */
-function lastCaredFor(plant) {
-  const watered = daysSince(plant.last_watered_at);
-  const weighed = daysSince(plant.weight?.latest?.at);
-  if (watered && weighed) return `Watered ${watered} · weighed ${weighed}`;
-  if (watered) return `Watered ${watered}`;
-  if (weighed) return `Weighed ${weighed}`;
-  return "Not watered yet";
+/* Watered, fed and weighed, as marks rather than words.
+ *
+ * Three sentences will not fit across a card, and the words are the same
+ * on every card anyway -- the dates are what differ. A drop for water is
+ * about as unambiguous as a drawing gets; a feed bottle is less so, which
+ * is why each mark carries its word for a pointer and for anyone
+ * listening to the page. */
+const CARE_MARKS = {
+  // A drop, filled, because water is the one that should read instantly.
+  watered: {
+    word: "Watered",
+    fill: true,
+    paths: ["M8 1.5c0 0 5.2 6.1 5.2 8.8a5.2 5.2 0 0 1-10.4 0C2.8 7.6 8 1.5 8 1.5z"],
+  },
+  // A dropper: the bulb, the tube, and a drop leaving the tip. Liquid feed
+  // is the thing measured out with one, and the silhouette is nothing like
+  // the water drop beside it, which matters more at this size than detail.
+  fed: {
+    word: "Fed",
+    // Filled, like the drop: at thirteen pixels an outline of this becomes
+    // a thin vertical line and reads as a thermometer. A fat bulb over a
+    // tapering barrel is a pipette even when it is this small.
+    fill: true,
+    paths: [
+      "M5.6 1.3h4.8a1.3 1.3 0 0 1 1.3 1.3v1.7a1.3 1.3 0 0 1-1.3 1.3H5.6a1.3 1.3 0 0 1-1.3-1.3V2.6a1.3 1.3 0 0 1 1.3-1.3z",
+      "M6.5 5.2h3v5.3L8 14.2l-1.5-3.7z",
+    ],
+  },
+  // A balance: beam, pans, post and foot.
+  weighed: {
+    word: "Weighed",
+    fill: false,
+    paths: [
+      "M3 4.6h10",
+      "M8 3.2v9.4",
+      "M5.6 13.8h4.8",
+      "M1.4 4.8 3 8.2l1.6-3.4",
+      "M11.4 4.8 13 8.2l1.6-3.4",
+    ],
+  },
+};
+
+function careMark(kind, since) {
+  const mark = CARE_MARKS[kind];
+  const wrapper = document.createElement("span");
+  wrapper.className = "care-mark";
+  setAttr(wrapper, "title", `${mark.word} ${since}`);
+  const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  glyph.setAttribute("viewBox", "0 0 16 16");
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.classList.toggle("filled", mark.fill);
+  for (const drawing of mark.paths) {
+    const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    shape.setAttribute("d", drawing);
+    glyph.append(shape);
+  }
+  // The word, once: the date beside it is already on the page, and saying
+  // it twice reads as "Watered today today" to anything listening.
+  const said = document.createElement("span");
+  said.className = "visually-hidden";
+  setText(said, `${mark.word} `);
+  const when = document.createElement("i");
+  setText(when, since);
+  wrapper.append(glyph, said, when);
+  return wrapper;
+}
+
+function renderCaredFor(into, plant) {
+  const marks = [
+    ["watered", daysSince(plant.last_watered_at)],
+    ["fed", daysSince(plant.last_fed_at)],
+    ["weighed", daysSince(plant.weight?.latest?.at)],
+  ].filter(([, since]) => since);
+  if (!renderKeyChanged(into, marks)) return;
+  into.replaceChildren();
+  if (!marks.length) {
+    setText(into, "Not watered yet");
+    return;
+  }
+  for (const [kind, since] of marks) into.append(careMark(kind, since));
 }
 
 function tileKey(tile) {
@@ -486,7 +559,7 @@ function updateHouseholdCard(card, plant, sensor) {
       ? `Last report ${new Date(reportedAt).toLocaleString()}`
       : "No reports received");
   } else {
-    setText(when, lastCaredFor(plant));
+    renderCaredFor(when, plant);
   }
 
   const badge = card.querySelector("small:not(.fleet-card-rate):not(.fleet-card-due)");
@@ -2433,7 +2506,13 @@ function renderPlantPage() {
     variety?.name,
     selectedPlant.room ? "in the " + selectedPlant.room : "no room recorded",
   ].filter(Boolean).join(" · "));
-  setText(document.getElementById("plant-page-watered"), lastCaredFor(selectedPlant));
+  const cared = [
+    ["Watered", daysSince(selectedPlant.last_watered_at)],
+    ["fed", daysSince(selectedPlant.last_fed_at)],
+    ["weighed", daysSince(selectedPlant.weight?.latest?.at)],
+  ].filter(([, since]) => since).map(([word, since]) => `${word} ${since}`);
+  setText(document.getElementById("plant-page-watered"),
+    cared.length ? cared.join(" · ") : "Never watered");
 
   /* The headline says the most actionable true thing, and nothing more: how
    * long the water will last if that is known, what is left if only that is,

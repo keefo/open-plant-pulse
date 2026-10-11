@@ -236,9 +236,10 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(drawn["cards"], 1)
         self.assertEqual(drawn["covers"], 1)
         self.assertEqual(drawn["name"], "Spider")
-        # Watered and weighed are different facts, and the card says both.
+        # Watered, fed and weighed are different facts. The card marks each
+        # with a drawing and keeps the word for anyone listening to it.
         self.assertIn("Watered", drawn["cared"])
-        self.assertIn("weighed", drawn["cared"])
+        self.assertIn("Weighed", drawn["cared"])
         self.assertEqual(tools.complaints, [])
 
 
