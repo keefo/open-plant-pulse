@@ -3148,6 +3148,48 @@ class ReadingStore:
             ).fetchone()[0]
         return newest is None or self._observation_datetime(newest, now) <= when
 
+    def room_air(self, room_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        """The air of a room, from whichever sensor in it last reported it.
+
+        Air belongs to the room. A probe on one windowsill is measuring the
+        same air as the pot beside it, so every plant in the room is told
+        what it is in rather than only the one with hardware in its soil.
+
+        Nothing is averaged across sensors: two in one room would usually
+        mean two corners of it, and the most recent reading is a truer answer
+        than the mean of a warm corner and a cold one.
+        """
+        if room_id is None:
+            return None
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT sensor_readings.sensor_id, sensors.display_name,
+                       sensor_readings.observed_at, air_temperature_c, air_humidity_percent
+                FROM sensor_readings
+                JOIN sensors ON sensors.sensor_id = sensor_readings.sensor_id
+                WHERE sensors.room_id = ?
+                  AND sensors.enrollment_status = 'enrolled'
+                  AND air_temperature_c IS NOT NULL
+                  AND air_humidity_percent IS NOT NULL
+                ORDER BY sensor_readings.observed_at DESC
+                LIMIT 1
+                """,
+                (room_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "sensor_id": row[0],
+            "sensor_name": row[1] or row[0],
+            "observed_at": row[2],
+            "air_temperature_c": round(row[3], 1),
+            "air_humidity_percent": round(row[4], 1),
+            # How hard that air is pulling water out of things, which is the
+            # number the water use is held against.
+            "drying_kpa": round(vapour_pressure_deficit(row[3], row[4]), 2),
+        }
+
     def _room_drying_hours(
         self, room_id: Optional[int], start: datetime, end: datetime
     ) -> Dict[str, float]:

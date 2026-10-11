@@ -525,6 +525,23 @@
       <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
     </section>
 
+    <section class="plant-weight room-air" data-page="plant detail" id="room-air-panel" aria-labelledby="room-air-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">ROOM AIR</p><h2 id="room-air-title">The air it is in</h2></div>
+        <span id="room-air-source"></span>
+      </div>
+      <div class="journey-stats" aria-live="polite">
+        <div><strong id="room-air-temperature">--</strong><span>Temperature</span></div>
+        <div><strong id="room-air-humidity">--</strong><span>Humidity</span></div>
+        <div><strong id="room-air-drying">--</strong><span>Drying power (kPa)</span></div>
+      </div>
+      <p class="settings-note">Air belongs to the room, not to the pot a probe
+        happens to be in: one sensor on a windowsill is measuring the same air
+        as everything beside it. This is what the water use above is held
+        against, so a plant with no sensor of its own still has its drinking
+        read against the conditions it was drinking in.</p>
+    </section>
+
     <section class="plant-weight water-use" data-page="plant detail" aria-labelledby="water-use-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>

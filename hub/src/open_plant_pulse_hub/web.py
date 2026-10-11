@@ -682,6 +682,8 @@ def create_server(
             plant["journey"] = store.plant_journey_of(plant_id)
             plant["care_log"] = store.care_log(50, plant_id=plant_id)
             plant["weight"] = store.plant_weight_status(plant_id)
+            # The air of the room it is in, whoever is measuring it.
+            plant["room_air"] = store.room_air(plant["room_id"])
             plant["water_use"] = {
                 **store.water_use(plant_id),
                 "findings": store.water_use_findings(plant_id),

@@ -423,6 +423,30 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual([f["code"] for f in findings], ["drinking_less_while_full"])
         self.assertLess(findings[0]["evidence"]["share_against_air"], 0.5)
 
+    def test_the_room_tells_every_plant_in_it_what_the_air_is_doing(self) -> None:
+        """Air belongs to the room, not to the pot the probe is in."""
+        room = self.store.create_room("Living", "south", "bright")["room_id"]
+        self.store.update_plant(self.plant_id, "Spider", room_id=room)
+        elsewhere = self.store.create_room("Bedroom", "north", "low")["room_id"]
+        other = self.store.create_plant("Fern", room_id=elsewhere)["plant_id"]
+        roomless = self.store.create_plant("Orchid")["plant_id"]
+        self.air_in_the_room(room, (21, 50), (21, 50), span_days=1)
+
+        air = self.store.room_air(room)
+        self.assertEqual(air["sensor_name"], "Air")
+        self.assertEqual(air["air_temperature_c"], 21.0)
+        self.assertAlmostEqual(air["drying_kpa"], 1.24, places=2)
+
+        # A plant with no hardware of its own, in that room, is told it.
+        self.assertEqual(
+            self.store.room_air(self.store.plant(self.plant_id)["room_id"])["sensor_id"],
+            "sensor-air")
+        # And nothing is borrowed across rooms, or invented for a plant in none.
+        self.assertIsNone(self.store.room_air(elsewhere))
+        self.assertIsNone(self.store.room_air(self.store.plant(roomless)["room_id"]))
+        self.assertIsNone(self.store.plant(other)["room_id"] and
+                          self.store.room_air(self.store.plant(other)["room_id"]))
+
     def test_a_plant_in_a_room_with_no_sensor_keeps_its_raw_rate(self) -> None:
         # Nothing is borrowed from another room's air.
         self.store.record_plant_weight(self.plant_id, 2_800, at=ago(8))

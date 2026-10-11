@@ -2302,6 +2302,7 @@ function renderPlantPage() {
   const dateField = document.getElementById("plant-weight-date");
   dateField.max = localDate(new Date());
   if (!dateField.value) resetWeighingDate();
+  renderRoomAir();
   renderPlantWeightChart();
   renderWaterUse();
   fillPlantAnchorFields();
@@ -2906,6 +2907,27 @@ function renderWaterUseFindings(findings) {
     note.append(title, summary);
     list.append(note);
   }
+}
+
+/* The room's air, for a plant that has no probe of its own. A plant with one
+ * has these on its own cards already, measured in its own pot, and showing
+ * both would be the same reading twice. */
+function renderRoomAir() {
+  const panel = document.getElementById("room-air-panel");
+  if (panel === null) return;
+  const air = selectedPlant?.room_air;
+  const borrowed = air != null && selectedPlant?.sensor_id == null;
+  setHidden(panel, !borrowed);
+  if (!borrowed) return;
+  setText(document.getElementById("room-air-temperature"), `${air.air_temperature_c}°`);
+  setText(document.getElementById("room-air-humidity"), `${Math.round(air.air_humidity_percent)}%`);
+  setText(document.getElementById("room-air-drying"), air.drying_kpa.toFixed(2));
+  // The room is named in the header already, and "in the living" is not a
+  // sentence. Who measured it and when is what this line adds.
+  setText(document.getElementById("room-air-source"),
+    `Measured by ${air.sensor_name} · ${daysSince(air.observed_at) === "today"
+      ? new Date(air.observed_at).toLocaleTimeString([], { timeStyle: "short" })
+      : daysSince(air.observed_at)}`);
 }
 
 function renderWaterUse() {
