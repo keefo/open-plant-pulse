@@ -546,6 +546,36 @@ class PlantWeightTests(unittest.TestCase):
             self.store.record_plant_weight(self.plant_id, 2_400, at="2026-10-01T12:00:00")
         self.assertEqual(self.store.plant_weights(self.plant_id), [])
 
+    def test_a_weighing_entered_wrong_can_be_struck(self) -> None:
+        """A number typed wrong is not a measurement, and it drags the rest along."""
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_800, at=ago(4))
+        slip = self.store.record_plant_weight(self.plant_id, 240, at=ago(2))
+        self.store.record_plant_weight(self.plant_id, 2_600, at=ago(0.2))
+        self.assertGreater(self.store.water_use(self.plant_id)["daily_grams"], 1_000)
+
+        wrong = [w for w in self.store.plant_weights(self.plant_id) if w["grams"] == 240][0]
+        self.store.delete_plant_weight(wrong["weight_id"])
+
+        self.assertEqual(len(self.store.plant_weights(self.plant_id)), 3)
+        self.assertLess(self.store.water_use(self.plant_id)["daily_grams"], 100)
+        with self.assertRaises(ValueError):
+            self.store.delete_plant_weight(wrong["weight_id"])
+        self.assertIsNotNone(slip)
+
+    def test_striking_a_weighing_leaves_the_watering_it_recorded(self) -> None:
+        # Two different claims: that the pot weighed this, and that the
+        # plant was watered. Taking back the first is not taking back the
+        # second, which is in the care log for whoever wants it gone.
+        self.store.record_plant_weight(self.plant_id, 2_800, "watered")
+        weighing = self.store.plant_weights(self.plant_id)[0]
+        self.assertEqual(len(self.store.care_log(10, plant_id=self.plant_id)), 1)
+
+        self.store.delete_plant_weight(weighing["weight_id"])
+
+        self.assertEqual(self.store.plant_weights(self.plant_id), [])
+        self.assertEqual(len(self.store.care_log(10, plant_id=self.plant_id)), 1)
+
     def test_it_refuses_a_weight_no_pot_has(self) -> None:
         for description, grams in (("nothing", 0), ("half a tonne", 600_000)):
             with self.subTest(description), self.assertRaises(ValueError):
@@ -962,6 +992,23 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("CARE_LOG_FOLDED_KEY", script)
         # An empty log and one emptied by the boxes are different things.
         self.assertIn("Nothing of the kinds being shown", script)
+
+    def test_a_weighing_is_struck_over_http_and_listed_to_be_struck(self) -> None:
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.call("POST", f"/api/plants/{plant}/weight", {"grams": 2_400})
+        weighing = self.call("GET", f"/api/plants/{plant}")["weights"][0]
+
+        self.call("DELETE", f"/api/weights/{weighing['weight_id']}")
+        self.assertEqual(self.call("GET", f"/api/plants/{plant}")["weights"], [])
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("DELETE", f"/api/weights/{weighing['weight_id']}")
+        self.assertEqual(refused.exception.code, 400)
+
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        self.assertIn('id="weighing-log"', page)
+        self.assertIn("async function removeWeighing(weighing)", script)
 
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")

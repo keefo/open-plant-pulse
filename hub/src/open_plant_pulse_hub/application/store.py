@@ -3019,6 +3019,27 @@ class ReadingStore:
             for row in rows
         ]
 
+    def delete_plant_weight(self, weight_id: int) -> Dict[str, Any]:
+        """Strike a weighing that should not have been written down.
+
+        A number typed wrong is not a measurement, and leaving it in drags
+        the drying rate, the forecast and the chart along with it. Nothing
+        else is touched: a watering recorded the same moment still happened,
+        and is still in the care log for whoever wants to take it out from
+        there.
+        """
+        with self._condition, self._database:
+            row = self._database.execute(
+                "SELECT plant_id FROM plant_weights WHERE weight_id = ?", (weight_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("no such weighing")
+            plant_id = int(row[0])
+            self._database.execute(
+                "DELETE FROM plant_weights WHERE weight_id = ?", (weight_id,)
+            )
+        return self.plant_weight_status(plant_id)
+
     def plant_weight_status(self, plant_id: int) -> Dict[str, Any]:
         """What the weighings say about the water in the pot.
 

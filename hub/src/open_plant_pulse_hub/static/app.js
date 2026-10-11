@@ -2483,6 +2483,7 @@ function renderPlantPage() {
   dateField.max = localDate(new Date());
   if (!dateField.value) resetWeighingDate();
   renderPlantWeightChart();
+  renderWeighingLog();
   renderForecast();
   renderWaterUse();
   fillPlantAnchorFields();
@@ -3591,6 +3592,62 @@ function renderWaterUse() {
     + (use.drying_known
       ? " · rates held against the room's drying power before anything is read into them"
       : ""));
+}
+
+/* Every weighing, and a way to strike one.
+ *
+ * A number typed wrong is not a measurement: left in, it drags the drying
+ * rate, the forecast and the chart along with it. Folded away by default,
+ * because the list is for correcting a mistake rather than for reading. */
+function renderWeighingLog() {
+  const list = document.getElementById("weighing-log-list");
+  if (list === null) return;
+  const weighings = selectedPlant?.weights || [];
+  setHidden(document.getElementById("weighing-log"), weighings.length === 0);
+  setText(document.getElementById("weighing-log-summary"),
+    `${weighings.length} weighing${weighings.length === 1 ? "" : "s"} recorded`);
+  if (!renderKeyChanged(list, [weighings, weightUnit()])) return;
+  list.replaceChildren();
+  for (const weighing of weighings) {
+    const row = document.createElement("div");
+    row.className = "weighing-row";
+    const when = document.createElement("time");
+    when.dateTime = weighing.at;
+    setText(when, new Date(weighing.at).toLocaleString([],
+      { dateStyle: "medium", timeStyle: "short" }));
+    const what = document.createElement("strong");
+    setText(what, `${showWeight(weighing.grams)} ${weightUnit()}`);
+    const kind = document.createElement("span");
+    // What it was taken as, where that is not just "this is what it weighs".
+    setText(kind, [
+      weighing.kind === "watered" ? "full" : weighing.kind === "thirsty" ? "thirsty" : "",
+      weighing.observed ? "" : "typed, not weighed",
+    ].filter(Boolean).join(" · "));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "link-button";
+    setText(remove, "Remove");
+    remove.addEventListener("click", () => removeWeighing(weighing));
+    row.append(when, what, kind, remove);
+    list.append(row);
+  }
+}
+
+async function removeWeighing(weighing) {
+  const when = new Date(weighing.at).toLocaleString([],
+    { dateStyle: "medium", timeStyle: "short" });
+  if (!window.confirm(`Remove the ${showWeight(weighing.grams)} ${weightUnit()} `
+    + `weighing from ${when}? Anything worked out from it is worked out again.`)) return;
+  const response = await fetch(`/api/weights/${weighing.weight_id}`, { method: "DELETE" });
+  if (!response.ok) {
+    setText(document.getElementById("plant-weight-message"),
+      "That weighing could not be removed.");
+    return;
+  }
+  // A watering recorded at the same moment is a separate thing that still
+  // happened, and stays in the care log for anyone who wants it gone too.
+  setText(document.getElementById("plant-weight-message"), "Removed.");
+  await refreshPlant();
 }
 
 /* The pot's weight over a month, which is this plant's moisture history.

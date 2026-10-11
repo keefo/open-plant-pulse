@@ -312,6 +312,18 @@ def create_server(
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            if path.startswith("/api/weights/"):
+                try:
+                    self._require_same_origin()
+                    store.delete_plant_weight(self._plant_id(path[len("/api/weights/") :]))
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/api/photos/"):
                 try:
                     self._require_same_origin()

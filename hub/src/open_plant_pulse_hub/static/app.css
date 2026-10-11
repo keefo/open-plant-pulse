@@ -740,3 +740,12 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* A kind this plant has none of: still choosable, not worth reading. */
 .care-log-kinds label[data-empty="true"] { opacity: 0.55; }
 .care-log-kinds input { width: auto; margin: 0; }
+
+/* Every weighing, folded away: a list for correcting a mistake, not for
+   reading. */
+.weighing-log { margin-bottom: 16px; }
+.weighing-log summary { color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
+.weighing-log-list { margin-top: 10px; display: grid; gap: 2px; }
+.weighing-row { display: grid; grid-template-columns: minmax(150px, auto) 90px 1fr auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
+.weighing-row:nth-child(odd) { background: #f3f6f3; }
+.weighing-row time, .weighing-row span { color: var(--muted); }
