@@ -256,7 +256,9 @@ class SensorManagementWebTests(unittest.TestCase):
         # document, so what tells them apart is the page each section is on.
         # Configuration is the plant's page, the sensor's settings included:
         # a plant is one thing however many instruments are on it.
-        self.assertIn(b'<section class="climate-history" data-page="detail"', detail_page)
+        # The air card serves both pages: the readings are the room's, and
+        # a plant with no probe of its own is in the same air.
+        self.assertIn(b'<section class="climate-history" data-page="detail plant"', detail_page)
         self.assertIn(b'<section class="sensor-settings" data-page="plant-config"', detail_page)
         self.assertIn(b'id="raw-report-log" data-page="plant-config"', detail_page)
         self.assertIn(b'id="detail-config-link"', detail_page)

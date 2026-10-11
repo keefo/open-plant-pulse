@@ -792,6 +792,23 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('id="plant-sensor-detach"', page)
         self.assertIn("function renderFreeSensors()", script)
 
+    def test_the_air_card_is_the_rooms_readings_and_the_plants_bands(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        # One card, on both pages, rather than a second one for plants
+        # without a probe: the readings are stored once and read by all.
+        self.assertIn('class="climate-history" data-page="detail plant"', page)
+        self.assertEqual(page.count('id="temperature-history-chart"'), 1)
+        self.assertEqual(page.count('id="humidity-history-chart"'), 1)
+        self.assertNotIn("room-air-panel", page)
+
+        # The values come from whichever sensor is in the room; the green
+        # band comes from the plant being looked at.
+        self.assertIn("function airSource()", script)
+        self.assertIn("profileId: selectedPlant?.profile_id", script)
+        self.assertIn("profiles?.profiles?.[climateProfileId", script)
+
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")
         page = self.call_text("/")

@@ -336,9 +336,9 @@
       </article>
     </section>
 
-    <section class="climate-history" data-page="detail" aria-labelledby="climate-history-title" hidden>
+    <section class="climate-history" data-page="detail plant" aria-labelledby="climate-history-title" hidden>
       <div class="section-heading climate-history-heading">
-        <div><p class="eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
+        <div><p class="eyebrow" id="climate-history-eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
         <div class="history-range-selector" role="group" aria-label="Chart date range">
           <button type="button" data-history-range="live" aria-pressed="true">Live</button>
           <button type="button" data-history-range="24h" aria-pressed="false">24h</button>
@@ -523,23 +523,6 @@
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
       <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
-    </section>
-
-    <section class="plant-weight room-air" data-page="plant detail" id="room-air-panel" aria-labelledby="room-air-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">ROOM AIR</p><h2 id="room-air-title">The air it is in</h2></div>
-        <span id="room-air-source"></span>
-      </div>
-      <div class="journey-stats" aria-live="polite">
-        <div><strong id="room-air-temperature">--</strong><span>Temperature</span></div>
-        <div><strong id="room-air-humidity">--</strong><span>Humidity</span></div>
-        <div><strong id="room-air-drying">--</strong><span>Drying power (kPa)</span></div>
-      </div>
-      <p class="settings-note">Air belongs to the room, not to the pot a probe
-        happens to be in: one sensor on a windowsill is measuring the same air
-        as everything beside it. This is what the water use above is held
-        against, so a plant with no sensor of its own still has its drinking
-        read against the conditions it was drinking in.</p>
     </section>
 
     <section class="plant-weight water-use" data-page="plant detail" aria-labelledby="water-use-title" hidden>
