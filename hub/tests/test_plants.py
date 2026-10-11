@@ -912,6 +912,33 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("pointermove", script)
         self.assertIn("function nudgeSection(event)", script)
 
+    def test_the_care_log_can_be_folded_and_filtered(self) -> None:
+        """Fifty lighting lines should not bury the feeding somebody wants."""
+        settings = self.call("GET", "/api/settings")
+        self.assertEqual(settings["care_log_hidden_kinds"], [])
+
+        hidden = self.call("PUT", "/api/settings/care-log", {"hidden": ["lighting"]})
+        self.assertEqual(hidden["care_log_hidden_kinds"], ["lighting"])
+        # One preference for every plant, kept by the hub rather than the
+        # browser, so it holds from the phone to the desk.
+        self.assertEqual(self.call("GET", "/api/settings")["care_log_hidden_kinds"],
+                         ["lighting"])
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", "/api/settings/care-log", {"hidden": ["nonesuch"]})
+        self.assertEqual(refused.exception.code, 400)
+
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        # A box per kind, and a fold. Both logs carry them.
+        self.assertEqual(page.count("care-log-controls"), 2)
+        self.assertEqual(page.count("care-log-toggle"), 2)
+        self.assertIn("function visibleCareEvents(items)", script)
+        # Folding is where somebody is on a page, so that stays in the browser.
+        self.assertIn("CARE_LOG_FOLDED_KEY", script)
+        # An empty log and one emptied by the boxes are different things.
+        self.assertIn("Nothing of the kinds being shown", script)
+
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")
         page = self.call_text("/")

@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 31
+DATABASE_SCHEMA_VERSION = 32
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -958,6 +958,16 @@ MIGRATIONS: Dict[int, str] = {
            sections missing from it keep their built-in place, so a release
            that adds a section does not need everybody to rearrange. */
         ALTER TABLE hub_settings ADD COLUMN plant_section_order TEXT;
+    """,
+    32: """
+        /* Kinds of care event the log is to leave out.
+
+           A plant under a lamp collects fifty lighting lines a fortnight,
+           and somebody looking for when they last fed it has to read past
+           all of them. Which kinds are worth seeing is a standing
+           preference rather than a plant's property, so it is kept here
+           beside the section order and applies to every plant. */
+        ALTER TABLE hub_settings ADD COLUMN care_log_hidden_kinds TEXT;
     """,
 }
 

@@ -717,3 +717,10 @@ main.arranging [data-section]::after { content: "⠿"; position: absolute; top: 
 main.arranging [data-section] { position: relative; }
 main.arranging [data-section]:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
 main.arranging [data-section].dragging { border-color: var(--leaf); background: #f3faf5; box-shadow: 0 6px 18px #17211b1f; cursor: grabbing; }
+
+/* The care log's controls: fold it away, and choose what it holds. */
+.care-log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.care-log-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0; padding: 0; border: 0; }
+.care-log-kinds legend { float: left; margin-right: 12px; padding: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
+.care-log-kinds label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.care-log-kinds input { width: auto; margin: 0; }

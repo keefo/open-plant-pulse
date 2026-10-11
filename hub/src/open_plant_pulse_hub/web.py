@@ -184,7 +184,7 @@ def create_server(
             if (
                 path
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
-                        "/api/settings/sections")
+                        "/api/settings/sections", "/api/settings/care-log")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
@@ -196,7 +196,9 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path == "/api/settings/sections":
+                if path == "/api/settings/care-log":
+                    result = store.set_care_log_hidden_kinds(payload.get("hidden", []))
+                elif path == "/api/settings/sections":
                     result = store.set_plant_section_order(payload.get("order", []))
                 elif path.startswith("/api/photos/"):
                     result = store.set_photo_taken_at(

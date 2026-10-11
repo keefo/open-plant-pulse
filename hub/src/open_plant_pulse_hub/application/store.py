@@ -182,6 +182,19 @@ def vapour_pressure_deficit(celsius: float, humidity_percent: float) -> float:
 # The sections of a plant's page, in the order they were built to appear.
 # A saved order is repaired against this list, so it is the one place a new
 # section has to be named.
+# Every kind of thing the care log holds, and what to call it. A kind the
+# hub does not know cannot be hidden, which is what keeps a typo in a
+# request from quietly emptying somebody's log.
+CARE_KINDS = {
+    "watering": "Waterings",
+    "watering_due": "Overdue reminders",
+    "fertilizing": "Feedings",
+    "lighting": "Lights on and off",
+    "drainage_assessment": "Drainage readings",
+    "observation": "Readings from the weighings",
+    "note": "Notes",
+}
+
 PLANT_SECTIONS = (
     "readings", "air", "assessment", "drainage", "chemistry", "calendar",
     "lighting", "weight", "forecast", "water-use", "journey", "photos",
@@ -745,7 +758,8 @@ class ReadingStore:
         with self._condition:
             row = self._database.execute(
                 """
-                SELECT reporting_interval_minutes, plant_section_order
+                SELECT reporting_interval_minutes, plant_section_order,
+                       care_log_hidden_kinds
                 FROM hub_settings WHERE singleton_id = 1
                 """
             ).fetchone()
@@ -753,6 +767,7 @@ class ReadingStore:
         return {
             "reporting_interval_minutes": int(row[0]),
             "plant_section_order": self._section_order(row[1]),
+            "care_log_hidden_kinds": self._hidden_kinds(row[2]),
         }
 
     @staticmethod
@@ -775,6 +790,28 @@ class ReadingStore:
         # things somebody deliberately arranged. At the end it is visible,
         # it is in one piece, and it is one drag from where they want it.
         return kept + [name for name in PLANT_SECTIONS if name not in set(kept)]
+
+    @staticmethod
+    def _hidden_kinds(stored: Optional[str]) -> List[str]:
+        try:
+            saved = json.loads(stored) if stored else []
+        except (TypeError, ValueError):
+            saved = []
+        return [kind for kind in CARE_KINDS if kind in set(saved)]
+
+    def set_care_log_hidden_kinds(self, kinds: List[str]) -> Dict[str, Any]:
+        """Which kinds of event the care log leaves out, for every plant."""
+        if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
+            raise ValueError("care_log_hidden_kinds must be a list of kinds")
+        unknown = [kind for kind in kinds if kind not in CARE_KINDS]
+        if unknown:
+            raise ValueError(f"unknown care kind: {unknown[0]}")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET care_log_hidden_kinds = ? WHERE singleton_id = 1",
+                (json.dumps(self._hidden_kinds(json.dumps(kinds))),),
+            )
+        return self.hub_settings()
 
     def set_plant_section_order(self, order: List[str]) -> Dict[str, Any]:
         if not isinstance(order, list) or not all(isinstance(name, str) for name in order):

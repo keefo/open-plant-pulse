@@ -1627,15 +1627,131 @@ function careEventNote(event) {
   return event.confidence === "high" ? "High confidence" : "Confirm this event";
 }
 
+/* What the care log shows, and whether it is showing at all.
+ *
+ * A plant under a lamp collects fifty lighting lines a fortnight, and
+ * somebody looking for when they last fed it has to read past all of them.
+ * Which kinds are worth seeing is a standing preference rather than a
+ * plant's property, so the hub keeps it and every plant obeys it.
+ *
+ * Whether the log is folded away is not: that is where somebody is on a
+ * page right now, and it belongs to the browser they are reading it in. */
+const CARE_KIND_LABELS = {
+  watering: "Waterings",
+  watering_due: "Overdue reminders",
+  fertilizing: "Feedings",
+  lighting: "Lights on and off",
+  drainage_assessment: "Drainage readings",
+  observation: "Readings from the weighings",
+  note: "Notes",
+};
+const CARE_LOG_FOLDED_KEY = "open-plant-pulse.care-log-folded";
+let careLogHiddenKinds = [];
+let careLogFolded = false;
+let lastCareLogItems = [];
+
+function visibleCareEvents(items) {
+  return items.filter((event) => !careLogHiddenKinds.includes(event.kind));
+}
+
+/* A box per kind the log actually holds. Offering all seven to a plant
+ * whose log is four waterings is a wall of controls for nothing. */
+function renderCareKindChoices(items) {
+  const present = [];
+  for (const event of items) {
+    if (!present.includes(event.kind) && CARE_KIND_LABELS[event.kind]) present.push(event.kind);
+  }
+  present.sort((a, b) => Object.keys(CARE_KIND_LABELS).indexOf(a)
+    - Object.keys(CARE_KIND_LABELS).indexOf(b));
+  for (const fieldset of document.querySelectorAll(".care-log-kinds")) {
+    const renderKey = JSON.stringify([present, careLogHiddenKinds]);
+    if (fieldset.dataset.renderKey === renderKey) continue;
+    setData(fieldset, "renderKey", renderKey);
+    const legend = fieldset.querySelector("legend");
+    fieldset.replaceChildren(legend);
+    // Shown even for a single kind: a log that is fifty lighting lines and
+    // nothing else is precisely the one somebody wants to switch off.
+    setHidden(fieldset, present.length === 0);
+    for (const kind of present) {
+      const label = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = kind;
+      box.checked = !careLogHiddenKinds.includes(kind);
+      box.addEventListener("change", () => setCareKindShown(kind, box.checked));
+      const text = document.createElement("span");
+      const count = items.filter((event) => event.kind === kind).length;
+      setText(text, `${CARE_KIND_LABELS[kind]} (${count})`);
+      label.append(box, text);
+      fieldset.append(label);
+    }
+  }
+}
+
+async function setCareKindShown(kind, shown) {
+  const hidden = careLogHiddenKinds.filter((name) => name !== kind);
+  if (!shown) hidden.push(kind);
+  careLogHiddenKinds = hidden;
+  // Drawn at once rather than after the round trip: the hub agreeing is
+  // not what the box being ticked means.
+  renderCareLog(lastCareLogItems, "plant-care-log");
+  renderCareLog(lastCareLogItems, "care-log-list");
+  const response = await fetch("/api/settings/care-log", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hidden }),
+  });
+  if (response.ok) careLogHiddenKinds = (await response.json()).care_log_hidden_kinds;
+}
+
+function renderCareLogFolded() {
+  for (const button of document.querySelectorAll(".care-log-toggle")) {
+    setText(button, careLogFolded ? "Show log" : "Hide log");
+    setAttr(button, "aria-expanded", String(!careLogFolded));
+  }
+  for (const list of document.querySelectorAll(".care-log-list")) {
+    setHidden(list, careLogFolded);
+  }
+}
+
+function toggleCareLog() {
+  careLogFolded = !careLogFolded;
+  try {
+    window.localStorage.setItem(CARE_LOG_FOLDED_KEY, careLogFolded ? "folded" : "open");
+  } catch (_error) {
+    /* It still folds; it just forgets. */
+  }
+  renderCareLogFolded();
+}
+
+function restoreCareLogFolded() {
+  try {
+    careLogFolded = window.localStorage.getItem(CARE_LOG_FOLDED_KEY) === "folded";
+  } catch (_error) {
+    careLogFolded = false;
+  }
+  renderCareLogFolded();
+}
+
 function renderCareLog(items, listId = "care-log-list") {
   const list = document.getElementById(listId);
   if (list === null) return;
+  // The boxes are offered from everything the log holds; the list is drawn
+  // from what is left after the hidden kinds are taken out.
+  lastCareLogItems = items;
+  renderCareKindChoices(items);
+  items = visibleCareEvents(items);
   if (!renderKeyChanged(list, items)) return;
   list.replaceChildren();
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "care-log-empty";
-    setText(empty, "No care events detected yet.");
+    // An empty log and a log emptied by the boxes above it are different
+    // things, and saying the first when it is the second sends somebody
+    // looking for a fault.
+    setText(empty, lastCareLogItems.length
+      ? "Nothing of the kinds being shown. Tick another above."
+      : "No care events detected yet.");
     list.append(empty);
     return;
   }
@@ -3154,10 +3270,14 @@ async function saveSectionOrder() {
 async function loadSectionOrder() {
   const response = await fetch("/api/settings");
   if (!response.ok) return;
-  const saved = (await response.json()).plant_section_order;
+  const settings = await response.json();
+  const saved = settings.plant_section_order;
   if (Array.isArray(saved) && saved.join() !== plantSectionOrder.join()) {
     plantSectionOrder = saved;
     applySectionOrder();
+  }
+  if (Array.isArray(settings.care_log_hidden_kinds)) {
+    careLogHiddenKinds = settings.care_log_hidden_kinds;
   }
 }
 
@@ -3914,6 +4034,10 @@ document.getElementById("firmware-install").addEventListener("click", installFir
 document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 restoreWeightUnits();
 restoreHouseholdSort();
+restoreCareLogFolded();
+for (const button of document.querySelectorAll(".care-log-toggle")) {
+  button.addEventListener("click", toggleCareLog);
+}
 trackRawReportsDisclosure();
 /* Five things the page needs before it can draw, none of which depends on
  * another: asked for together, they cost one round trip rather than five. */
