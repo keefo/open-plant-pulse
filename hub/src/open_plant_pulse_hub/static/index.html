@@ -29,6 +29,7 @@
         <span id="status-dot" class="status-dot"></span>
         <div class="connection-copy"><strong id="status">Waiting for sensor</strong><span id="updated">No samples yet</span><span id="battery" class="battery" data-level="unknown" role="img" aria-label="Battery not reported" title="Battery not reported"><span class="battery-glyph" aria-hidden="true"><span class="battery-fill"></span></span><span class="battery-percent">&mdash;</span></span></div>
       </div>
+      <button class="secondary-action arrange-sections" type="button">Arrange</button>
       <a id="detail-config-link" class="secondary-action" href="/settings">Configure plant</a>
     </div>
   </header>
@@ -46,6 +47,7 @@
           <span id="plant-page-watered">Never watered</span>
         </div>
       </div>
+      <button class="secondary-action arrange-sections" type="button">Arrange</button>
       <a id="plant-page-config" class="secondary-action" href="/plants">Configure plant</a>
     </div>
   </header>
@@ -107,6 +109,15 @@
   </dialog>
 
   <main>
+    <div id="arrange-bar" class="arrange-bar" hidden>
+      <p>Drag a section to move it, or focus one and use the arrow keys. This
+        order is used for every plant.</p>
+      <div class="settings-sensor-actions">
+        <output id="arrange-message" aria-live="polite"></output>
+        <button id="arrange-cancel" class="secondary-action" type="button">Cancel</button>
+        <button id="arrange-save" type="button">Save order</button>
+      </div>
+    </div>
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
       <div class="section-heading">
         <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
@@ -302,7 +313,7 @@
       </div>
     </section>
 
-    <section class="primary-grid" data-page="detail" aria-label="Primary plant measurements" hidden>
+    <section class="primary-grid" data-page="detail" data-section="readings" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
@@ -336,7 +347,7 @@
       </article>
     </section>
 
-    <section class="climate-history" data-page="detail plant" aria-labelledby="climate-history-title" hidden>
+    <section class="climate-history" data-page="detail plant" data-section="air" aria-labelledby="climate-history-title" hidden>
       <div class="section-heading climate-history-heading">
         <div><p class="eyebrow" id="climate-history-eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
         <div class="history-range-selector" role="group" aria-label="Chart date range">
@@ -364,7 +375,7 @@
       </div>
     </section>
 
-    <section id="plant-assessment" class="plant-assessment" data-page="detail" data-level="waiting" aria-live="polite" hidden>
+    <section id="plant-assessment" class="plant-assessment" data-page="detail" data-section="assessment" data-level="waiting" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">CURRENT HEALTH</p>
         <strong id="plant-status">Waiting</strong>
@@ -372,7 +383,7 @@
       <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
     </section>
 
-    <section id="drainage-assessment" class="drainage-assessment" data-page="detail" data-level="learning" aria-live="polite" hidden>
+    <section id="drainage-assessment" class="drainage-assessment" data-page="detail" data-section="drainage" data-level="learning" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">POT RESPONSE</p>
         <strong id="drainage-status">Learning</strong>
@@ -381,7 +392,7 @@
       <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
     </section>
 
-    <section class="chemistry" data-page="detail" aria-label="Soil chemistry measurements" hidden>
+    <section class="chemistry" data-page="detail" data-section="chemistry" aria-label="Soil chemistry measurements" hidden>
       <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
       <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
         <div class="chemistry-value"><span>Nutrient level</span><strong><b id="nutrient-level">--</b><small id="nutrient-level-basis"></small></strong></div>
@@ -417,7 +428,7 @@
       <p id="chemistry-guidance" class="chemistry-guidance"></p>
     </section>
 
-    <section class="watering-calendar" data-page="detail" aria-labelledby="watering-calendar-title" hidden>
+    <section class="watering-calendar" data-page="detail" data-section="calendar" aria-labelledby="watering-calendar-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE RHYTHM</p><h2 id="watering-calendar-title">Current year</h2></div>
         <span id="watering-calendar-summary">Waiting for sensor history</span>
@@ -433,7 +444,7 @@
       <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span><i data-fertilized="true"></i><span>Fertilized</span></div>
     </section>
 
-    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="detail" aria-labelledby="plant-lighting-title" hidden>
+    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="detail" data-section="lighting" aria-labelledby="plant-lighting-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">GROW LIGHTS</p><h2 id="plant-lighting-title">Lighting</h2></div>
         <div class="lighting-heading-actions">
@@ -448,7 +459,7 @@
       <div id="plant-lighting-lights" class="lighting-lights"></div>
     </section>
 
-    <section class="plant-journey" data-page="detail" aria-labelledby="plant-journey-title" hidden>
+    <section class="plant-journey" data-page="detail" data-section="journey" aria-labelledby="plant-journey-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
         <span id="journey-started">Waiting for sensor history</span>
@@ -462,7 +473,7 @@
       </div>
     </section>
 
-    <section class="care-log" data-page="detail" aria-label="Plant care history" hidden>
+    <section class="care-log" data-page="detail" data-section="care-log" aria-label="Plant care history" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
         <button id="record-fertilized" class="secondary-action" type="button">Fertilized today</button>
@@ -472,7 +483,7 @@
       </div>
     </section>
 
-    <section class="plant-weight" data-page="plant detail" aria-labelledby="plant-weight-title" hidden>
+    <section class="plant-weight" data-page="plant detail" data-section="weight" aria-labelledby="plant-weight-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
         <span id="plant-weight-summary">Nothing weighed yet</span>
@@ -525,7 +536,7 @@
       <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
     </section>
 
-    <section class="plant-weight forecast" data-page="plant detail" aria-labelledby="forecast-title" hidden>
+    <section class="plant-weight forecast" data-page="plant detail" data-section="forecast" aria-labelledby="forecast-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHEN TO WATER</p><h2 id="forecast-title">Next watering</h2></div>
         <span id="forecast-headline"></span>
@@ -550,7 +561,7 @@
       </div>
     </section>
 
-    <section class="plant-weight water-use" data-page="plant detail" aria-labelledby="water-use-title" hidden>
+    <section class="plant-weight water-use" data-page="plant detail" data-section="water-use" aria-labelledby="water-use-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>
         <span id="water-use-coverage"></span>
@@ -586,7 +597,7 @@
         a windowsill speaks for every pot on it.</p>
     </section>
 
-    <section class="plant-journey" data-page="plant" aria-labelledby="plant-journey-plant-title" hidden>
+    <section class="plant-journey" data-page="plant" data-section="journey" aria-labelledby="plant-journey-plant-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-plant-title">Plant journey</h2></div>
         <span id="plant-journey-started">Waiting for its first day</span>
@@ -599,7 +610,7 @@
       </div>
     </section>
 
-    <section class="plant-photos" data-page="plant detail" aria-labelledby="plant-photos-title" hidden>
+    <section class="plant-photos" data-page="plant detail" data-section="photos" aria-labelledby="plant-photos-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">PHOTOGRAPHS</p><h2 id="plant-photos-title">How it looks</h2></div>
         <div class="settings-sensor-actions">
@@ -616,7 +627,7 @@
       </div>
     </section>
 
-    <section class="care-log" data-page="plant" aria-label="Plant care history" hidden>
+    <section class="care-log" data-page="plant" data-section="care-log" aria-label="Plant care history" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
         <div class="settings-sensor-actions">

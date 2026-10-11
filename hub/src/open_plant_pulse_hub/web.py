@@ -183,7 +183,8 @@ def create_server(
             path = urlparse(self.path).path
             if (
                 path
-                not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi")
+                not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
+                        "/api/settings/sections")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
@@ -195,7 +196,9 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path.startswith("/api/photos/"):
+                if path == "/api/settings/sections":
+                    result = store.set_plant_section_order(payload.get("order", []))
+                elif path.startswith("/api/photos/"):
                     result = store.set_photo_taken_at(
                         self._plant_id(path[len("/api/photos/") :]),
                         self._optional_str(payload.get("taken_at")),

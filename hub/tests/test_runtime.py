@@ -264,8 +264,7 @@ class ReadingPersistenceTests(unittest.TestCase):
                 )
                 self.assertEqual(reopened.latest()["reading"]["moisture_percent"], 43.0)
                 self.assertEqual(
-                    reopened.hub_settings(),
-                    {"reporting_interval_minutes": 18},
+                    reopened.hub_settings()["reporting_interval_minutes"], 18
                 )
             finally:
                 reopened.close()

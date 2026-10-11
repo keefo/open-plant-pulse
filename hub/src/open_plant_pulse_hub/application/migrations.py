@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 30
+DATABASE_SCHEMA_VERSION = 31
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -944,6 +944,20 @@ MIGRATIONS: Dict[int, str] = {
            it is asked for rather than inferred. Null until then, and
            created_at stands in. */
         ALTER TABLE plants ADD COLUMN acquired_at TEXT;
+    """,
+    31: """
+        /* The order the sections of a plant's page are read in.
+
+           One order for the whole household rather than one per plant:
+           somebody who wants the next watering at the top wants it at the
+           top of every plant, and setting that nine times is not a feature.
+
+           Kept on the hub rather than in the browser so it follows whoever
+           set it from the phone to the desk. A list of section names as
+           JSON; names the hub does not know are dropped on the way in, and
+           sections missing from it keep their built-in place, so a release
+           that adds a section does not need everybody to rearrange. */
+        ALTER TABLE hub_settings ADD COLUMN plant_section_order TEXT;
     """,
 }
 

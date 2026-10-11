@@ -877,6 +877,41 @@ class PlantApiTests(unittest.TestCase):
         self.assertIsNone(self.call("GET", "/api/plants")["items"][0]["water_in_days"])
         self.assertFalse(self.call("GET", f"/api/plants/{plant}")["forecast"]["ready"])
 
+    def test_the_section_order_is_one_order_for_every_plant(self) -> None:
+        """Somebody who wants the forecast at the top wants it on all of them."""
+        settings = self.call("GET", "/api/settings")
+        self.assertEqual(settings["plant_section_order"][:2], ["readings", "air"])
+
+        saved = self.call("PUT", "/api/settings/sections",
+                          {"order": ["forecast", "weight"]})
+        self.assertEqual(saved["plant_section_order"][:2], ["forecast", "weight"])
+        # Sections the saved order has not heard of follow it, in the order
+        # they were built, so a new one is visible rather than lost.
+        self.assertEqual(sorted(saved["plant_section_order"]),
+                         sorted(settings["plant_section_order"]))
+        # It is the hub's, not the browser's, so it follows whoever set it.
+        self.assertEqual(self.call("GET", "/api/settings")["plant_section_order"],
+                         saved["plant_section_order"])
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", "/api/settings/sections", {"order": ["nonesuch"]})
+        self.assertEqual(refused.exception.code, 400)
+
+    def test_every_orderable_section_is_named(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        for name in ("readings", "air", "weight", "forecast", "water-use",
+                     "journey", "photos", "care-log"):
+            self.assertIn(f'data-section="{name}"', page)
+        # Arranged as miniatures, because a page of full-height panels
+        # cannot be dragged into order.
+        self.assertIn("main.arranging [data-section]", self.call_text("/app.css"))
+        self.assertIn("function beginSectionDrag(event)", script)
+        # Dragging works with a finger, and so does the keyboard.
+        self.assertIn("pointermove", script)
+        self.assertIn("function nudgeSection(event)", script)
+
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")
         page = self.call_text("/")

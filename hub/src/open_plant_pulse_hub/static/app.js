@@ -2982,6 +2982,185 @@ function renderWaterUseFindings(findings) {
  *
  * Where a piece is missing the hub says which, and what to do about it,
  * rather than producing a number from a guess. */
+/* Arranging the sections of a plant's page.
+ *
+ * One order for the whole household, kept on the hub: somebody who wants
+ * the next watering at the top wants it at the top of every plant, and from
+ * the phone as well as the desk.
+ *
+ * Arranging happens in a mode of its own, with each section shrunk to a
+ * tile bearing its name. A page of full-height panels cannot be dragged
+ * into order -- the thing being moved and the place it is going are never
+ * on screen together. */
+let plantSectionOrder = [];
+let arranging = false;
+let orderBeforeArranging = null;
+
+function orderedSections() {
+  // Two sections can carry one name -- the care log and the journey exist
+  // once per page -- and both move together, which is what somebody
+  // arranging them means.
+  return [...document.querySelectorAll("main [data-section]")];
+}
+
+function applySectionOrder() {
+  const sections = orderedSections();
+  if (!sections.length || !plantSectionOrder.length) return;
+  const anchor = sections[0];
+  const marker = document.createComment("sections");
+  anchor.parentNode.insertBefore(marker, anchor);
+  for (const name of plantSectionOrder) {
+    for (const section of sections) {
+      if (section.dataset.section === name) marker.parentNode.insertBefore(section, marker);
+    }
+  }
+  // Anything the saved order has not heard of keeps its place at the end.
+  for (const section of sections) {
+    if (!plantSectionOrder.includes(section.dataset.section)) {
+      marker.parentNode.insertBefore(section, marker);
+    }
+  }
+  marker.remove();
+}
+
+/* Each tile needs a name to show once its contents are hidden, taken from
+ * the heading the section already has rather than a second list of titles
+ * to keep in step with the first. */
+function labelSections() {
+  for (const section of orderedSections()) {
+    if (section.dataset.sectionTitle) continue;
+    const heading = section.querySelector("h2, h3");
+    const labelled = section.getAttribute("aria-label");
+    setData(section, "sectionTitle",
+      (heading?.textContent || labelled || section.dataset.section).trim());
+  }
+}
+
+function startArranging() {
+  orderBeforeArranging = [...plantSectionOrder];
+  arranging = true;
+  renderArranging();
+}
+
+function stopArranging(restore) {
+  if (restore && orderBeforeArranging) {
+    plantSectionOrder = orderBeforeArranging;
+    applySectionOrder();
+  }
+  arranging = false;
+  orderBeforeArranging = null;
+  renderArranging();
+}
+
+function renderArranging() {
+  labelSections();
+  setClass(document.querySelector("main"), "arranging", arranging);
+  setHidden(document.getElementById("arrange-bar"), !arranging);
+  // One control, once per header: a plant with a sensor and one without
+  // are the same page arranged the same way.
+  for (const button of document.querySelectorAll(".arrange-sections")) {
+    setText(button, arranging ? "Done" : "Arrange");
+  }
+  for (const section of orderedSections()) {
+    setAttr(section, "draggable", String(arranging));
+    if (arranging) {
+      setAttr(section, "tabindex", "0");
+      setAttr(section, "role", "button");
+      setAttr(section, "aria-label",
+        `${section.dataset.sectionTitle}. Drag to move, or use the arrow keys.`);
+    } else {
+      section.removeAttribute("tabindex");
+      section.removeAttribute("role");
+      section.removeAttribute("aria-label");
+    }
+  }
+}
+
+/* Dragging with pointer events rather than the drag-and-drop API, which
+ * does not exist on a phone. A tile swaps with whichever one the finger is
+ * over; the order is read back off the page when the finger lifts. */
+function beginSectionDrag(event) {
+  if (!arranging) return;
+  const moving = event.target.closest("[data-section]");
+  if (moving === null) return;
+  event.preventDefault();
+  moving.setPointerCapture(event.pointerId);
+  setClass(moving, "dragging", true);
+
+  const over = (x, y) => document.elementsFromPoint(x, y)
+    .map((node) => node.closest?.("[data-section]"))
+    .find((node) => node && node !== moving && !node.hasAttribute("hidden"));
+
+  const move = (pointer) => {
+    const target = over(pointer.clientX, pointer.clientY);
+    if (!target) return;
+    const box = target.getBoundingClientRect();
+    const below = pointer.clientY > box.top + box.height / 2;
+    target.parentNode.insertBefore(moving, below ? target.nextSibling : target);
+  };
+  const end = () => {
+    setClass(moving, "dragging", false);
+    moving.removeEventListener("pointermove", move);
+    moving.removeEventListener("pointerup", end);
+    moving.removeEventListener("pointercancel", end);
+    readSectionOrder();
+  };
+  moving.addEventListener("pointermove", move);
+  moving.addEventListener("pointerup", end);
+  moving.addEventListener("pointercancel", end);
+}
+
+function nudgeSection(event) {
+  if (!arranging) return;
+  const section = event.target.closest("[data-section]");
+  if (section === null) return;
+  const up = event.key === "ArrowUp";
+  const down = event.key === "ArrowDown";
+  if (!up && !down) return;
+  event.preventDefault();
+  const shown = orderedSections().filter((node) => !node.hasAttribute("hidden"));
+  const at = shown.indexOf(section);
+  const swap = shown[at + (up ? -1 : 1)];
+  if (!swap) return;
+  swap.parentNode.insertBefore(up ? section : swap, up ? swap : section);
+  section.focus();
+  readSectionOrder();
+}
+
+function readSectionOrder() {
+  const seen = [];
+  for (const section of orderedSections()) {
+    if (!seen.includes(section.dataset.section)) seen.push(section.dataset.section);
+  }
+  plantSectionOrder = seen;
+}
+
+async function saveSectionOrder() {
+  const message = document.getElementById("arrange-message");
+  const response = await fetch("/api/settings/sections", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ order: plantSectionOrder }),
+  });
+  if (!response.ok) {
+    setText(message, "That order could not be saved.");
+    return;
+  }
+  plantSectionOrder = (await response.json()).plant_section_order;
+  setText(message, "");
+  stopArranging(false);
+}
+
+async function loadSectionOrder() {
+  const response = await fetch("/api/settings");
+  if (!response.ok) return;
+  const saved = (await response.json()).plant_section_order;
+  if (Array.isArray(saved) && saved.join() !== plantSectionOrder.join()) {
+    plantSectionOrder = saved;
+    applySectionOrder();
+  }
+}
+
 function renderForecast() {
   const section = document.getElementById("forecast-known");
   if (section === null) return;
@@ -3713,6 +3892,13 @@ document.getElementById("plant-sensor-detach").addEventListener("click", () => {
     + "Everything recorded about the plant stays; the sensor keeps its readings.")) return;
   pointSensorAtPlant(sensor.sensor_id, null);
 });
+for (const button of document.querySelectorAll(".arrange-sections")) {
+  button.addEventListener("click", () => (arranging ? stopArranging(false) : startArranging()));
+}
+document.getElementById("arrange-save").addEventListener("click", saveSectionOrder);
+document.getElementById("arrange-cancel").addEventListener("click", () => stopArranging(true));
+document.querySelector("main").addEventListener("pointerdown", beginSectionDrag);
+document.querySelector("main").addEventListener("keydown", nudgeSection);
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 // Touched by hand, and so no longer the hub's to rewrite. "input" covers a
 // date sheet on a phone, which never focuses the field it belongs to.
@@ -3733,5 +3919,5 @@ trackRawReportsDisclosure();
  * another: asked for together, they cost one round trip rather than five. */
 Promise.all([
   loadProfiles(), refreshHouseholdNetwork(), refreshRooms(),
-  refreshLightDrivers(), refreshFirmwareImages(),
+  refreshLightDrivers(), refreshFirmwareImages(), loadSectionOrder(),
 ]).then(poll);

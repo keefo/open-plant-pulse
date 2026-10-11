@@ -179,6 +179,15 @@ def vapour_pressure_deficit(celsius: float, humidity_percent: float) -> float:
     return max(0.0, saturated * (1.0 - max(0.0, min(100.0, humidity_percent)) / 100.0))
 
 
+# The sections of a plant's page, in the order they were built to appear.
+# A saved order is repaired against this list, so it is the one place a new
+# section has to be named.
+PLANT_SECTIONS = (
+    "readings", "air", "assessment", "drainage", "chemistry", "calendar",
+    "lighting", "weight", "forecast", "water-use", "journey", "photos",
+    "care-log",
+)
+
 WEIGHT_KINDS = ("reading", "watered", "thirsty")
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
@@ -732,13 +741,53 @@ class ReadingStore:
             ).fetchone()
             return self._decorate_sensor(self._sensor_payload(row)) if row is not None else None
 
-    def hub_settings(self) -> Dict[str, int]:
+    def hub_settings(self) -> Dict[str, Any]:
         with self._condition:
             row = self._database.execute(
-                "SELECT reporting_interval_minutes FROM hub_settings WHERE singleton_id = 1"
+                """
+                SELECT reporting_interval_minutes, plant_section_order
+                FROM hub_settings WHERE singleton_id = 1
+                """
             ).fetchone()
         assert row is not None
-        return {"reporting_interval_minutes": int(row[0])}
+        return {
+            "reporting_interval_minutes": int(row[0]),
+            "plant_section_order": self._section_order(row[1]),
+        }
+
+    @staticmethod
+    def _section_order(stored: Optional[str]) -> List[str]:
+        """The saved order, repaired against the sections that exist.
+
+        Names the hub does not know are dropped, and sections the saved
+        order has never heard of are put back where they were built to go.
+        A release that adds a section therefore shows it -- at the end,
+        where it can be found and moved -- rather than not at all.
+        """
+        try:
+            saved = json.loads(stored) if stored else []
+        except (TypeError, ValueError):
+            saved = []
+        kept = list(dict.fromkeys(name for name in saved if name in PLANT_SECTIONS))
+        # Anything the saved order has never heard of goes after it, in the
+        # order it was built in. Trying to slot a new section in beside its
+        # neighbours sounds kinder and is not: every rule for it reorders
+        # things somebody deliberately arranged. At the end it is visible,
+        # it is in one piece, and it is one drag from where they want it.
+        return kept + [name for name in PLANT_SECTIONS if name not in set(kept)]
+
+    def set_plant_section_order(self, order: List[str]) -> Dict[str, Any]:
+        if not isinstance(order, list) or not all(isinstance(name, str) for name in order):
+            raise ValueError("plant_section_order must be a list of section names")
+        unknown = [name for name in order if name not in PLANT_SECTIONS]
+        if unknown:
+            raise ValueError(f"unknown section: {unknown[0]}")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET plant_section_order = ? WHERE singleton_id = 1",
+                (json.dumps(self._section_order(json.dumps(order))),),
+            )
+        return self.hub_settings()
 
     def set_reporting_interval(self, reporting_interval_minutes: int) -> Dict[str, int]:
         if not MIN_REPORTING_INTERVAL_MINUTES <= reporting_interval_minutes <= MAX_REPORTING_INTERVAL_MINUTES:

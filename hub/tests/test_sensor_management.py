@@ -162,8 +162,7 @@ class SensorManagementTests(unittest.TestCase):
         self.store.manage_sensor(sensor_id, "Fern", "Office", "strelitzia", 40, 1500, 1800)
         self.assertEqual(self.store.sensor(sensor_id)["device_config_revision"], revision + 1)
         self.assertEqual(
-            self.store.set_reporting_interval(12),
-            {"reporting_interval_minutes": 12},
+            self.store.set_reporting_interval(12)["reporting_interval_minutes"], 12
         )
         self.assertEqual(self.store.sensor(sensor_id)["expected_interval_seconds"], 1800)
         self.assertEqual(self.store.sensor(other_sensor_id)["expected_interval_seconds"], 3600)
@@ -529,7 +528,10 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("selectedSensor = payload", app)
         self.assertNotIn("It does not change sensor firmware", page)
         self.assertNotIn('id="reporting-settings-form"', page)
-        self.assertNotIn('fetch("/api/settings")', app)
+        # The hub-wide reporting interval is not set from here any more. The
+        # page does read /api/settings -- that is where the section order
+        # lives -- so what matters is that it never writes the interval.
+        self.assertNotIn("reporting_interval_minutes:", app)
 
 
 if __name__ == "__main__":

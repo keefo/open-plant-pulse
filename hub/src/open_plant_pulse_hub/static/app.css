@@ -703,3 +703,17 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .forecast-missing-list li strong { display: block; }
 .forecast-missing-list li span { color: var(--muted); font-size: 14px; }
 .forecast .journey-stats { margin-bottom: 18px; }
+
+/* Arranging the sections.
+   Each one shrinks to a tile with its name on it, because a page of
+   full-height panels cannot be dragged into order: the thing being moved
+   and the place it is going are never on screen together. */
+.arrange-bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 14px 18px; border: 1px solid var(--leaf); border-radius: 8px; background: #eef6f0; }
+.arrange-bar p { margin: 0; color: var(--muted); font-size: 13px; max-width: 48ch; }
+main.arranging [data-section] { min-height: 0; margin-bottom: 10px; padding: 0; border: 1px dashed var(--line); border-radius: 8px; background: white; cursor: grab; touch-action: none; }
+main.arranging [data-section] > * { display: none; }
+main.arranging [data-section]::before { content: attr(data-section-title); display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 16px; color: var(--ink); font-weight: 700; }
+main.arranging [data-section]::after { content: "⠿"; position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--muted); }
+main.arranging [data-section] { position: relative; }
+main.arranging [data-section]:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+main.arranging [data-section].dragging { border-color: var(--leaf); background: #f3faf5; box-shadow: 0 6px 18px #17211b1f; cursor: grabbing; }
