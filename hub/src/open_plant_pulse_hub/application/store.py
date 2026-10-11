@@ -3435,6 +3435,111 @@ class ReadingStore:
                 )
         return findings
 
+    def watering_forecast(self, plant_id: int, with_air: bool = True) -> Dict[str, Any]:
+        """When the pot will reach the weight at which this plant wants water.
+
+        Three things are needed and the hub has no business guessing any of
+        them: what the pot weighs now, what it weighs when the plant is
+        thirsty, and how fast it is getting from one to the other. Where one
+        is missing it is named, with what to do about it, because "no
+        prediction" and "no prediction yet, and here is why" are different
+        things to be told.
+
+        The rate is taken from this drying cycle where there is one -- how
+        fast it has drunk since it was last watered, which is the same
+        plant in the same pot in the same week -- and from the whole window
+        otherwise. The spread between the fastest and slowest spans gives
+        the soonest and latest, because a single number pretends to a
+        precision that four weighings do not have.
+        """
+        status = self.plant_weight_status(plant_id)
+        use = self.water_use(plant_id, with_air=with_air)
+        missing: List[Dict[str, str]] = []
+
+        if status["latest"] is None:
+            missing.append({
+                "code": "no_weighing",
+                "what": "What the pot weighs now",
+                "how": "Put it on a scale and press Record.",
+            })
+        if status["thirsty"] is None:
+            missing.append({
+                "code": "no_thirsty_weight",
+                "what": "What the pot weighs when this plant wants water",
+                "how": "Set Thirsty at: weigh it on a day it is ready for water, "
+                       "or type the weight if you know it.",
+            })
+
+        # Spans since the last watering: the same plant in the same pot in
+        # the same weather, which is a better guide than a quarter's average.
+        watered_at = status["watered"]["at"] if status["watered"] else None
+        cycle = [i for i in use["intervals"] if watered_at is None or i["from"] >= watered_at]
+        spans = cycle if cycle else use["intervals"]
+        if not spans:
+            missing.append({
+                "code": "no_rate",
+                "what": "How fast it is drinking",
+                "how": "Weigh it again a day or more after the last weighing. "
+                       "Two weighings far enough apart are what a rate is.",
+            })
+
+        forecast: Dict[str, Any] = {
+            "ready": False,
+            "missing": missing,
+            "days": None,
+            "days_soonest": None,
+            "days_latest": None,
+            "water_on": None,
+            "grams_now": status["latest"]["grams"] if status["latest"] else None,
+            "thirsty_grams": status["thirsty"]["grams"] if status["thirsty"] else None,
+            "grams_to_go": None,
+            "grams_per_day": None,
+            "rate_from": None,
+            "spans_used": len(spans),
+            "thirsty_now": False,
+        }
+        if missing:
+            return forecast
+
+        to_go = status["latest"]["grams"] - status["thirsty"]["grams"]
+        rates = [i["grams_per_day"] for i in spans if i["grams_per_day"] > 0]
+        if not rates:
+            # It has been weighed often enough, and has not lost anything.
+            forecast["missing"] = [{
+                "code": "not_drinking",
+                "what": "How fast it is drinking",
+                "how": "The pot has not lost weight since it was last weighed. "
+                       "Another weighing in a day or two will say whether it is "
+                       "drinking at all.",
+            }]
+            return forecast
+
+        typical = sum(rates) / len(rates)
+        forecast.update({
+            "ready": True,
+            "grams_to_go": to_go,
+            "grams_per_day": round(typical),
+            "rate_from": "this cycle" if cycle else f"the last {use['window_days']} days",
+        })
+        if to_go <= 0:
+            # Already at or past the weight it asks for water at. Nothing is
+            # "minus fifty millilitres to go"; it is thirsty now.
+            forecast.update({"grams_to_go": 0, "thirsty_now": True, "days": 0.0,
+                             "days_soonest": 0.0, "days_latest": 0.0,
+                             "water_on": _timestamp(datetime.now(timezone.utc))})
+            return forecast
+
+        now = datetime.now(timezone.utc)
+        days = to_go / typical
+        forecast.update({
+            "days": round(days, 1),
+            # Fastest it has drunk brings the day forward; slowest pushes it out.
+            "days_soonest": round(to_go / max(rates), 1),
+            "days_latest": round(to_go / min(rates), 1),
+            "water_on": _timestamp(now + timedelta(days=days)),
+        })
+        return forecast
+
     def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Every plant the household has, instrumented or not."""
         with self._condition:
@@ -3473,6 +3578,7 @@ class ReadingStore:
                 # which costs more than everything else here together and
                 # changes nothing the card shows.
                 "daily_grams": self.water_use(row[0], with_air=False)["daily_grams"],
+                "water_in_days": self.watering_forecast(row[0], with_air=False)["days"],
             }
             for row in rows
         ]

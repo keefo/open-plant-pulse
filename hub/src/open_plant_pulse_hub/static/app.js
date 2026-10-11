@@ -366,8 +366,9 @@ function createHouseholdCard(key) {
   card.className = "fleet-card";
   setData(card, "key", key);
   card.innerHTML = "<strong></strong><code></code><span></span>"
-    + '<div class="fleet-card-tags"><small></small>'
-    + '<small class="fleet-card-rate" data-state="rate"></small></div>';
+    // When it needs water first: that is what the list is scanned for.
+    + '<div class="fleet-card-tags"><small class="fleet-card-due"></small>'
+    + '<small></small><small class="fleet-card-rate" data-state="rate"></small></div>';
   return card;
 }
 
@@ -475,7 +476,7 @@ function updateHouseholdCard(card, plant, sensor) {
     setText(when, lastCaredFor(plant));
   }
 
-  const badge = card.querySelector("small:not(.fleet-card-rate)");
+  const badge = card.querySelector("small:not(.fleet-card-rate):not(.fleet-card-due)");
   if (sensor) {
     const state = sensorState(sensor);
     setText(badge, state);
@@ -499,6 +500,15 @@ function updateHouseholdCard(card, plant, sensor) {
   const rate = card.querySelector(".fleet-card-rate");
   setText(rate, plant?.daily_grams != null ? `${plant.daily_grams} ml/d` : "");
   setHidden(rate, plant?.daily_grams == null);
+
+  /* When it will want water, which is the question the list is scanned for.
+   * Only where the hub can actually say; the plant's page explains why not. */
+  const due = card.querySelector(".fleet-card-due");
+  const days = plant?.water_in_days;
+  setText(due, days == null ? ""
+    : days < 1 ? "Water now" : `Water in ${Math.round(days)}d`);
+  setHidden(due, days == null);
+  setData(due, "state", days == null ? "unknown" : days <= 2 ? "soon" : "later");
 }
 
 function renderInbox() {
@@ -2343,6 +2353,7 @@ function renderPlantPage() {
   dateField.max = localDate(new Date());
   if (!dateField.value) resetWeighingDate();
   renderPlantWeightChart();
+  renderForecast();
   renderWaterUse();
   fillPlantAnchorFields();
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
@@ -2946,6 +2957,182 @@ function renderWaterUseFindings(findings) {
     note.append(title, summary);
     list.append(note);
   }
+}
+
+/* When this plant will want water.
+ *
+ * Where it is now, where thirsty is, and how fast it is getting from one to
+ * the other. The chart carries the weighings it was worked out from and the
+ * line down to the thirsty weight, with a band between the fastest and
+ * slowest the plant has drunk: a single line would claim a precision that
+ * four weighings on a kitchen scale do not have.
+ *
+ * Where a piece is missing the hub says which, and what to do about it,
+ * rather than producing a number from a guess. */
+function renderForecast() {
+  const section = document.getElementById("forecast-known");
+  if (section === null) return;
+  const forecast = selectedPlant?.forecast;
+  const missing = document.getElementById("forecast-missing");
+  const headline = document.getElementById("forecast-headline");
+  if (!forecast) {
+    setHidden(section, true);
+    setHidden(missing, true);
+    setText(headline, "");
+    return;
+  }
+
+  setHidden(section, !forecast.ready);
+  setHidden(missing, forecast.ready);
+  if (!forecast.ready) {
+    setText(headline, "Not enough to go on yet");
+    renderForecastMissing(forecast.missing);
+    return;
+  }
+  renderForecastMissing([]);
+
+  if (forecast.thirsty_now) {
+    setText(headline, "It is at its thirsty weight now");
+  } else {
+    const when = new Date(forecast.water_on);
+    setText(headline, `Around ${when.toLocaleDateString(undefined, { dateStyle: "medium" })}`);
+  }
+  setText(document.getElementById("forecast-days"),
+    forecast.thirsty_now ? "now" : String(forecast.days));
+  setText(document.getElementById("forecast-window"),
+    forecast.thirsty_now ? "--" : `${forecast.days_soonest}–${forecast.days_latest}`);
+  setText(document.getElementById("forecast-to-go"), String(forecast.grams_to_go));
+  setText(document.getElementById("forecast-rate"), String(forecast.grams_per_day));
+
+  /* Said in a sentence as well as in numbers: the figures are the working,
+   * and the sentence is the answer somebody came for. */
+  setText(document.getElementById("forecast-reason"), forecast.thirsty_now
+    ? `The pot is at ${showWeight(forecast.grams_now)} ${weightUnit()}, which is the `
+      + "weight you set as thirsty for this plant. Water it when you are ready, "
+      + "and weigh it again afterwards to start the next cycle."
+    : `The pot weighs ${showWeight(forecast.grams_now)} ${weightUnit()} and asks for `
+      + `water at ${showWeight(forecast.thirsty_grams)} ${weightUnit()}, so it has `
+      + `${forecast.grams_to_go} ml of its water left. It has been using `
+      + `${forecast.grams_per_day} ml a day over ${forecast.spans_used} `
+      + `${forecast.spans_used === 1 ? "span" : "spans"} of ${forecast.rate_from}, `
+      + `which puts the next watering about ${forecast.days} days out. It has drunk `
+      + `as fast as ${forecast.days_soonest} days' worth and as slowly as `
+      + `${forecast.days_latest}, so that is the range rather than the day.`);
+
+  renderForecastChart(forecast);
+}
+
+function renderForecastMissing(missing) {
+  const list = document.getElementById("forecast-missing-list");
+  if (list === null || !renderKeyChanged(list, missing)) return;
+  list.replaceChildren();
+  for (const gap of missing) {
+    const item = document.createElement("li");
+    const what = document.createElement("strong");
+    setText(what, gap.what);
+    const how = document.createElement("span");
+    setText(how, gap.how);
+    item.append(what, how);
+    list.append(item);
+  }
+}
+
+function renderForecastChart(forecast) {
+  const chart = document.getElementById("forecast-chart");
+  if (chart === null) return;
+  const weighings = (selectedPlant?.weights || [])
+    .filter((weighing) => weighing.observed)
+    .map((weighing) => ({ at: Date.parse(weighing.at), grams: weighing.grams }))
+    .filter((point) => Number.isFinite(point.at))
+    .sort((a, b) => a.at - b.at)
+    .slice(-12);
+  if (!renderKeyChanged(chart, [forecast, weighings])) return;
+  chart.replaceChildren();
+
+  const width = Math.max(320, Math.round(chart.getBoundingClientRect().width) || 640);
+  const height = 190;
+  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
+
+  const now = Date.now();
+  const latest = { at: now, grams: forecast.grams_now };
+  const soonest = now + (forecast.days_soonest || 0) * 86400000;
+  const latestDay = now + (forecast.days_latest || 0) * 86400000;
+  const expected = now + (forecast.days || 0) * 86400000;
+  const startTime = weighings.length ? Math.min(weighings[0].at, now) : now - 86400000;
+  const endTime = Math.max(latestDay, now + 86400000);
+
+  const values = weighings.map((p) => p.grams)
+    .concat([forecast.grams_now, forecast.thirsty_grams]);
+  const padding = Math.max(30, (Math.max(...values) - Math.min(...values)) * 0.2);
+  const top = Math.max(...values) + padding;
+  const bottom = Math.min(...values) - padding;
+
+  const plot = { left: 46, right: 10, top: 10, bottom: 22 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const x = (time) =>
+    plot.left + ((time - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
+  const y = (grams) => plot.top + ((top - grams) / Math.max(1, top - bottom)) * plotHeight;
+
+  // The cone between the fastest and slowest it has drunk. Everything inside
+  // it is a day this plant might ask for water.
+  chart.append(svgElement("polygon", {
+    class: "forecast-cone",
+    points: [`${x(now)},${y(forecast.grams_now)}`,
+             `${x(soonest)},${y(forecast.thirsty_grams)}`,
+             `${x(latestDay)},${y(forecast.thirsty_grams)}`].join(" "),
+  }));
+
+  chart.append(
+    svgElement("line", {
+      class: "trend-refill", x1: plot.left, x2: width - plot.right,
+      y1: y(forecast.thirsty_grams), y2: y(forecast.thirsty_grams),
+    }),
+    svgElement("text", {
+      class: "trend-refill-label", x: plot.left + 4, y: y(forecast.thirsty_grams) - 4,
+      "text-anchor": "start",
+    }, `Thirsty at ${showWeight(forecast.thirsty_grams)} ${weightUnit()}`)
+  );
+
+  for (const grams of [bottom, (bottom + top) / 2, top]) {
+    chart.append(
+      svgElement("line", {
+        class: "grid-line", x1: plot.left, x2: width - plot.right, y1: y(grams), y2: y(grams),
+      }),
+      svgElement("text", {
+        class: "axis-label", x: plot.left - 6, y: y(grams) + 4, "text-anchor": "end",
+      }, showWeight(Math.round(grams)))
+    );
+  }
+
+  // What has happened, solid; what is expected, dashed. The eye should be
+  // able to tell a measurement from a projection without reading a legend.
+  if (weighings.length > 1) {
+    chart.append(svgElement("polyline", {
+      class: "history-line",
+      points: weighings.map((p) => `${x(p.at)},${y(p.grams)}`).join(" "),
+    }));
+  }
+  chart.append(svgElement("line", {
+    class: "forecast-line",
+    x1: x(latest.at), y1: y(latest.grams),
+    x2: x(expected), y2: y(forecast.thirsty_grams),
+  }));
+  chart.append(svgElement("circle", {
+    class: "history-point latest-point", cx: x(now), cy: y(forecast.grams_now), r: 3.5,
+  }));
+
+  const dayLabel = (time) => new Intl.DateTimeFormat(undefined, {
+    month: "short", day: "numeric" }).format(new Date(time));
+  chart.append(
+    svgElement("text", {
+      class: "axis-label", x: x(startTime), y: height - 5, "text-anchor": "start",
+    }, dayLabel(startTime)),
+    svgElement("text", {
+      class: "axis-label", x: Math.min(x(expected), width - plot.right), y: height - 5,
+      "text-anchor": "end",
+    }, dayLabel(expected))
+  );
 }
 
 function renderWaterUse() {

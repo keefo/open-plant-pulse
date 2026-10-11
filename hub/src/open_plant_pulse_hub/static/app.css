@@ -91,6 +91,10 @@ body {
 /* How much it drinks is not a verdict on it, so it is water-coloured rather
    than caught by the rule above that reddens anything not "healthy". */
 .fleet-card small[data-state="rate"] { color: #2b6c86; background: #e4eff4; text-transform: none; }
+/* Soon enough to act on reads warm; further off reads like any other fact. */
+.fleet-card small.fleet-card-due { text-transform: none; }
+.fleet-card small[data-state="later"] { color: #2a754a; background: #e5f1e8; }
+.fleet-card small[data-state="soon"] { color: #8a4a12; background: #f8ecd9; }
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
 /* A pot with water left reads as well as a sensor reporting in; one nearly
@@ -274,11 +278,14 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--water); }
 .moisture-trend-chart { margin-top: 0; }
 .moisture-trend-empty { min-height: 110px; }
-#plant-weight-chart .trend-cycle, .moisture-trend-chart .trend-cycle { fill: #bfe2c9a6; }
-#plant-weight-chart .trend-cycle-edge, .moisture-trend-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-#plant-weight-chart .trend-cycle-label, .moisture-trend-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
-#plant-weight-chart .trend-refill, .moisture-trend-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
-#plant-weight-chart .trend-refill-label, .moisture-trend-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+/* Any chart that draws a comfortable band or a refill line, not a named
+   list of them: each new chart that reused these classes was getting an
+   invisible line and a black label until its id was added here. */
+.history-chart .trend-cycle { fill: #bfe2c9a6; }
+.history-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.history-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+.history-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.history-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 #plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
@@ -687,3 +694,12 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #plant-photo-add { cursor: pointer; }
 #plant-photo-message { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+
+/* The forecast: what has happened drawn solid, what is expected dashed, and
+   the spread between the fastest and slowest it has drunk as a band. */
+.forecast-cone { fill: #cfe3ec99; }
+.forecast-line { stroke: #2b6c86; stroke-width: 2; stroke-dasharray: 6 4; fill: none; vector-effect: non-scaling-stroke; }
+.forecast-missing-list { margin: 0; padding-left: 18px; display: grid; gap: 10px; }
+.forecast-missing-list li strong { display: block; }
+.forecast-missing-list li span { color: var(--muted); font-size: 14px; }
+.forecast .journey-stats { margin-bottom: 18px; }

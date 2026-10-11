@@ -456,6 +456,60 @@ class PlantWeightTests(unittest.TestCase):
         self.assertIsNone(use["intervals"][0]["drying_kpa"])
         self.assertIsNone(use["intervals"][0]["grams_per_day_per_kpa"])
 
+    def test_it_says_when_the_plant_will_want_water(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 3_000, "watered", at=ago(12))
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(8, 2_700), (4, 2_500), (0.2, 2_400)])
+
+        forecast = self.store.watering_forecast(self.plant_id)
+
+        self.assertTrue(forecast["ready"])
+        self.assertEqual(forecast["missing"], [])
+        self.assertEqual(forecast["grams_to_go"], 400)
+        self.assertEqual(forecast["grams_per_day"], 50)
+        self.assertEqual(forecast["rate_from"], "this cycle")
+        self.assertAlmostEqual(forecast["days"], 7.9, places=1)
+        # A range, not a day: four weighings on a kitchen scale do not know
+        # the hour. Fastest it has drunk brings it forward, slowest pushes out.
+        self.assertLess(forecast["days_soonest"], forecast["days"])
+        self.assertGreater(forecast["days_latest"], forecast["days"])
+
+    def test_it_names_what_is_missing_rather_than_guessing(self) -> None:
+        # Nothing at all.
+        self.assertEqual(
+            [m["code"] for m in self.store.watering_forecast(self.plant_id)["missing"]],
+            ["no_weighing", "no_thirsty_weight", "no_rate"])
+
+        # Weighed, and weighed again, but never told what thirsty looks like.
+        self.water_history([(4, 2_800), (0.2, 2_600)])
+        gap = self.store.watering_forecast(self.plant_id)
+        self.assertFalse(gap["ready"])
+        self.assertEqual([m["code"] for m in gap["missing"]], ["no_thirsty_weight"])
+        self.assertIn("Thirsty at", gap["missing"][0]["how"])
+
+        # Told that, and it can answer.
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.assertTrue(self.store.watering_forecast(self.plant_id)["ready"])
+
+    def test_one_weighing_is_a_weight_and_not_a_rate(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.store.record_plant_weight(self.plant_id, 2_600, at=ago(0.2))
+
+        forecast = self.store.watering_forecast(self.plant_id)
+        self.assertEqual([m["code"] for m in forecast["missing"]], ["no_rate"])
+        self.assertIsNone(forecast["days"])
+
+    def test_a_pot_already_at_its_thirsty_weight_says_so(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 2_500, "thirsty", observed=False)
+        self.water_history([(6, 2_900), (3, 2_600), (0.2, 2_450)])
+
+        forecast = self.store.watering_forecast(self.plant_id)
+        self.assertTrue(forecast["ready"])
+        self.assertTrue(forecast["thirsty_now"])
+        self.assertEqual(forecast["days"], 0.0)
+        # Nothing is "minus fifty millilitres to go".
+        self.assertEqual(forecast["grams_to_go"], 0)
+
     def test_water_use_says_nothing_before_there_is_anything_to_say(self) -> None:
         empty = self.store.water_use(self.plant_id)
         self.assertEqual(empty["intervals"], [])
@@ -808,6 +862,20 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("function airSource()", script)
         self.assertIn("profileId: selectedPlant?.profile_id", script)
         self.assertIn("profiles?.profiles?.[climateProfileId", script)
+
+    def test_the_forecast_reaches_the_list_and_the_plants_page(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+
+        # Short on the card, explained on the plant's page.
+        self.assertIn("`Water in ${Math.round(days)}d`", script)
+        self.assertIn('id="forecast-chart"', page)
+        self.assertIn('id="forecast-missing-list"', page)
+        self.assertIn("function renderForecastMissing(missing)", script)
+
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.assertIsNone(self.call("GET", "/api/plants")["items"][0]["water_in_days"])
+        self.assertFalse(self.call("GET", f"/api/plants/{plant}")["forecast"]["ready"])
 
     def test_having_no_sensor_is_not_worth_a_badge(self) -> None:
         script = self.call_text("/app.js")

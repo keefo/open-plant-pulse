@@ -525,6 +525,31 @@
       <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
     </section>
 
+    <section class="plant-weight forecast" data-page="plant detail" aria-labelledby="forecast-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WHEN TO WATER</p><h2 id="forecast-title">Next watering</h2></div>
+        <span id="forecast-headline"></span>
+      </div>
+      <div id="forecast-known" hidden>
+        <div class="journey-stats" aria-live="polite">
+          <div><strong id="forecast-days">--</strong><span>Days from now</span></div>
+          <div><strong id="forecast-window">--</strong><span>Soonest to latest</span></div>
+          <div><strong id="forecast-to-go">--</strong><span>Water left to use</span></div>
+          <div><strong id="forecast-rate">--</strong><span>Going at (ml/d)</span></div>
+        </div>
+        <div class="weight-trend">
+          <span>Weight from here to thirsty · the band is the fastest and slowest it has drunk</span>
+          <svg id="forecast-chart" class="history-chart" viewBox="0 0 640 190" role="img" aria-label="Projected pot weight until watering"></svg>
+        </div>
+        <p id="forecast-reason" class="settings-note"></p>
+      </div>
+      <div id="forecast-missing" hidden>
+        <p class="settings-note">The hub will not guess at this. Each thing it
+          still needs is below, with what to do about it.</p>
+        <ul id="forecast-missing-list" class="forecast-missing-list"></ul>
+      </div>
+    </section>
+
     <section class="plant-weight water-use" data-page="plant detail" aria-labelledby="water-use-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>

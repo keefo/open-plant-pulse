@@ -684,6 +684,7 @@ def create_server(
             plant["weight"] = store.plant_weight_status(plant_id)
             # The air of the room it is in, whoever is measuring it.
             plant["room_air"] = store.room_air(plant["room_id"])
+            plant["forecast"] = store.watering_forecast(plant_id)
             plant["water_use"] = {
                 **store.water_use(plant_id),
                 "findings": store.water_use_findings(plant_id),
