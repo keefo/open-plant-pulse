@@ -911,6 +911,15 @@ class PlantApiTests(unittest.TestCase):
         # Dragging works with a finger, and so does the keyboard.
         self.assertIn("pointermove", script)
         self.assertIn("function nudgeSection(event)", script)
+        # Nothing is reordered until the finger lifts. Moving tiles during
+        # the drag shifts the rest under the pointer, and the next move
+        # undoes the last; the places are measured once instead.
+        self.assertIn("const middles = others.map((node) => {", script)
+        self.assertIn("landing-above", script)
+        # And the landing place comes from how far down the pointer is, not
+        # from what is underneath it: the tiles have gaps between them, and
+        # a pointer in a gap is over nothing at all.
+        self.assertNotIn("elementsFromPoint", script)
 
     def test_the_care_log_can_be_folded_and_filtered(self) -> None:
         """Fifty lighting lines should not bury the feeding somebody wants."""
@@ -934,6 +943,13 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(page.count("care-log-controls"), 2)
         self.assertEqual(page.count("care-log-toggle"), 2)
         self.assertIn("function visibleCareEvents(items)", script)
+        # A box for every kind the hub knows, not only the kinds this plant
+        # happens to have: the choice is for every plant, and somebody
+        # setting it should not have to find a plant with one of each.
+        for kind in ("watering", "watering_due", "fertilizing", "lighting",
+                     "drainage_assessment", "observation", "note"):
+            self.assertIn(f'{kind}: "', script)
+        self.assertIn('const present = Object.keys(CARE_KIND_LABELS);', script)
         # Folding is where somebody is on a page, so that stays in the browser.
         self.assertIn("CARE_LOG_FOLDED_KEY", script)
         # An empty log and one emptied by the boxes are different things.

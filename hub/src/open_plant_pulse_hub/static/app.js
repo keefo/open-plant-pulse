@@ -1657,14 +1657,11 @@ function visibleCareEvents(items) {
 /* A box per kind the log actually holds. Offering all seven to a plant
  * whose log is four waterings is a wall of controls for nothing. */
 function renderCareKindChoices(items) {
-  const present = [];
-  for (const event of items) {
-    if (!present.includes(event.kind) && CARE_KIND_LABELS[event.kind]) present.push(event.kind);
-  }
-  present.sort((a, b) => Object.keys(CARE_KIND_LABELS).indexOf(a)
-    - Object.keys(CARE_KIND_LABELS).indexOf(b));
+  const counts = new Map();
+  for (const event of items) counts.set(event.kind, (counts.get(event.kind) || 0) + 1);
+  const present = Object.keys(CARE_KIND_LABELS);
   for (const fieldset of document.querySelectorAll(".care-log-kinds")) {
-    const renderKey = JSON.stringify([present, careLogHiddenKinds]);
+    const renderKey = JSON.stringify([[...counts], careLogHiddenKinds]);
     if (fieldset.dataset.renderKey === renderKey) continue;
     setData(fieldset, "renderKey", renderKey);
     const legend = fieldset.querySelector("legend");
@@ -1680,8 +1677,12 @@ function renderCareKindChoices(items) {
       box.checked = !careLogHiddenKinds.includes(kind);
       box.addEventListener("change", () => setCareKindShown(kind, box.checked));
       const text = document.createElement("span");
-      const count = items.filter((event) => event.kind === kind).length;
-      setText(text, `${CARE_KIND_LABELS[kind]} (${count})`);
+      const count = counts.get(kind) || 0;
+      setText(text, count ? `${CARE_KIND_LABELS[kind]} (${count})`
+        : CARE_KIND_LABELS[kind]);
+      // A kind this plant has none of is still worth a box -- the choice
+      // is for every plant -- but it should not look like something to read.
+      if (!count) setData(label, "empty", "true");
       label.append(box, text);
       fieldset.append(label);
     }
@@ -3193,8 +3194,13 @@ function renderArranging() {
 }
 
 /* Dragging with pointer events rather than the drag-and-drop API, which
- * does not exist on a phone. A tile swaps with whichever one the finger is
- * over; the order is read back off the page when the finger lifts. */
+ * does not exist on a phone.
+ *
+ * Nothing moves until the finger lifts. Reordering during the drag sounds
+ * livelier and does not work: the tile being dragged is still in the
+ * column, so every move shifts the others under the pointer and the next
+ * move undoes the last. Instead the places are measured once, a line shows
+ * where it would land, and the move happens on release. */
 function beginSectionDrag(event) {
   if (!arranging) return;
   const moving = event.target.closest("[data-section]");
@@ -3203,27 +3209,41 @@ function beginSectionDrag(event) {
   moving.setPointerCapture(event.pointerId);
   setClass(moving, "dragging", true);
 
-  const over = (x, y) => document.elementsFromPoint(x, y)
-    .map((node) => node.closest?.("[data-section]"))
-    .find((node) => node && node !== moving && !node.hasAttribute("hidden"));
+  const others = orderedSections()
+    .filter((node) => node !== moving && !node.hasAttribute("hidden"));
+  const middles = others.map((node) => {
+    const box = node.getBoundingClientRect();
+    return box.top + box.height / 2;
+  });
+  let landing = others.length;
 
+  const showLanding = () => {
+    for (const [index, node] of others.entries()) {
+      setClass(node, "landing-above", index === landing);
+    }
+    setClass(moving.parentNode, "landing-last", landing === others.length);
+  };
   const move = (pointer) => {
-    const target = over(pointer.clientX, pointer.clientY);
-    if (!target) return;
-    const box = target.getBoundingClientRect();
-    const below = pointer.clientY > box.top + box.height / 2;
-    target.parentNode.insertBefore(moving, below ? target.nextSibling : target);
+    const next = middles.findIndex((middle) => pointer.clientY < middle);
+    landing = next === -1 ? others.length : next;
+    showLanding();
   };
   const end = () => {
     setClass(moving, "dragging", false);
+    for (const node of others) setClass(node, "landing-above", false);
+    setClass(moving.parentNode, "landing-last", false);
     moving.removeEventListener("pointermove", move);
     moving.removeEventListener("pointerup", end);
     moving.removeEventListener("pointercancel", end);
+    const before = others[landing];
+    if (before) before.parentNode.insertBefore(moving, before);
+    else others[others.length - 1]?.after(moving);
     readSectionOrder();
   };
   moving.addEventListener("pointermove", move);
   moving.addEventListener("pointerup", end);
   moving.addEventListener("pointercancel", end);
+  showLanding();
 }
 
 function nudgeSection(event) {
