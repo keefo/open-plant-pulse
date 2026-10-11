@@ -3196,54 +3196,71 @@ function renderArranging() {
 /* Dragging with pointer events rather than the drag-and-drop API, which
  * does not exist on a phone.
  *
- * Nothing moves until the finger lifts. Reordering during the drag sounds
- * livelier and does not work: the tile being dragged is still in the
- * column, so every move shifts the others under the pointer and the next
- * move undoes the last. Instead the places are measured once, a line shows
- * where it would land, and the move happens on release. */
+ * The tile is lifted out of the column and follows the finger, and a
+ * dashed gap of its own size stands where it would land. Taking it out of
+ * the flow is what makes the rest of this honest: left in place it shifts
+ * every tile below it as it moves, the pointer lands somewhere else than
+ * it did a frame ago, and the next move undoes the last.
+ */
 function beginSectionDrag(event) {
   if (!arranging) return;
   const moving = event.target.closest("[data-section]");
   if (moving === null) return;
   event.preventDefault();
   moving.setPointerCapture(event.pointerId);
+
+  const box = moving.getBoundingClientRect();
+  const grabbedAt = { x: event.clientX - box.left, y: event.clientY - box.top };
+  const gap = document.createElement("div");
+  gap.className = "section-gap";
+  gap.style.height = `${box.height}px`;
+  moving.parentNode.insertBefore(gap, moving);
+
   setClass(moving, "dragging", true);
-
-  const others = orderedSections()
-    .filter((node) => node !== moving && !node.hasAttribute("hidden"));
-  const middles = others.map((node) => {
-    const box = node.getBoundingClientRect();
-    return box.top + box.height / 2;
-  });
-  let landing = others.length;
-
-  const showLanding = () => {
-    for (const [index, node] of others.entries()) {
-      setClass(node, "landing-above", index === landing);
-    }
-    setClass(moving.parentNode, "landing-last", landing === others.length);
+  moving.style.position = "fixed";
+  moving.style.width = `${box.width}px`;
+  moving.style.margin = "0";
+  moving.style.pointerEvents = "none";
+  moving.style.zIndex = "30";
+  const lift = (pointer) => {
+    moving.style.left = `${pointer.clientX - grabbedAt.x}px`;
+    moving.style.top = `${pointer.clientY - grabbedAt.y}px`;
   };
+  lift(event);
+
   const move = (pointer) => {
-    const next = middles.findIndex((middle) => pointer.clientY < middle);
-    landing = next === -1 ? others.length : next;
-    showLanding();
+    lift(pointer);
+    // Live positions are trustworthy now: the tile being dragged is out of
+    // the column, and the gap standing in for it is exactly its size.
+    const others = orderedSections()
+      .filter((node) => node !== moving && !node.hasAttribute("hidden"));
+    const above = others.find((node) => {
+      const rect = node.getBoundingClientRect();
+      return pointer.clientY < rect.top + rect.height / 2;
+    });
+    if (above) {
+      if (gap.nextSibling !== above) above.parentNode.insertBefore(gap, above);
+    } else if (others.length) {
+      const last = others[others.length - 1];
+      if (last.nextSibling !== gap) last.after(gap);
+    }
   };
   const end = () => {
-    setClass(moving, "dragging", false);
-    for (const node of others) setClass(node, "landing-above", false);
-    setClass(moving.parentNode, "landing-last", false);
     moving.removeEventListener("pointermove", move);
     moving.removeEventListener("pointerup", end);
     moving.removeEventListener("pointercancel", end);
-    const before = others[landing];
-    if (before) before.parentNode.insertBefore(moving, before);
-    else others[others.length - 1]?.after(moving);
+    setClass(moving, "dragging", false);
+    for (const property of ["position", "width", "margin", "pointerEvents",
+                            "zIndex", "left", "top"]) {
+      moving.style[property] = "";
+    }
+    gap.parentNode.insertBefore(moving, gap);
+    gap.remove();
     readSectionOrder();
   };
   moving.addEventListener("pointermove", move);
   moving.addEventListener("pointerup", end);
   moving.addEventListener("pointercancel", end);
-  showLanding();
 }
 
 function nudgeSection(event) {

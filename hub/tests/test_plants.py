@@ -911,11 +911,19 @@ class PlantApiTests(unittest.TestCase):
         # Dragging works with a finger, and so does the keyboard.
         self.assertIn("pointermove", script)
         self.assertIn("function nudgeSection(event)", script)
-        # Nothing is reordered until the finger lifts. Moving tiles during
-        # the drag shifts the rest under the pointer, and the next move
-        # undoes the last; the places are measured once instead.
-        self.assertIn("const middles = others.map((node) => {", script)
-        self.assertIn("landing-above", script)
+        # The tile is carried: lifted out of the column, following the
+        # finger, with a dashed gap of its own size where it would land.
+        # Left in the flow it shifts every tile below it as it moves, the
+        # pointer lands somewhere else than it did a frame ago, and the
+        # next move undoes the last.
+        self.assertIn('moving.style.position = "fixed"', script)
+        self.assertIn('gap.className = "section-gap"', script)
+        self.assertIn("gap.style.height = `${box.height}px`", script)
+        self.assertIn(".section-gap { ", self.call_text("/app.css"))
+        # And it puts everything back: no stray gap, no inline styles left
+        # on a section once the finger lifts.
+        self.assertIn("gap.remove();", script)
+        self.assertIn('moving.style[property] = "";', script)
         # And the landing place comes from how far down the pointer is, not
         # from what is underneath it: the tiles have gaps between them, and
         # a pointer in a gap is over nothing at all.
