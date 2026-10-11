@@ -960,8 +960,11 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(refused.exception.code, 400)
 
         script = self.call_text("/app.js")
-        self.assertIn("function timeAtHome(since)", script)
-        self.assertIn("at home", script)
+        # Short enough for a card -- 22d, 7mo, 2y 3mo -- with the whole
+        # phrase kept for the tooltip.
+        self.assertIn("function timeAtHomeParts(since)", script)
+        self.assertIn("`Home ${home.short}`", script)
+        self.assertIn("At home ${plural}", script)
 
     def test_it_refuses_what_is_not_a_picture(self) -> None:
         plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]

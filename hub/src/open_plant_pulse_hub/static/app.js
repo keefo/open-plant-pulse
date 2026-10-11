@@ -326,22 +326,34 @@ function renderHousehold() {
   });
 }
 
-/* "4 days", "7 months", "3 years" -- the unit a plant's age is worth saying
- * in changes as it gets older, and nobody counts a three-year-old plant in
- * days. */
+/* How long it has lived here, short enough for a card.
+ *
+ * The unit a plant's age is worth saying in changes as it gets older --
+ * nobody counts a three-year-old plant in days -- so the number stays small
+ * and only the unit changes: 22d, 7mo, 2y, 2y 3mo. The whole phrase goes in
+ * the tooltip for anyone who wants it spelled out.
+ */
 function timeAtHome(since) {
+  const spans = timeAtHomeParts(since);
+  return spans === null ? null : `Home ${spans.short}`;
+}
+
+function timeAtHomeParts(since) {
   if (!since) return null;
   const days = Math.floor((Date.now() - Date.parse(since)) / 86400000);
   if (!Number.isFinite(days) || days < 0) return null;
-  if (days < 1) return "home today";
-  if (days < 60) return `${days} day${days === 1 ? "" : "s"} at home`;
+  if (days < 1) return { short: "today", long: "Came home today" };
+  if (days < 60) {
+    return { short: `${days}d`, long: `At home ${days} day${days === 1 ? "" : "s"}` };
+  }
   const months = Math.round(days / 30.44);
-  if (days < 730) return `${months} months at home`;
+  if (days < 730) return { short: `${months}mo`, long: `At home ${months} months` };
   const years = Math.floor(days / 365.25);
   const extra = Math.round((days - years * 365.25) / 30.44);
+  const plural = `${years} year${years === 1 ? "" : "s"}`;
   return extra >= 1 && extra < 12
-    ? `${years}y ${extra}m at home`
-    : `${years} year${years === 1 ? "" : "s"} at home`;
+    ? { short: `${years}y ${extra}mo`, long: `At home ${plural} and ${extra} months` }
+    : { short: `${years}y`, long: `At home ${plural}` };
 }
 
 /* When it was last watered and when it was last weighed: two different
@@ -458,9 +470,10 @@ function updateHouseholdCard(card, plant, sensor) {
    * a number can actually say. The room is the fallback, since a plant that
    * has never been asked should not be given a made-up answer. */
   const where = card.querySelector("code");
-  const home = plant && timeAtHome(plant.acquired_at || plant.created_at);
-  setText(where, home
-    || (plant?.room || sensor?.room || "no room recorded"));
+  const home = plant && timeAtHomeParts(plant.acquired_at || plant.created_at);
+  setText(where, home ? `Home ${home.short}`
+    : (plant?.room || sensor?.room || "no room recorded"));
+  setAttr(where, "title", home ? home.long : "");
 
   /* The last thing that happened to this plant, by whichever instrument
    * knows. A pot can be weighed without the watering being logged, and a
