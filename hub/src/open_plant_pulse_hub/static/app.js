@@ -1693,6 +1693,7 @@ function careEventNote(event) {
   if (event.changes?.source === "manual") return "Recorded by hand";
   // Not something that happened to the plant: something the weighings imply.
   if (event.changes?.source === "water-use") return "Read from the weighings";
+
   if (event.kind === "drainage_assessment") return "Estimated response";
   if (event.kind === "lighting") {
     return event.confidence === "high" ? "Light confirmed" : "No answer from the light";
@@ -1713,6 +1714,7 @@ const CARE_KIND_LABELS = {
   watering: "Waterings",
   watering_due: "Overdue reminders",
   fertilizing: "Feedings",
+  repotting: "Repottings",
   lighting: "Lights on and off",
   drainage_assessment: "Drainage readings",
   observation: "Readings from the weighings",
@@ -2571,11 +2573,16 @@ function renderPlantPage() {
   // Watering is recorded by weighing the full pot, so the log keeps only the
   // buttons for what no weighing can tell: feeding, and whatever was noticed.
   const today = new Date().toDateString();
-  const fed = (selectedPlant.care_log || []).some((event) =>
-    event.kind === "fertilizing" && new Date(event.detected_at).toDateString() === today);
-  const button = document.getElementById("plant-fertilized");
-  setText(button, fed ? "Fertilized today ✓" : "Fertilized today");
-  setDisabled(button, fed);
+  for (const [kind, id, label] of [
+    ["fertilizing", "plant-fertilized", "Fertilized today"],
+    ["repotting", "plant-repotted", "Repotted"],
+  ]) {
+    const done = (selectedPlant.care_log || []).some((event) =>
+      event.kind === kind && new Date(event.detected_at).toDateString() === today);
+    const button = document.getElementById(id);
+    setText(button, done ? `${label} ✓` : label);
+    setDisabled(button, done);
+  }
 }
 
 /* Photographs of a plant.
@@ -3411,6 +3418,9 @@ function renderForecast() {
     return;
   }
 
+  // Said whether or not there is a forecast: a thing worth knowing about
+  // the figures is also worth knowing about their absence.
+  renderForecastList("forecast-cautions", forecast.cautions || []);
   setHidden(section, !forecast.ready);
   setHidden(missing, forecast.ready);
   if (!forecast.ready) {
@@ -3452,7 +3462,11 @@ function renderForecast() {
 }
 
 function renderForecastMissing(missing) {
-  const list = document.getElementById("forecast-missing-list");
+  renderForecastList("forecast-missing-list", missing);
+}
+
+function renderForecastList(listId, missing) {
+  const list = document.getElementById(listId);
   if (list === null || !renderKeyChanged(list, missing)) return;
   list.replaceChildren();
   for (const gap of missing) {
@@ -4150,8 +4164,13 @@ document.getElementById("firmware-file").addEventListener("change", (event) => {
   event.target.value = "";
 });
 document.getElementById("record-fertilized").addEventListener("click", recordFertilized);
+document.getElementById("record-repotted").addEventListener("click", () => {
+  const plantId = currentPlantId();
+  if (plantId !== null) recordPlantCare("repotting");
+});
 document.getElementById("add-plant").addEventListener("click", addPlant);
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
+document.getElementById("plant-repotted").addEventListener("click", () => recordPlantCare("repotting"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));

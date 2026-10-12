@@ -510,6 +510,35 @@ class PlantWeightTests(unittest.TestCase):
         # Nothing is "minus fifty millilitres to go".
         self.assertEqual(forecast["grams_to_go"], 0)
 
+    def test_a_span_across_a_repot_is_not_the_plant_drinking(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
+        self.water_history([(10, 2_800), (7, 2_700), (4, 2_600)])
+        self.store.record_plant_care(self.plant_id, "repotting", at=ago(2.5))
+        # New soil: the pot weighs what it weighs now, and the difference
+        # across the repot is compost rather than evapotranspiration.
+        self.water_history([(2, 3_400), (0.2, 3_300)])
+
+        spans = self.store.water_use(self.plant_id)["intervals"]
+
+        self.assertTrue(all(span["grams_per_day"] < 100 for span in spans), spans)
+        for span in spans:
+            self.assertFalse(span["from"] < ago(2.5) < span["to"], span)
+
+    def test_anchors_set_before_a_repot_are_flagged(self) -> None:
+        self.store.record_plant_weight(self.plant_id, 2_800, "watered", at=ago(12))
+        self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", at=ago(12),
+                                       observed=False)
+        self.water_history([(8, 2_600), (4, 2_400), (0.2, 2_300)])
+        self.assertEqual(self.store.watering_forecast(self.plant_id)["cautions"], [])
+
+        self.store.record_plant_care(self.plant_id, "repotting", at=ago(1))
+
+        cautions = self.store.watering_forecast(self.plant_id)["cautions"]
+        self.assertEqual([c["code"] for c in cautions], ["anchors_predate_repot"])
+        self.assertIn("Full at and Thirsty at", cautions[0]["what"])
+        # Still forecasts, because a figure with a caveat beats no figure.
+        self.assertTrue(self.store.watering_forecast(self.plant_id)["ready"])
+
     def test_water_use_says_nothing_before_there_is_anything_to_say(self) -> None:
         empty = self.store.water_use(self.plant_id)
         self.assertEqual(empty["intervals"], [])
@@ -1009,6 +1038,24 @@ class PlantApiTests(unittest.TestCase):
         script = self.call_text("/app.js")
         self.assertIn('id="weighing-log"', page)
         self.assertIn("async function removeWeighing(weighing)", script)
+
+    def test_a_repot_is_recorded_and_breaks_the_weighings(self) -> None:
+        """Same plant, different thing on the scale."""
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.call("POST", f"/api/plants/{plant}/care", {"kind": "repotting"})
+
+        log = self.call("GET", f"/api/plants/{plant}")["care_log"]
+        self.assertEqual([e["kind"] for e in log], ["repotting"])
+        self.assertEqual(log[0]["title"], "Repotted")
+        # Once a day, like watering and feeding: a pot is repotted or it is not.
+        self.call("POST", f"/api/plants/{plant}/care", {"kind": "repotting"})
+        self.assertEqual(len(self.call("GET", f"/api/plants/{plant}")["care_log"]), 1)
+
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        self.assertIn('id="plant-repotted"', page)
+        self.assertIn('id="record-repotted"', page)
+        self.assertIn('repotting: "Repottings"', script)
 
     def test_a_card_marks_watering_feeding_and_weighing(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]

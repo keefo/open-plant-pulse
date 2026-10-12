@@ -190,6 +190,7 @@ CARE_KINDS = {
     "watering_due": "Overdue reminders",
     "fertilizing": "Feedings",
     "lighting": "Lights on and off",
+    "repotting": "Repottings",
     "drainage_assessment": "Drainage readings",
     "observation": "Readings from the weighings",
     "note": "Notes",
@@ -209,11 +210,16 @@ MIN_WEIGHT_SPAN = timedelta(hours=12)
 # saying; a rate drawn from them would be noise with a decimal point.
 MIN_WATER_USE_SPAN = timedelta(hours=8)
 # Care a person records themselves, because no probe could have seen it.
-MANUAL_CARE_KINDS = {"watering": "Watered", "fertilizing": "Fertilized", "note": "Note"}
+MANUAL_CARE_KINDS = {
+    "watering": "Watered",
+    "fertilizing": "Fertilized",
+    "repotting": "Repotted",
+    "note": "Note",
+}
 # Care that happens at most once in a day, whoever noticed it. A rise the probe
 # reads and the hand that caused it are one feeding, not two, so they collapse
 # into a single entry: the first to arrive is the one that is kept.
-ONE_PER_DAY_KINDS = ("watering", "fertilizing")
+ONE_PER_DAY_KINDS = ("watering", "fertilizing", "repotting")
 # How long after a watering was called for it is counted as missed.
 MISSED_WATERING_GRACE = timedelta(hours=24)
 # The longest believable stretch of light. Nobody leaves a grow light on over a
@@ -3150,12 +3156,17 @@ class ReadingStore:
                 """,
                 (plant_id, _timestamp(since)),
             ).fetchall()
+            # Both break a span: a watering puts water in, and a repot
+            # changes what the pot is made of. Neither is the plant
+            # drinking, and one weighing either side cannot tell them apart
+            # from it.
             waterings = [
                 row[0]
                 for row in self._database.execute(
                     """
                     SELECT detected_at FROM care_events
-                    WHERE plant_id = ? AND kind = 'watering' AND detected_at >= ?
+                    WHERE plant_id = ? AND kind IN ('watering', 'repotting')
+                      AND detected_at >= ?
                     ORDER BY detected_at
                     """,
                     (plant_id, _timestamp(since)),
@@ -3542,6 +3553,17 @@ class ReadingStore:
                 )
         return findings
 
+    def _last_care_at(self, plant_id: int, kind: str) -> Optional[str]:
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT MAX(detected_at) FROM care_events
+                WHERE plant_id = ? AND kind = ?
+                """,
+                (plant_id, kind),
+            ).fetchone()
+        return row[0] if row else None
+
     def watering_forecast(self, plant_id: int, with_air: bool = True) -> Dict[str, Any]:
         """When the pot will reach the weight at which this plant wants water.
 
@@ -3590,9 +3612,31 @@ class ReadingStore:
                        "Two weighings far enough apart are what a rate is.",
             })
 
+        # A repot changes what the pot weighs full and what it weighs
+        # thirsty: same plant, different thing on the scale. Anchors set
+        # before the last one are about a pot that no longer exists.
+        cautions: List[Dict[str, str]] = []
+        repotted = self._last_care_at(plant_id, "repotting")
+        if repotted is not None:
+            stale = [
+                name for name, anchor in (("Full at", status["watered"]),
+                                          ("Thirsty at", status["thirsty"]))
+                if anchor is not None and anchor["at"] < repotted
+            ]
+            if stale:
+                cautions.append({
+                    "code": "anchors_predate_repot",
+                    "what": f"{' and '.join(stale)} {'were' if len(stale) > 1 else 'was'} "
+                            "set before this plant was repotted",
+                    "how": "New soil weighs what it weighs. Weigh the pot after its "
+                           "next watering and press Just watered to set the full "
+                           "weight again.",
+                })
+
         forecast: Dict[str, Any] = {
             "ready": False,
             "missing": missing,
+            "cautions": cautions,
             "days": None,
             "days_soonest": None,
             "days_latest": None,

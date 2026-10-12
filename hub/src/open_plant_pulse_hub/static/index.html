@@ -476,7 +476,10 @@
     <section class="care-log" data-page="detail" data-section="care-log" aria-label="Plant care history" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
-        <button id="record-fertilized" class="secondary-action" type="button">Fertilized today</button>
+        <div class="settings-sensor-actions">
+          <button id="record-fertilized" class="secondary-action" type="button">Fertilized today</button>
+          <button id="record-repotted" class="secondary-action" type="button">Repotted</button>
+        </div>
       </div>
       <div class="care-log-controls">
         <button class="care-log-toggle" type="button" aria-expanded="true">Hide log</button>
@@ -551,6 +554,7 @@
         <div><p class="eyebrow">WHEN TO WATER</p><h2 id="forecast-title">Next watering</h2></div>
         <span id="forecast-headline"></span>
       </div>
+      <ul id="forecast-cautions" class="forecast-missing-list forecast-cautions"></ul>
       <div id="forecast-known" hidden>
         <div class="journey-stats" aria-live="polite">
           <div><strong id="forecast-days">--</strong><span>Days from now</span></div>
@@ -642,6 +646,7 @@
         <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
         <div class="settings-sensor-actions">
           <button id="plant-fertilized" class="secondary-action" type="button">Fertilized today</button>
+          <button id="plant-repotted" class="secondary-action" type="button">Repotted</button>
           <button id="plant-note" class="secondary-action" type="button">Add a note</button>
         </div>
       </div>

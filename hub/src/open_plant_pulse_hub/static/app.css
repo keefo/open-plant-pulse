@@ -380,6 +380,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .care-event.drainage_assessment::before { background: var(--leaf); box-shadow: 0 0 0 4px #dcecdf; }
 .care-event.lighting::before { background: var(--gold); box-shadow: 0 0 0 4px #f5ead0; }
 /* A reading rather than an event: the same water blue the use chart uses. */
+/* Soil, so brown: a repot is the one entry about what the plant is in
+   rather than what it was given. */
+.care-event.repotting::before { background: #9a7b53; box-shadow: 0 0 0 4px #efe6d9; }
 .care-event.observation::before { background: #7fb6cf; box-shadow: 0 0 0 4px #dceaf1; }
 .care-event time { grid-row: span 2; color: var(--muted); font-size: 12px; }
 .care-event-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -712,6 +715,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .forecast-missing-list li strong { display: block; }
 .forecast-missing-list li span { color: var(--muted); font-size: 14px; }
 .forecast .journey-stats { margin-bottom: 18px; }
+/* A caveat about the figures rather than a reason there are none. */
+.forecast-cautions:empty { display: none; }
+.forecast-cautions { margin-bottom: 18px; padding: 14px 16px 14px 34px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: #faf4e6; }
 
 /* Arranging the sections.
    Each one shrinks to a tile with its name on it, because a page of

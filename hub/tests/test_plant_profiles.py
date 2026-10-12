@@ -12,7 +12,15 @@ class PlantProfileLoaderTests(unittest.TestCase):
 
         self.assertEqual(
             set(catalog["profiles"]),
-            {"generic_foliage", "jasmine", "monstera", "pothos", "spider_plant", "strelitzia"},
+            {
+                "generic_foliage",
+                "jasmine",
+                "monstera",
+                "pothos",
+                "spider_plant",
+                "strelitzia",
+                "tillandsia",
+            },
         )
         self.assertNotIn("schema_version", catalog["profiles"]["strelitzia"])
         self.assertNotIn("$schema", catalog["profiles"]["strelitzia"])
