@@ -2773,6 +2773,10 @@ async function refreshPlantPhotos() {
 function renderPlantPhotos() {
   const grid = document.getElementById("plant-photo-grid");
   if (grid === null) return;
+  const follows = document.getElementById("plant-cover-follows");
+  if (follows !== null && follows !== document.activeElement) {
+    follows.checked = Boolean(selectedPlant?.cover_follows_latest);
+  }
   if (!renderKeyChanged(grid, plantPhotos)) return;
   grid.replaceChildren();
   if (!plantPhotos.length) {
@@ -2821,7 +2825,9 @@ function renderPlantPhotos() {
     const actions = document.createElement("div");
     if (photo.cover) {
       const mark = document.createElement("strong");
-      setText(mark, "Cover");
+      // Said plainly when it is the cover because it is the newest rather
+      // than because anybody chose it: the next photograph will take it.
+      setText(mark, selectedPlant?.cover_follows_latest ? "Cover · newest" : "Cover");
       actions.append(mark);
     } else {
       const choose = document.createElement("button");
@@ -2860,6 +2866,22 @@ async function setPhotoDate(photoId, date) {
   }
   setText(message, "Date saved.");
   await refreshPlantPhotos();
+}
+
+/* Follow the newest, or stop following it. Choosing a picture by hand
+ * turns this off on the hub's side, so the box simply reports what the
+ * plant says rather than arguing with it. */
+async function setCoverFollowsLatest(following) {
+  const plantId = currentPlantId();
+  if (plantId === null) return;
+  const response = await fetch(`/api/plants/${plantId}/cover`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ follows_latest: following }),
+  });
+  if (!response.ok) return;
+  await refreshPlantPhotos();
+  await refreshPlant();
 }
 
 async function setPlantCover(photoId) {
@@ -4183,6 +4205,9 @@ document.getElementById("plant-photo-add").addEventListener("keydown", (event) =
     event.preventDefault();
     document.getElementById("plant-photo-file").click();
   }
+});
+document.getElementById("plant-cover-follows").addEventListener("change", (event) => {
+  setCoverFollowsLatest(event.target.checked);
 });
 document.getElementById("plant-photo-file").addEventListener("change", (event) => {
   // Copied out before the input is cleared: files is the input's own live

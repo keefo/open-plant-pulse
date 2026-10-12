@@ -1165,6 +1165,58 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("`Home ${home.short}`", script)
         self.assertIn("At home ${plural}", script)
 
+    def test_a_cover_can_follow_the_newest_photograph(self) -> None:
+        """A plant photographed to watch it grow wants the latest on its card."""
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        first = self.upload_photo(plant_id, PNG, taken_at="2026-01-01T12:00:00Z")
+        self.call("PUT", f"/api/plants/{plant_id}/cover", {"follows_latest": True})
+
+        newer = self.upload_photo(plant_id, JPEG, taken_at="2026-06-01T12:00:00Z")
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         newer["photo_id"])
+
+        # Newest by when it was taken, not by when it arrived: a picture
+        # from years ago uploaded this morning is not the newest.
+        self.upload_photo(plant_id, PNG + b"old", taken_at="2019-07-14T12:00:00Z")
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         newer["photo_id"])
+
+        # Choosing one by hand is a decision, and stops the following.
+        self.call("PUT", f"/api/plants/{plant_id}/cover", {"photo_id": first["photo_id"]})
+        plant = self.call("GET", f"/api/plants/{plant_id}")
+        self.assertEqual(plant["cover_photo_id"], first["photo_id"])
+        self.assertFalse(plant["cover_follows_latest"])
+        self.upload_photo(plant_id, JPEG + b"newest", taken_at="2026-10-01T12:00:00Z")
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         first["photo_id"])
+
+    def test_the_cover_checkbox_is_on_the_photographs(self) -> None:
+        page = self.call_text("/")
+        script = self.call_text("/app.js")
+        self.assertIn('id="plant-cover-follows"', page)
+        self.assertIn("async function setCoverFollowsLatest(following)", script)
+        # Per plant, not for the household: one plant is a record of growth
+        # and the next has one good picture nothing will beat.
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        other = self.call("POST", "/api/plants", {"display_name": "Fern"})["plant_id"]
+        self.call("PUT", f"/api/plants/{plant}/cover", {"follows_latest": True})
+        self.assertTrue(self.call("GET", f"/api/plants/{plant}")["cover_follows_latest"])
+        self.assertFalse(self.call("GET", f"/api/plants/{other}")["cover_follows_latest"])
+
+    def test_following_the_newest_keeps_up_with_a_corrected_date(self) -> None:
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.upload_photo(plant_id, PNG, taken_at="2026-01-01T12:00:00Z")
+        undated = self.upload_photo(plant_id, JPEG, taken_at="2019-01-01T12:00:00Z")
+        self.call("PUT", f"/api/plants/{plant_id}/cover", {"follows_latest": True})
+        self.assertNotEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                            undated["photo_id"])
+
+        # Told a later date, it becomes the newest and takes the cover.
+        self.call("PUT", f"/api/photos/{undated['photo_id']}",
+                  {"taken_at": "2026-09-01T12:00:00Z"})
+        self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
+                         undated["photo_id"])
+
     def test_it_refuses_what_is_not_a_picture(self) -> None:
         plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
         for body in (b"not a picture", b"\x00\x00\x00\x18ftypheic" + b"x" * 40):

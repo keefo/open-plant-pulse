@@ -3713,7 +3713,8 @@ class ReadingStore:
                         WHERE plant_photos.photo_id = plants.cover_photo_id),
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
-                          AND kind = 'fertilizing')
+                          AND kind = 'fertilizing'),
+                       plants.cover_follows_latest
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -3758,7 +3759,8 @@ class ReadingStore:
                         WHERE plant_photos.photo_id = plants.cover_photo_id),
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
-                          AND kind = 'fertilizing')
+                          AND kind = 'fertilizing'),
+                       plants.cover_follows_latest
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -3803,6 +3805,7 @@ class ReadingStore:
                 """,
                 (photo_id, plant_id),
             )
+            self._follow_latest_cover(plant_id)
         photo = self.plant_photo(photo_id)
         assert photo is not None
         return photo
@@ -3893,6 +3896,7 @@ class ReadingStore:
                 "UPDATE plant_photos SET taken_at = ? WHERE photo_id = ?",
                 (checked, photo_id),
             )
+            self._follow_latest_cover(int(self.plant_photo(photo_id)["plant_id"]))
         photo = self.plant_photo(photo_id)
         assert photo is not None
         return photo
@@ -3936,10 +3940,57 @@ class ReadingStore:
                     """,
                     (plant_id, plant_id),
                 )
+            self._follow_latest_cover(plant_id)
         return True
 
+    def _newest_photo_id(self, plant_id: int) -> Optional[int]:
+        """The plant's most recent photograph, by when it was taken."""
+        row = self._database.execute(
+            """
+            SELECT photo_id FROM plant_photos WHERE plant_id = ?
+            ORDER BY COALESCE(taken_at, added_at) DESC, photo_id DESC LIMIT 1
+            """,
+            (plant_id,),
+        ).fetchone()
+        return None if row is None else int(row[0])
+
+    def _follow_latest_cover(self, plant_id: int) -> None:
+        """Put the newest photograph on the cover, where that was asked for.
+
+        Called wherever "newest" can have changed: a photograph arriving,
+        one being struck, or one being told a different date -- a picture
+        from last summer uploaded today is not the newest, whatever order
+        it came in.
+        """
+        following = self._database.execute(
+            "SELECT cover_follows_latest FROM plants WHERE plant_id = ?", (plant_id,)
+        ).fetchone()
+        if following is None or not following[0]:
+            return
+        self._database.execute(
+            "UPDATE plants SET cover_photo_id = ? WHERE plant_id = ?",
+            (self._newest_photo_id(plant_id), plant_id),
+        )
+
+    def set_cover_follows_latest(self, plant_id: int, following: bool) -> Dict[str, Any]:
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE plants SET cover_follows_latest = ? WHERE plant_id = ?",
+                (1 if following else 0, plant_id),
+            )
+            self._follow_latest_cover(plant_id)
+        plant = self.plant(plant_id)
+        assert plant is not None
+        return plant
+
     def set_cover_photo(self, plant_id: int, photo_id: Optional[int]) -> Dict[str, Any]:
-        """Choose the one picture that stands for the plant."""
+        """Choose the one picture that stands for the plant.
+
+        Choosing one by hand is a decision, and it turns off following the
+        newest: the next photograph must not quietly overrule it.
+        """
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
         if photo_id is not None:
@@ -3948,7 +3999,10 @@ class ReadingStore:
                 raise ValueError("that photograph is not this plant's")
         with self._condition, self._database:
             self._database.execute(
-                "UPDATE plants SET cover_photo_id = ? WHERE plant_id = ?",
+                """
+                UPDATE plants SET cover_photo_id = ?, cover_follows_latest = 0
+                WHERE plant_id = ?
+                """,
                 (photo_id, plant_id),
             )
         plant = self.plant(plant_id)
@@ -4151,6 +4205,7 @@ class ReadingStore:
             # When it was last fed, which is the other thing a plant is
             # given and the one nobody remembers.
             "last_fed_at": row[14],
+            "cover_follows_latest": bool(row[15]),
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

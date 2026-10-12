@@ -207,10 +207,15 @@ def create_server(
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/cover"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/cover")])
-                    cover = payload.get("photo_id")
-                    result = store.set_cover_photo(
-                        plant_id, None if cover in (None, "") else int(cover)
-                    )
+                    if "follows_latest" in payload:
+                        result = store.set_cover_follows_latest(
+                            plant_id, payload.get("follows_latest") is True
+                        )
+                    else:
+                        cover = payload.get("photo_id")
+                        result = store.set_cover_photo(
+                            plant_id, None if cover in (None, "") else int(cover)
+                        )
                 elif path.startswith("/api/plants/") and path.endswith("/lighting"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/lighting")])
                     store.set_plant_lighting_of(

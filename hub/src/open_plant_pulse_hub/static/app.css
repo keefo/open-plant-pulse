@@ -693,6 +693,8 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .photo-date { padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; }
 .photo-date:hover, .photo-date:focus { border-color: var(--line); background: white; }
 .photo-date[data-undated="true"] { font-style: italic; }
+.photo-follow-latest { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.photo-follow-latest input { width: auto; margin: 0; }
 .photo-date-field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .photo-date-field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-weight: 400; }
 .photo-tile figcaption strong { color: var(--leaf); }

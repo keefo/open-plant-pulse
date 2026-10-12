@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 32
+DATABASE_SCHEMA_VERSION = 33
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -968,6 +968,17 @@ MIGRATIONS: Dict[int, str] = {
            preference rather than a plant's property, so it is kept here
            beside the section order and applies to every plant. */
         ALTER TABLE hub_settings ADD COLUMN care_log_hidden_kinds TEXT;
+    """,
+    33: """
+        /* Whether this plant's cover follows its newest photograph.
+
+           A plant photographed every few weeks to watch it grow wants the
+           most recent picture on its card, and saying so once is better
+           than choosing again every time. Per plant rather than for the
+           household: one plant is a record of growth and the next has one
+           good picture of it that nothing will beat. */
+        ALTER TABLE plants ADD COLUMN cover_follows_latest INTEGER NOT NULL DEFAULT 0
+            CHECK (cover_follows_latest IN (0, 1));
     """,
 }
 
