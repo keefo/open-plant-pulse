@@ -4256,6 +4256,15 @@ for (const button of document.querySelectorAll(".care-log-toggle")) {
   button.addEventListener("click", toggleCareLog);
 }
 trackRawReportsDisclosure();
+/* The page shows itself before it has anything to say.
+ *
+ * Every section starts hidden and is revealed by renderPage, which until
+ * now only ran inside the refresh -- so a plant page stayed blank through
+ * four round trips, and on anything slower than this machine that is the
+ * second or two before the headings, the buttons and the boxes appear.
+ * They do not depend on data; they can be there while it arrives. */
+renderPage();
+
 /* Five things the page needs before it can draw, none of which depends on
  * another: asked for together, they cost one round trip rather than five. */
 Promise.all([

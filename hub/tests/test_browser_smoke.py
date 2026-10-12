@@ -165,6 +165,28 @@ class BrowserSmokeTests(unittest.TestCase):
         tools.call("Log.enable")
         return tools
 
+    def test_a_page_shows_itself_before_its_data_arrives(self) -> None:
+        """Headings, buttons and boxes do not depend on a round trip."""
+        tools = self.devtools()
+        tools.call("Network.enable")
+        # Slow enough that waiting for data would be plain to see.
+        tools.call("Network.emulateNetworkConditions", offline=False, latency=400,
+                   downloadThroughput=-1, uploadThroughput=-1)
+        tools.call("Page.navigate", url=f"{self.base_url}/plants/{self.plant_id}")
+        time.sleep(0.9)
+        early = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              sections: [...document.querySelectorAll("main [data-section]")]
+                .filter(s => !s.hasAttribute("hidden")).length,
+              checkbox: !!document.getElementById("plant-cover-follows")?.offsetParent,
+              record: !!document.getElementById("plant-weight-record")?.offsetParent,
+            })""")["result"]["value"])
+
+        self.assertGreater(early["sections"], 0, "the page waited for data to show itself")
+        self.assertTrue(early["checkbox"])
+        self.assertTrue(early["record"])
+        self.assertEqual(tools.complaints, [])
+
     def test_every_page_runs_without_complaint(self) -> None:
         tools = self.devtools()
         pages = ["/plants", f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config",
