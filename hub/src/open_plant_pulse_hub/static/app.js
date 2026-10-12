@@ -2604,6 +2604,7 @@ function photoUrl(photoId, digest) {
 }
 const PHOTO_QUALITY = 0.85;
 let plantPhotos = [];
+let coverFollowsLatest = false;
 
 /* When the camera says the photograph was taken.
  *
@@ -2766,7 +2767,11 @@ async function refreshPlantPhotos() {
   if (plantId === null) return;
   const response = await fetch(`/api/plants/${plantId}/photos`);
   if (!response.ok) return;
-  plantPhotos = (await response.json()).items;
+  const payload = await response.json();
+  plantPhotos = payload.items;
+  // Set from the same answer the pictures came in, so the box and the
+  // photographs it is about appear together.
+  coverFollowsLatest = Boolean(payload.cover_follows_latest);
   renderPlantPhotos();
 }
 
@@ -2774,8 +2779,8 @@ function renderPlantPhotos() {
   const grid = document.getElementById("plant-photo-grid");
   if (grid === null) return;
   const follows = document.getElementById("plant-cover-follows");
-  if (follows !== null && follows !== document.activeElement) {
-    follows.checked = Boolean(selectedPlant?.cover_follows_latest);
+  if (follows !== null && follows.checked !== coverFollowsLatest) {
+    follows.checked = coverFollowsLatest;
   }
   if (!renderKeyChanged(grid, plantPhotos)) return;
   grid.replaceChildren();
@@ -2827,7 +2832,7 @@ function renderPlantPhotos() {
       const mark = document.createElement("strong");
       // Said plainly when it is the cover because it is the newest rather
       // than because anybody chose it: the next photograph will take it.
-      setText(mark, selectedPlant?.cover_follows_latest ? "Cover · newest" : "Cover");
+      setText(mark, coverFollowsLatest ? "Cover · newest" : "Cover");
       actions.append(mark);
     } else {
       const choose = document.createElement("button");
@@ -2881,7 +2886,7 @@ async function setCoverFollowsLatest(following) {
   });
   if (!response.ok) return;
   await refreshPlantPhotos();
-  await refreshPlant();
+  if (pageFromLocation() === "plant") await refreshPlant();
 }
 
 async function setPlantCover(photoId) {

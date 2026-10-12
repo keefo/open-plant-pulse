@@ -1190,6 +1190,20 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(self.call("GET", f"/api/plants/{plant_id}")["cover_photo_id"],
                          first["photo_id"])
 
+    def test_the_rule_about_the_pictures_arrives_with_the_pictures(self) -> None:
+        # Two requests meant the box ticked itself a round trip after the
+        # photographs appeared, which is what somebody notices.
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        self.upload_photo(plant, PNG)
+        self.call("PUT", f"/api/plants/{plant}/cover", {"follows_latest": True})
+
+        photos = self.call("GET", f"/api/plants/{plant}/photos")
+
+        self.assertEqual(len(photos["items"]), 1)
+        self.assertTrue(photos["cover_follows_latest"])
+        script = self.call_text("/app.js")
+        self.assertIn("coverFollowsLatest = Boolean(payload.cover_follows_latest)", script)
+
     def test_the_cover_checkbox_is_on_the_photographs(self) -> None:
         page = self.call_text("/")
         script = self.call_text("/app.js")

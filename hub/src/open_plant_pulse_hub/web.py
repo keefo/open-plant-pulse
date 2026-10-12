@@ -637,7 +637,14 @@ def create_server(
             except ValueError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json({"items": store.plant_photos(plant_id)})
+            # The rule about the pictures travels with the pictures. Asked
+            # for separately, the box saying "newest is the cover" ticks
+            # itself a round trip after the photographs appear.
+            plant = store.plant(plant_id)
+            self._send_json({
+                "items": store.plant_photos(plant_id),
+                "cover_follows_latest": bool(plant and plant["cover_follows_latest"]),
+            })
 
         def _send_photo(self, raw: str) -> None:
             """The photograph itself.
