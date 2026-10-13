@@ -241,10 +241,21 @@ config OPP_SOIL_PROBE_POWER_GPIO
 config OPP_SOIL_PROBE_WARMUP_MS
     int "Probe warm-up after power-on in milliseconds"
     range 0 60000
-    default 2000
+    default 5000
     help
         Wait this long after switching the probe on before the first read.
         The firmware logs how long the probe actually took to answer.
+
+        Moisture, temperature and conductivity are right two seconds after
+        power-on. pH is not there yet: until its first conversion finishes
+        the probe answers 3.0, the floor of its range, and a reading taken
+        at two seconds is that placeholder rather than a measurement.
+
+        Measured 2026-10-12 against the probe in drainage water, three cold
+        starts per point: 2 s gave 3.0 every time; 3 s gave 4.8; and 5, 6,
+        8, 10, 15, 30 and 60 s all gave 4.7. The answer arrives between two
+        and three seconds and does not move afterwards, so this is five for
+        the margin rather than because the electrode is still settling.
 
 config OPP_SOIL_PROBE_BAUD_RATE
     int "Soil probe baud rate"

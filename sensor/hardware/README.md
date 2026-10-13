@@ -103,6 +103,16 @@ temperature and conductivity are right on the first read. pH is not: 3.3 on
 the first read, 5.6 ten seconds later, 6.0-6.8 after long operation. A
 short power-up per reading will need a longer warm-up, or flagged pH.
 
+Measured properly on 2026-10-12, and it is a step rather than the climb
+those three numbers suggest. With the probe in drainage water and three
+cold starts at each warm-up, 2 s gave 3.0 every time, 3 s gave 4.8, and 5,
+6, 8, 10, 15, 30 and 60 s all gave 4.7. So 3.0 is not a cold electrode: it
+is what the probe answers before its first pH conversion has finished, and
+it happens to be the floor of its 3-9 range, which is why a stuck-looking
+3.0 is indistinguishable from no answer at all. The warm-up is 5000 ms
+from firmware 0.23.0; everything the hub stored before that was the
+placeholder.
+
 While USB is connected the INA219 cannot show this. Near full, the charger
 holds the system node at 4.2 V and supplies the loads directly; the pack
 current then depends only on the pack voltage, so switching a load changes
