@@ -403,6 +403,68 @@ esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_registe
     return error;
 }
 
+/* The deep reading waits here until a report takes it. */
+static opp_soil_probe_reading_t deep_reading;
+static bool deep_reading_pending;
+static int64_t last_deep_us;
+static bool deep_ever_taken;
+
+bool opp_soil_probe_take_deep_reading(opp_soil_probe_reading_t *reading)
+{
+    if (reading == NULL) {
+        return false;
+    }
+    bool taken = false;
+    portENTER_CRITICAL(&sample_lock);
+    if (deep_reading_pending) {
+        *reading = deep_reading;
+        deep_reading_pending = false;
+        taken = true;
+    }
+    portEXIT_CRITICAL(&sample_lock);
+    return taken;
+}
+
+int64_t opp_soil_probe_seconds_until_deep(void)
+{
+    portENTER_CRITICAL(&sample_lock);
+    const bool ever = deep_ever_taken;
+    const int64_t last = last_deep_us;
+    portEXIT_CRITICAL(&sample_lock);
+    if (!ever) {
+        return 0;
+    }
+    const int64_t due_us = last + (int64_t)CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS * 1000000;
+    const int64_t left_us = due_us - esp_timer_get_time();
+    return left_us <= 0 ? 0 : left_us / 1000000;
+}
+
+/* Whether this sample should pay the long warm-up that pH needs. */
+static bool deep_reading_due(void)
+{
+    portENTER_CRITICAL(&sample_lock);
+    const bool ever = deep_ever_taken;
+    const int64_t last = last_deep_us;
+    portEXIT_CRITICAL(&sample_lock);
+    if (!ever) {
+        /* The first reading after a boot is deep, so a node that has just
+         * been flashed says something about pH without waiting half a day. */
+        return true;
+    }
+    return esp_timer_get_time() - last >=
+           (int64_t)CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS * 1000000;
+}
+
+static void record_deep(const opp_soil_probe_reading_t *reading)
+{
+    portENTER_CRITICAL(&sample_lock);
+    deep_reading = *reading;
+    deep_reading_pending = true;
+    last_deep_us = esp_timer_get_time();
+    deep_ever_taken = true;
+    portEXIT_CRITICAL(&sample_lock);
+}
+
 static void record_result(esp_err_t error, const opp_soil_probe_reading_t *reading)
 {
     const int64_t now_us = esp_timer_get_time();
@@ -454,8 +516,18 @@ static void soil_probe_monitor_task(void *context)
          * measured against the interval that is a good trade, but it is why the
          * first pH after power-on has to be trustworthy before this number is
          * believed. */
+        const bool deep = deep_reading_due();
         xSemaphoreTake(power_lock(), portMAX_DELAY);
         esp_err_t error = opp_soil_probe_set_power(true);
+        /* set_power already waited the ordinary warm-up; pH wants the rest
+         * of its four minutes on top, and only a few times a day. */
+        if (error == ESP_OK && deep &&
+            CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS > CONFIG_OPP_SOIL_PROBE_WARMUP_MS) {
+            ESP_LOGI(TAG, "Deep reading: holding the probe %d ms for pH",
+                     CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS);
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS -
+                                     CONFIG_OPP_SOIL_PROBE_WARMUP_MS));
+        }
         if (error == ESP_OK) {
             error = opp_soil_probe_init();
         }
@@ -466,6 +538,12 @@ static void soil_probe_monitor_task(void *context)
         release_probe();
         xSemaphoreGive(power_lock());
         record_result(error, &reading);
+        if (deep && error == ESP_OK) {
+            record_deep(&reading);
+            ESP_LOGI(TAG, "Deep reading taken: ph=%.1f n=%u p=%u k=%u mg/kg",
+                     reading.ph_tenths / 10.0, reading.nitrogen_mg_kg,
+                     reading.phosphorus_mg_kg, reading.potassium_mg_kg);
+        }
 
         if (error == ESP_OK) {
             ESP_LOGI(TAG,
@@ -578,6 +656,12 @@ esp_err_t opp_soil_probe_read(opp_soil_probe_reading_t *reading)
     (void)reading;
     return ESP_ERR_NOT_SUPPORTED;
 }
+bool opp_soil_probe_take_deep_reading(opp_soil_probe_reading_t *reading)
+{
+    (void)reading;
+    return false;
+}
+int64_t opp_soil_probe_seconds_until_deep(void) { return 0; }
 esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_register,
                                         uint16_t count, uint16_t *values,
                                         uint32_t warmup_ms)

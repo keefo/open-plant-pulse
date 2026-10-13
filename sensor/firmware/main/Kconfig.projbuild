@@ -257,6 +257,33 @@ config OPP_SOIL_PROBE_WARMUP_MS
         and three seconds and does not move afterwards, so this is five for
         the margin rather than because the electrode is still settling.
 
+config OPP_SOIL_PROBE_PH_WARMUP_MS
+    int "Warm-up before the occasional pH reading in milliseconds"
+    range 0 300000
+    default 240000
+    help
+        The warm-up used for the deep reading that carries pH and NPK.
+
+        ComWinTop give pH as plus or minus 0.3, and say it wants three to
+        five minutes in soil to settle. That is not the electrode warming
+        up -- in water it is settled inside five seconds -- it is the soil
+        around the needles coming to equilibrium with it, and no shorter
+        wait gets there.
+
+        Four minutes of a 28.5 mA load twice a day is 3.8 mAh against a
+        5000 mAh pack. The same wait on every wake would be 91 mAh a day,
+        which is why pH has a reading of its own.
+
+config OPP_SOIL_PROBE_PH_INTERVAL_SECONDS
+    int "Seconds between deep pH readings"
+    range 60 604800
+    default 43200
+    help
+        Soil pH moves over weeks, so twice a day loses nothing and costs
+        almost nothing. Readings in between carry moisture, temperature
+        and conductivity only, and say so rather than repeating the last
+        pH as though it had just been measured.
+
 config OPP_SOIL_PROBE_BAUD_RATE
     int "Soil probe baud rate"
     default 4800

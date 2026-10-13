@@ -31,10 +31,21 @@ esp_err_t opp_soil_probe_deinit(void);
  * power-on and climbs for some time after that, and the only way to find
  * out how long is to ask it at a succession of warm-ups. Zero means the
  * built-in warm-up, which is what everything other than that hunt wants. */
-#define OPP_SOIL_PROBE_MAX_WARMUP_MS 120000U
+#define OPP_SOIL_PROBE_MAX_WARMUP_MS 300000U
 esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_register,
                                         uint16_t count, uint16_t *values,
                                         uint32_t warmup_ms);
+
+/* The last deep reading that nothing has reported yet.
+ *
+ * pH and the nutrients come from a reading taken a few times a day with a
+ * long warm-up, not from every sample, so they are handed over once and
+ * then cleared. A report that does not get one says it has no pH rather
+ * than repeating the last: a value resent every half hour reads as a
+ * measurement every half hour, and 47 of those 48 never happened. */
+bool opp_soil_probe_take_deep_reading(opp_soil_probe_reading_t *reading);
+/* When the next deep reading is due, for the console. */
+int64_t opp_soil_probe_seconds_until_deep(void);
 
 /* Continuous sampling while the development firmware stays awake. */
 esp_err_t opp_soil_probe_monitor_start(bool enabled);

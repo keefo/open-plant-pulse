@@ -77,17 +77,26 @@ static void set_air(opp_bthome_report_t *report, const opp_sht45_sample_t *air)
         (uint16_t)(air->air_humidity_percent * 100.0f + 0.5f);
 }
 
-static void set_soil(opp_bthome_report_t *report, const opp_soil_probe_reading_t *soil)
+static void set_soil(opp_bthome_report_t *report, const opp_soil_probe_reading_t *soil,
+                     const opp_soil_probe_reading_t *extras)
 {
     report->soil_available = true;
     report->soil_moisture_tenths_percent = soil->moisture_tenths_percent;
     report->soil_temperature_tenths_celsius = soil->temperature_tenths_celsius;
     report->conductivity_us_cm = soil->conductivity_us_cm;
-    report->soil_extras_available = true;
-    report->ph_tenths = soil->ph_tenths;
-    report->nitrogen_mg_kg = soil->nitrogen_mg_kg;
-    report->phosphorus_mg_kg = soil->phosphorus_mg_kg;
-    report->potassium_mg_kg = soil->potassium_mg_kg;
+    /* pH and the nutrients travel only on the reports that have a reading
+     * behind them. A report without one carries no pH at all rather than
+     * the last one again: the hub stores what was measured, and the page
+     * says when. */
+    if (extras != NULL) {
+        report->soil_extras_available = true;
+        report->ph_tenths = extras->ph_tenths;
+        report->nitrogen_mg_kg = extras->nitrogen_mg_kg;
+        report->phosphorus_mg_kg = extras->phosphorus_mg_kg;
+        report->potassium_mg_kg = extras->potassium_mg_kg;
+    } else {
+        report->soil_extras_available = false;
+    }
 }
 
 #if !CONFIG_OPP_PRODUCTION_LIFECYCLE
@@ -210,10 +219,33 @@ static bool acquire_air_sample(opp_bthome_report_t *report)
     return true;
 }
 
+/* How long since this node last paid for a pH reading, kept in RTC memory
+ * because every production wake is a fresh boot and plain statics do not
+ * outlive the sleep. Without this each wake would believe it had never
+ * taken one and would hold the probe on for four minutes, every half hour. */
+static RTC_DATA_ATTR int64_t soil_seconds_since_deep;
+static RTC_DATA_ATTR bool soil_deep_ever;
+
+static bool soil_deep_due(void)
+{
+    return !soil_deep_ever ||
+           soil_seconds_since_deep >= CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS;
+}
+
 static bool acquire_soil_sample(opp_bthome_report_t *report)
 {
     opp_soil_probe_reading_t soil;
+    const bool deep = soil_deep_due();
     esp_err_t error = opp_soil_probe_set_power(true);
+    /* set_power waited the ordinary warm-up; pH wants the rest of its four
+     * minutes, and only on the wakes that are going to report it. */
+    if (error == ESP_OK && deep &&
+        CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS > CONFIG_OPP_SOIL_PROBE_WARMUP_MS) {
+        ESP_LOGI(TAG, "Deep reading: holding the probe %d ms for pH",
+                 CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS);
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_OPP_SOIL_PROBE_PH_WARMUP_MS -
+                                 CONFIG_OPP_SOIL_PROBE_WARMUP_MS));
+    }
     if (error == ESP_OK) {
         error = opp_soil_probe_init();
     }
@@ -234,7 +266,11 @@ static bool acquire_soil_sample(opp_bthome_report_t *report)
         return false;
     }
 
-    set_soil(report, &soil);
+    if (deep) {
+        soil_deep_ever = true;
+        soil_seconds_since_deep = 0;
+    }
+    set_soil(report, &soil, deep ? &soil : NULL);
     ESP_LOGI(TAG, "Fresh soil sample moisture=%.1f%% temperature=%.1f C ec=%u uS/cm",
              soil.moisture_tenths_percent / 10.0, soil.temperature_tenths_celsius / 10.0,
              soil.conductivity_us_cm);
@@ -247,6 +283,8 @@ static void enter_deep_sleep(void)
     opp_device_config_store_get(&config);
     const uint64_t sleep_us =
         (uint64_t)config.reporting_interval_seconds * UINT64_C(1000000);
+    /* The only clock production has across a sleep is the sleep itself. */
+    soil_seconds_since_deep += config.reporting_interval_seconds;
     esp_err_t error = esp_sleep_enable_timer_wakeup(sleep_us);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "Could not configure timer wake-up: %s", esp_err_to_name(error));
@@ -438,7 +476,9 @@ static void broadcast_development_report(const char *local_name, uint32_t force_
         set_air(&report, &air.values);
     }
     if (soil_available) {
-        set_soil(&report, &soil.values);
+        opp_soil_probe_reading_t deep;
+        set_soil(&report, &soil.values,
+                 opp_soil_probe_take_deep_reading(&deep) ? &deep : NULL);
     }
     set_battery(&report);
     set_timestamp(&report);
