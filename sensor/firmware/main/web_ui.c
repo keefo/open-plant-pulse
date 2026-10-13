@@ -677,28 +677,39 @@ static bool query_number(const char *query, const char *key, unsigned long maxim
     return true;
 }
 
-/* Debug: GET /api/v1/soil/registers?function=3&start=0x0000&count=8
+/* Debug: GET /api/v1/soil/registers?function=3&start=0x0000&count=8&warmup_ms=0
  *
  * Reads raw registers from the soil probe so a register map can be checked
- * against the probe actually connected, rather than against its manual. */
+ * against the probe actually connected, rather than against its manual.
+ *
+ * warmup_ms holds the probe powered that long before reading, which is how
+ * the settling time of a slow channel gets measured: sweep it and watch
+ * where the value stops moving. It does not change how the node samples. */
 static esp_err_t soil_registers_handler(httpd_req_t *request)
 {
     unsigned long function = 3;
     unsigned long start = 0;
     unsigned long count = 8;
-    char query[64] = "";
+    unsigned long warmup_ms = 0;
+    char query[96] = "";
     httpd_req_get_url_query_str(request, query, sizeof(query));
     if (!query_number(query, "function", 4, &function) ||
         (function != 3 && function != 4) ||
         !query_number(query, "start", 0xffff, &start) ||
-        !query_number(query, "count", OPP_MODBUS_MAX_READ_REGISTERS, &count) || count == 0) {
+        !query_number(query, "count", OPP_MODBUS_MAX_READ_REGISTERS, &count) || count == 0 ||
+        !query_number(query, "warmup_ms", OPP_SOIL_PROBE_MAX_WARMUP_MS, &warmup_ms)) {
         return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
-                                   "function must be 3 or 4, start 0-0xffff, count 1-32");
+                                   "function must be 3 or 4, start 0-0xffff, count 1-32, "
+                                   "warmup_ms 0-120000");
     }
 
+    /* This blocks the server for the whole warm-up. That is the point of
+     * the parameter and it is a debug route, but it is why nothing else
+     * should be asked of the node during a sweep. */
     uint16_t values[OPP_MODBUS_MAX_READ_REGISTERS];
     esp_err_t error = opp_soil_probe_read_registers((uint8_t)function, (uint16_t)start,
-                                                    (uint16_t)count, values);
+                                                    (uint16_t)count, values,
+                                                    (uint32_t)warmup_ms);
     if (error != ESP_OK) {
         const char *status = error == ESP_ERR_NOT_SUPPORTED ? "422 Unprocessable Entity"
                              : error == ESP_ERR_TIMEOUT   ? "504 Gateway Timeout"
@@ -711,9 +722,10 @@ static esp_err_t soil_registers_handler(httpd_req_t *request)
         return httpd_resp_send(request, body, length);
     }
 
-    char body[48 + 8 * OPP_MODBUS_MAX_READ_REGISTERS];
-    int length = snprintf(body, sizeof(body), "{\"function\":%lu,\"start\":%lu,\"values\":[",
-                          function, start);
+    char body[72 + 8 * OPP_MODBUS_MAX_READ_REGISTERS];
+    int length = snprintf(body, sizeof(body),
+                          "{\"function\":%lu,\"start\":%lu,\"warmup_ms\":%lu,\"values\":[",
+                          function, start, warmup_ms);
     for (unsigned long index = 0; index < count; ++index) {
         length += snprintf(body + length, sizeof(body) - (size_t)length, "%s%u",
                            index == 0 ? "" : ",", values[index]);

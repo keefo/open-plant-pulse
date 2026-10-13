@@ -352,9 +352,13 @@ esp_err_t opp_soil_probe_read(opp_soil_probe_reading_t *reading)
 }
 
 esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_register,
-                                        uint16_t count, uint16_t *values)
+                                        uint16_t count, uint16_t *values,
+                                        uint32_t warmup_ms)
 {
     if (values == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (warmup_ms > OPP_SOIL_PROBE_MAX_WARMUP_MS) {
         return ESP_ERR_INVALID_ARG;
     }
     /* The probe is off between samples now, so this powers it up for the
@@ -366,6 +370,15 @@ esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_registe
     esp_err_t error = ESP_OK;
     if (!was_powered) {
         error = opp_soil_probe_set_power(true);
+    }
+    /* Measured from when the probe came up rather than from here, so a
+     * probe already powered is not warmed up twice over. */
+    if (error == ESP_OK && warmup_ms > 0 && powered_at_us != 0) {
+        const int64_t warmed_us = esp_timer_get_time() - powered_at_us;
+        const int64_t wanted_us = (int64_t)warmup_ms * 1000;
+        if (warmed_us < wanted_us) {
+            vTaskDelay(pdMS_TO_TICKS((uint32_t)((wanted_us - warmed_us) / 1000)));
+        }
     }
     if (error == ESP_OK) {
         error = opp_soil_probe_init();
@@ -566,8 +579,10 @@ esp_err_t opp_soil_probe_read(opp_soil_probe_reading_t *reading)
     return ESP_ERR_NOT_SUPPORTED;
 }
 esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_register,
-                                        uint16_t count, uint16_t *values)
+                                        uint16_t count, uint16_t *values,
+                                        uint32_t warmup_ms)
 {
+    (void)warmup_ms;
     (void)function;
     (void)first_register;
     (void)count;

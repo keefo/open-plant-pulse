@@ -24,6 +24,18 @@ that build, detects one `/dev/cu.usbmodem*`, `/dev/cu.usbserial*`,
 `/dev/ttyACM*`, or `/dev/ttyUSB*` device, flashes it, and opens the serial
 monitor. Useful alternatives are:
 
+> **Build in the working tree, not a clean checkout.** `sensor/sdkconfig` is
+> ignored by git and holds the Wi-Fi SSID and password. A tree without one --
+> a fresh clone, or a `git worktree` made to keep unrelated work out of the
+> image -- gets a default config with `CONFIG_OPP_WIFI_SSID=""`, and
+> `web_ui_start` then logs "Wi-Fi disabled" and leaves the radio off. The node
+> still reports over BLE, so this looks like a healthy sensor until you reach
+> for its console. Over-the-air recovery needs Wi-Fi, so the only way back is
+> USB. If a build must happen somewhere else, copy `sensor/sdkconfig` in first
+> and diff `CONFIG_OPP` between the two sdkconfigs before flashing anything.
+> Done once, 2026-10-12, costing a USB trip to the plant.
+
+
 ```sh
 sensor/firmware/flush.sh --port /dev/cu.usbmodem14801
 sensor/firmware/flush.sh --no-monitor

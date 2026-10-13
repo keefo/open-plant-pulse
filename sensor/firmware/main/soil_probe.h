@@ -23,9 +23,18 @@ esp_err_t opp_soil_probe_deinit(void);
 
 /* Debug: read `count` raw registers (at most OPP_MODBUS_MAX_READ_REGISTERS)
  * with function 0x03 or 0x04, for finding where a probe keeps its values.
- * ESP_ERR_NOT_SUPPORTED means the probe answered with a Modbus exception. */
+ * ESP_ERR_NOT_SUPPORTED means the probe answered with a Modbus exception.
+ *
+ * `warmup_ms` holds the probe powered at least that long before reading,
+ * for measuring how long a channel needs to settle. The probe's pH is the
+ * reason it exists: it reads near the floor of its range two seconds after
+ * power-on and climbs for some time after that, and the only way to find
+ * out how long is to ask it at a succession of warm-ups. Zero means the
+ * built-in warm-up, which is what everything other than that hunt wants. */
+#define OPP_SOIL_PROBE_MAX_WARMUP_MS 120000U
 esp_err_t opp_soil_probe_read_registers(uint8_t function, uint16_t first_register,
-                                        uint16_t count, uint16_t *values);
+                                        uint16_t count, uint16_t *values,
+                                        uint32_t warmup_ms);
 
 /* Continuous sampling while the development firmware stays awake. */
 esp_err_t opp_soil_probe_monitor_start(bool enabled);
