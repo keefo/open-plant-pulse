@@ -911,7 +911,7 @@ class PlantApiTests(unittest.TestCase):
 
         # One card, on both pages, rather than a second one for plants
         # without a probe: the readings are stored once and read by all.
-        self.assertIn('class="climate-history" data-page="detail plant"', page)
+        self.assertIn('class="climate-history" data-page="plant"', page)
         self.assertEqual(page.count('id="temperature-history-chart"'), 1)
         self.assertEqual(page.count('id="humidity-history-chart"'), 1)
         self.assertNotIn("room-air-panel", page)
@@ -1006,9 +1006,10 @@ class PlantApiTests(unittest.TestCase):
 
         page = self.call_text("/")
         script = self.call_text("/app.js")
-        # A box per kind, and a fold. Both logs carry them.
-        self.assertEqual(page.count("care-log-controls"), 2)
-        self.assertEqual(page.count("care-log-toggle"), 2)
+        # A box per kind, and a fold. There is one care log now: it is the
+        # plant's, and the sensor-era copy of it has gone.
+        self.assertEqual(page.count("care-log-controls"), 1)
+        self.assertEqual(page.count("care-log-toggle"), 1)
         self.assertIn("function visibleCareEvents(items)", script)
         # A box for every kind the hub knows, not only the kinds this plant
         # happens to have: the choice is for every plant, and somebody
@@ -1054,7 +1055,6 @@ class PlantApiTests(unittest.TestCase):
         page = self.call_text("/")
         script = self.call_text("/app.js")
         self.assertIn('id="plant-repotted"', page)
-        self.assertIn('id="record-repotted"', page)
         self.assertIn('repotting: "Repottings"', script)
 
     def test_a_card_marks_watering_feeding_and_weighing(self) -> None:
@@ -1090,7 +1090,7 @@ class PlantApiTests(unittest.TestCase):
         # sensored page shows the same section.
         page = self.call_text("/")
         script = self.call_text("/app.js")
-        self.assertIn('class="plant-photos" data-page="plant detail"', page)
+        self.assertIn('class="plant-photos" data-page="plant"', page)
         self.assertIn("selectedSensor?.plant_id", script)
 
     def test_a_photograph_keeps_the_day_it_was_taken(self) -> None:
@@ -1164,6 +1164,184 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("function timeAtHomeParts(since)", script)
         self.assertIn("`Home ${home.short}`", script)
         self.assertIn("At home ${plural}", script)
+
+    def test_the_care_log_leaves_out_hidden_kinds_before_it_counts(self) -> None:
+        """A plant watered daily must not bury its own history in waterings."""
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        path = f"/api/plants/{plant_id}/care"
+        # One old note, then enough of a noisier kind to bury it in a window.
+        self.call("POST", path, {"kind": "note", "note": "Bought",
+                                 "at": "2026-08-30T19:00:00Z"})
+        for day in range(1, 13):
+            self.call("POST", path, {"kind": "watering",
+                                     "at": f"2026-09-{day:02d}T19:00:00Z"})
+
+        buried = self.call("GET", f"/api/care-log?plant_id={plant_id}&limit=10")["items"]
+        self.assertNotIn("note", [e["kind"] for e in buried])
+
+        self.call("PUT", "/api/settings/care-log", {"hidden": ["watering"]})
+        found = self.call("GET", f"/api/care-log?plant_id={plant_id}&limit=10")["items"]
+        # The window now holds what was asked for, and the note is in it.
+        self.assertEqual([e["kind"] for e in found], ["note"])
+        # The plant's own page agrees, because it filters the same way.
+        self.assertEqual(
+            [e["kind"] for e in self.call("GET", f"/api/plants/{plant_id}")["care_log"]],
+            ["note"])
+
+        # Load more continues from the oldest already shown, not from a page
+        # number that would shift when something new is recorded.
+        self.call("PUT", "/api/settings/care-log", {"hidden": []})
+        first = self.call("GET", f"/api/care-log?plant_id={plant_id}&limit=5")["items"]
+        self.assertEqual(len(first), 5)
+        older = self.call(
+            "GET",
+            f"/api/care-log?plant_id={plant_id}&limit=5&before={first[-1]['detected_at']}",
+        )["items"]
+        self.assertTrue(older)
+        self.assertLess(older[0]["detected_at"], first[-1]["detected_at"])
+
+        # Asked by plant, only that plant answers.
+        other = self.call("POST", "/api/plants", {"display_name": "Fern"})["plant_id"]
+        self.call("POST", f"/api/plants/{other}/care", {"kind": "watering"})
+        mine = self.call("GET", f"/api/care-log?plant_id={plant_id}&limit=200")["items"]
+        self.assertEqual(len(mine), 13)
+
+        page = self.call_text("/")
+        self.assertIn('id="plant-care-log-more"', page)
+        self.assertIn("async function loadMoreCareLog(listId)", self.call_text("/app.js"))
+
+    def test_care_can_be_dated_to_the_day_it_happened_and_struck_out(self) -> None:
+        """Care is done with wet hands and written down later, sometimes wrongly."""
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Spider"})["plant_id"]
+        path = f"/api/plants/{plant_id}/care"
+
+        self.call("POST", path, {"kind": "note", "note": "Buds moved",
+                                 "at": "2026-10-12T18:00:00Z"})
+        log = self.call("GET", f"/api/plants/{plant_id}")["care_log"]
+        self.assertEqual(len(log), 1)
+        # Filed under the day it happened, not the day it was typed.
+        self.assertEqual(log[0]["detected_at"], "2026-10-12T18:00:00Z")
+
+        # Nothing has been watered tomorrow.
+        with self.assertRaises(HTTPError) as refused:
+            self.call("POST", path, {"kind": "note", "note": "Later",
+                                     "at": "2099-01-01T12:00:00Z"})
+        self.assertEqual(refused.exception.code, 400)
+
+        # A backdated watering counts in the journey as of its own day.
+        self.call("POST", path, {"kind": "watering", "at": "2026-10-09T18:00:00Z"})
+        self.assertEqual(
+            self.call("GET", f"/api/plants/{plant_id}")["journey"]["watering_count"], 1)
+
+        # Struck out, and the journey counted again rather than nudged.
+        watering = next(e for e in self.call("GET", f"/api/plants/{plant_id}")["care_log"]
+                        if e["kind"] == "watering")
+        self.call("DELETE", f"/api/care/{watering['event_id']}")
+        after = self.call("GET", f"/api/plants/{plant_id}")
+        self.assertEqual(after["journey"]["watering_count"], 0)
+        self.assertEqual([e["kind"] for e in after["care_log"]], ["note"])
+
+        with self.assertRaises(HTTPError) as missing:
+            self.call("DELETE", "/api/care/nothing-by-that-name")
+        self.assertEqual(missing.exception.code, 400)
+
+    def test_a_plant_remembers_what_it_cost_and_where_it_came_from(self) -> None:
+        """The at-home date says when; these two say where and how much."""
+        plant = self.call("POST", "/api/plants", {"display_name": "Spider"})
+        path = f"/api/plants/{plant['plant_id']}"
+        self.assertIsNone(plant["purchase_price_cents"])
+        self.assertIsNone(plant["purchase_place"])
+
+        saved = self.call("PUT", path, {
+            "display_name": "Spider", "purchase_place": "  Gardenworks  ",
+            "purchase_price_cents": 1299,
+        })
+        # Whole cents, so a shelf of plants sums without drift.
+        self.assertEqual(saved["purchase_price_cents"], 1299)
+        # Typed with the stray spaces a person leaves behind.
+        self.assertEqual(saved["purchase_place"], "Gardenworks")
+        self.assertEqual(self.call("GET", path)["purchase_place"], "Gardenworks")
+
+        # A cutting cost nothing, which is not the same as not knowing.
+        free = self.call("PUT", path, {"display_name": "Spider",
+                                       "purchase_price_cents": 0})
+        self.assertEqual(free["purchase_price_cents"], 0)
+
+        # Left out, it goes back to unknown rather than staying at zero.
+        cleared = self.call("PUT", path, {"display_name": "Spider"})
+        self.assertIsNone(cleared["purchase_price_cents"])
+        self.assertIsNone(cleared["purchase_place"])
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("PUT", path, {"display_name": "Spider",
+                                    "purchase_price_cents": -1})
+        self.assertEqual(refused.exception.code, 400)
+
+        page = self.call_text("/")
+        self.assertIn('id="plant-config-purchase-place"', page)
+        self.assertIn('id="plant-config-purchase-price"', page)
+        # Cents on the wire, whole currency in the field.
+        self.assertIn("Math.round(amount * 100)", self.call_text("/app.js"))
+
+    def test_the_driest_weighing_becomes_the_floor_without_being_asked_for(self) -> None:
+        """Thirsty is a decision about the plant; dry is what the scale said."""
+        plant_id = self.call("POST", "/api/plants", {"display_name": "Golden"})["plant_id"]
+        path = f"/api/plants/{plant_id}/weight"
+
+        self.call("POST", path, {"grams": 2438, "kind": "watered", "observed": False})
+        self.call("POST", path, {"grams": 1450, "kind": "thirsty", "observed": False})
+
+        # Typed-in anchors are claims about states the pot is not in, so
+        # until something is actually weighed there is no floor to stand on.
+        plant = self.call("GET", f"/api/plants/{plant_id}")
+        self.assertIsNone(plant["weight"]["dry"])
+        self.assertIsNone(plant["weight"]["held_grams"])
+
+        # One weighing is the lightest there has been, so it is the floor,
+        # and a pot sitting on its own floor is as dry as it is known to get.
+        weight = self.call("POST", path, {"grams": 1944, "kind": "reading"})
+        self.assertEqual(weight["dry"]["grams"], 1944)
+        self.assertEqual(weight["water_percent"], 0)
+        self.assertEqual(weight["remaining_percent"], 50)
+
+        # A lighter one takes the floor down with it; the pot is then known
+        # to hold 1358 g, against the 988 g one watering interval spends.
+        weight = self.call("POST", path, {"grams": 1080, "kind": "reading"})
+        self.assertEqual(weight["dry"]["grams"], 1080)
+        self.assertEqual(weight["held_grams"], 1358)
+        self.assertEqual(weight["capacity_grams"], 988)
+
+        # A heavier weighing afterwards leaves the floor where it was: the
+        # pot has been that light, and that does not stop being true.
+        weight = self.call("POST", path, {"grams": 1944, "kind": "reading"})
+        self.assertEqual(weight["dry"]["grams"], 1080)
+        # Half the watering interval is spent and the pot is still 64% wet,
+        # which is the number a person means by "how wet is it".
+        self.assertEqual(weight["water_percent"], 64)
+        self.assertEqual(weight["remaining_percent"], 50)
+
+        # At the thirsty weight the interval is spent and the pot is not.
+        weight = self.call("POST", path, {"grams": 1450, "kind": "reading"})
+        self.assertEqual(weight["remaining_percent"], 0)
+        self.assertEqual(weight["water_percent"], 27)
+
+        # Set deliberately, a dry weight outranks the lightest weighing:
+        # somebody who has weighed the pot empty knows better than the log.
+        weight = self.call("POST", path, {"grams": 1000, "kind": "dry", "observed": False})
+        self.assertEqual(weight["dry"]["grams"], 1000)
+        self.assertEqual(weight["held_grams"], 1438)
+
+        with self.assertRaises(HTTPError) as refused:
+            self.call("POST", path, {"grams": 1000, "kind": "damp"})
+        self.assertEqual(refused.exception.code, 400)
+
+        # Nothing to fill in: the floor is read off the weighings, and the
+        # chart paints full-to-dry with thirsty marked between them.
+        page = self.call_text("/")
+        self.assertNotIn('id="plant-weight-dry"', page)
+        script = self.call_text("/app.js")
+        self.assertIn("trend-dry-label", script)
+        self.assertIn("trend-reserve", script)
 
     def test_a_cover_can_follow_the_newest_photograph(self) -> None:
         """A plant photographed to watch it grow wants the latest on its card."""
@@ -1303,17 +1481,52 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn("detail-setting-reporting-interval", sensor_panel)
         self.assertNotIn('display_name: document.getElementById("detail-setting-name")', script)
 
-    def test_a_plant_with_a_sensor_is_configured_in_the_same_place(self) -> None:
-        script = self.call_text("/app.js")
+    def test_the_page_is_well_formed(self) -> None:
+        """Every tag closes.
 
-        # The sensor's own address leads to its plant's configuration, and
-        # the sensor's settings are a section of it rather than a page.
+        An unclosed element does not fail loudly: the browser's parser
+        discards the rest of the document, so a page simply has nothing on
+        it and the console says nothing. Twice while moving sections about,
+        a stray cut took a closing tag from the element before and the page
+        went blank in exactly that way.
+        """
+        import re
+        from collections import Counter
+
+        page = self.call_text("/")
+        void = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                "link", "meta", "source", "track", "wbr", "!doctype"}
+        opened = Counter(m.group(1).lower()
+                         for m in re.finditer(r"<([a-zA-Z][\w-]*)[\s/>]", page))
+        closed = Counter(m.group(1).lower()
+                         for m in re.finditer(r"</([a-zA-Z][\w-]*)>", page))
+        unbalanced = {
+            tag: (opened[tag], closed[tag])
+            for tag in set(opened) | set(closed)
+            if tag not in void and opened[tag] != closed[tag]
+        }
+        self.assertEqual(unbalanced, {}, f"tags that do not pair: {unbalanced}")
+
+    def test_a_sensor_is_configured_on_its_own_page_not_its_plant_s(self) -> None:
+        """Administering a device and caring for a plant are different jobs.
+
+        The two were folded together while every sensor had a plant. A
+        scale has none, so a sensor's settings are its own page again.
+        """
+        script = self.call_text("/app.js")
+        page = self.call_text("/")
+
         self.assertIn(
-            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "plant-config";',
+            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "sensor-config";',
             script)
         self.assertIn("function plantSensor()", script)
-        # A plant with no sensor gets no empty sensor sections.
-        self.assertIn('"sensor-settings-panel", "sensor-firmware-panel", "raw-report-log"', script)
+        # The device panels live on the sensor's page, not the plant's.
+        for panel in ('id="sensor-settings-panel"', 'id="sensor-firmware-panel"',
+                      'id="sensor-ph-panel"', 'id="raw-report-log"'):
+            start = page.index(panel)
+            opening = page.rindex("<", 0, start)
+            self.assertIn('data-page="sensor-config"', page[opening:start + len(panel) + 200],
+                          f"{panel} should be on the sensor's own page")
 
     def test_a_pot_is_weighed_in_grams_whatever_the_keypad_offered(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})
@@ -1345,10 +1558,12 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('id="plant-weight-chart"', page)
         self.assertIn("Pot weight · last 30 days", page)
         self.assertIn("plantWeightTrendMs", script)
-        # Full and dry are drawn as the band between them.
+        # Full and dry are drawn as the band between them, with thirsty
+        # marked where the comfortable green gives way to the reserve.
         self.assertIn('class: "trend-cycle"', script)
-        self.assertIn("Full at ${showWeight(weight.watered.grams)}", script)
-        self.assertIn("Thirsty at ${showWeight(weight.thirsty.grams)}", script)
+        self.assertIn("Full at ${showWeight(fullGrams)}", script)
+        self.assertIn("Thirsty at ${showWeight(refill)}", script)
+        self.assertIn("Driest seen ${showWeight(dryGrams)}", script)
         # And both can be typed in, which does not invent a watering.
         self.assertIn('id="plant-weight-full"', page)
         self.assertIn('id="plant-weight-thirsty"', page)
@@ -1383,9 +1598,13 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('if (path.startsWith("/plants/")) return "plant";', script)
         self.assertIn('id="plant-weight-input"', page)
         # Nothing on it claims a measurement the plant does not have.
-        for absent in ("climate-history", "chemistry-grid", "raw-report-log", "sensor-firmware"):
-            section = page[page.index('data-page="plant"'):]
-            self.assertNotIn(f'{absent}" data-page="plant"', section)
+        # What a plant has and what its instrument has are different lists
+        # now. The air and the chemistry belong to the plant, whichever
+        # device measured them; the raw report log and the firmware belong
+        # to the device and appear only on its own page.
+        for absent in ("raw-report-log", "sensor-firmware"):
+            self.assertNotIn(f'{absent}" data-page="plant"', page)
+        self.assertIn('class="climate-history" data-page="plant"', page)
 
     def test_a_plant_with_no_sensor_is_offered_on_the_household_page(self) -> None:
         script = self.call_text("/app.js")

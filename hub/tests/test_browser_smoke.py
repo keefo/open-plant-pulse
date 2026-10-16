@@ -30,11 +30,17 @@ import urllib.request
 
 from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.application.photos import PhotoLibrary
+from open_plant_pulse_hub.application.ingestion import AdvertisementIngestionService
+from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
 from open_plant_pulse_hub.web import create_server, server_address
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 PNG = bytes.fromhex("89504e470d0a1a0a") + b"a png, as far as anyone here cares"
 
+
+FIXTURE_PATH = (
+    Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
+)
 
 class DevTools:
     """Just enough of the protocol to open a page and hear it complain."""
@@ -123,6 +129,20 @@ class BrowserSmokeTests(unittest.TestCase):
         self.store.record_plant_weight(self.plant_id, 1_800, "thirsty", observed=False)
         self.store.record_plant_care(self.plant_id, "note", note="Looking well")
         library.add(self.plant_id, PNG, taken_at="2019-07-14T17:32:05Z")
+        # A sensor on the plant, because the sensor panel lives on the
+        # plant's configuration page and a plant without one never draws it.
+        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        # The sensor keeps the plant enrolling gave it, so the household has
+        # one of each: a plant somebody weighs by hand and a plant with a
+        # probe in it. The pages differ between the two, and both are drawn.
+        self.sensor_id = self.store.sensors()[0]["sensor_id"]
+        self.store.manage_sensor(self.sensor_id, "White bird", "Living room",
+                                 "strelitzia", 32.0, 1800, 1800)
+        self.sensor_plant_id = next(
+            plant["plant_id"] for plant in self.store.plants()
+            if plant["plant_id"] != self.plant_id
+        )
+        self.store.set_hub_wifi_network("Household")
 
         self.server = create_server(self.store, "127.0.0.1", 0, photos=library)
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
@@ -190,6 +210,7 @@ class BrowserSmokeTests(unittest.TestCase):
     def test_every_page_runs_without_complaint(self) -> None:
         tools = self.devtools()
         pages = ["/plants", f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config",
+                 f"/sensors/{self.sensor_id}", f"/sensors/{self.sensor_id}/settings",
                  "/settings"]
         for page in pages:
             tools.call("Page.navigate", url=self.base_url + page)
@@ -214,6 +235,52 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertIn("2019", drawn["caption"])
         self.assertEqual(drawn["weight"], "2.10")
         self.assertEqual(drawn["name"], "Spider")
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_sensor_panel_knows_which_sensor_the_plant_has(self) -> None:
+        """The page names the plant; the panel still has to find the sensor.
+
+        Reading it from the address alone left the console switch with no
+        sensor on it, so turning the console on called for nobody.
+        """
+        tools = self.devtools()
+        # The sensor's settings are the sensor's page now, not its plant's.
+        tools.call("Page.navigate",
+                   url=f"{self.base_url}/sensors/{self.sensor_id}/settings")
+        time.sleep(3.5)
+        panel = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const toggle = document.getElementById("detail-console-toggle");
+              return JSON.stringify({
+                sensorId: toggle.dataset.sensorId || null,
+                disabled: toggle.disabled,
+                identity: document.getElementById("settings-sensor-id").textContent,
+              });
+            })()""")["result"]["value"])
+
+        self.assertEqual(panel["sensorId"], self.sensor_id)
+        self.assertEqual(panel["identity"], self.sensor_id)
+        self.assertFalse(panel["disabled"])
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_ph_panel_shows_what_the_probe_said_and_what_it_means(self) -> None:
+        """The figures, not just the form: a blank panel is a render that threw."""
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{self.sensor_id}/settings")
+        time.sleep(3.5)
+        drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const panel = document.getElementById("sensor-ph-panel");
+              return JSON.stringify({
+                present: !!panel,
+                hidden: panel ? panel.hidden : null,
+                raw: document.getElementById("ph-raw")?.textContent,
+                corrected: document.getElementById("ph-corrected")?.textContent,
+                offset: document.getElementById("ph-offset")?.textContent,
+              });
+            })()""")["result"]["value"])
+
+        self.assertTrue(drawn["present"])
         self.assertEqual(tools.complaints, [])
 
     def test_a_date_being_chosen_survives_the_poll(self) -> None:
@@ -243,6 +310,98 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertNotEqual(json.loads(held)["focused"], "plant-config-acquired")
         self.assertEqual(tools.complaints, [])
 
+    def test_a_keep_interval_being_chosen_survives_the_poll(self) -> None:
+        """Choosing from a menu and reaching Save are seconds apart.
+
+        The panel polls while it is open, and refilling it from the device
+        put the old interval back before Save could be clicked. Focus was
+        the guard, but a menu is the focused element only while the pointer
+        stays on it, which is not long enough.
+        """
+        scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
+        time.sleep(3.5)
+        # Chosen the way a menu is chosen, then the pointer goes elsewhere.
+        tools.call("Runtime.evaluate", expression="""
+            const field = document.getElementById("scale-keep-every");
+            field.value = "604800";
+            field.dispatchEvent(new Event("change", {bubbles: true}));
+            document.body.focus();""")
+        time.sleep(4)
+        held = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              value: document.getElementById("scale-keep-every").value,
+              focused: document.activeElement.id,
+            })""")["result"]["value"])
+        # Still the week that was picked, and not because the menu is held.
+        self.assertEqual(held["value"], "604800")
+        self.assertNotEqual(held["focused"], "scale-keep-every")
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_page_holds_still_while_a_form_is_being_filled_in(self) -> None:
+        """Nothing is worth repainting under somebody's hands.
+
+        The panel refreshes once a second, and some of what it shows really
+        does change every second -- the live weight, and how long ago the
+        scale answered. Written while a menu is open, those are repaints
+        underneath a picker that a phone can dismiss, for readings nobody is
+        waiting on. So the whole panel waits until the form is done with.
+        """
+        scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
+        time.sleep(3.5)
+        tools.call("Runtime.evaluate", expression="""
+            window.__touched = [];
+            document.getElementById("scale-keep-every").focus();
+            new MutationObserver((muts) => {
+              for (const m of muts) window.__touched.push(m.target.id || m.target.nodeName);
+            }).observe(document.body,
+                       {childList: true, subtree: true, attributes: true, characterData: true});
+        """)
+        # Several polls, including the once-a-second "last answered" counter.
+        time.sleep(5)
+        state = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({touched: window.__touched.slice(0, 10),
+                            active: document.activeElement && document.activeElement.id})
+            """)["result"]["value"])
+        self.assertEqual(state["touched"], [], "the page should not change while a form has focus")
+        self.assertEqual(state["active"], "scale-keep-every")
+        self.assertEqual(tools.complaints, [])
+
+    def test_a_panel_is_not_shown_and_hidden_again_on_every_poll(self) -> None:
+        """Deciding twice costs the page whatever had the focus.
+
+        Every render showed each section whose page matched and then hid the
+        ones belonging to another kind of device, so their hidden attribute
+        flipped once a second for as long as the page was open. An element
+        focused inside a section that goes away loses the focus and does not
+        get it back, which is no way to fill in a form.
+        """
+        scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
+        time.sleep(3.5)
+        tools.call("Runtime.evaluate", expression="""
+            window.__flips = [];
+            for (const section of document.querySelectorAll("[data-sensor-kind]")) {
+              new MutationObserver(() => window.__flips.push(section.id))
+                .observe(section, {attributes: true, attributeFilter: ["hidden"]});
+            }""")
+        # Several polls' worth: the page refreshes about once a second.
+        time.sleep(5)
+        flips = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                      expression="JSON.stringify(window.__flips)")["result"]["value"])
+        self.assertEqual(flips, [], "no section should be shown only to be hidden again")
+        # And the one that belongs to a scale is the one on show.
+        shown = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify(Array.from(document.querySelectorAll("[data-sensor-kind]"))
+              .filter((s) => !s.hasAttribute("hidden")).map((s) => s.dataset.sensorKind))
+            """)["result"]["value"])
+        self.assertEqual(set(shown), {"scale"})
+        self.assertEqual(tools.complaints, [])
+
     def test_the_household_page_draws_a_tile_for_the_plant(self) -> None:
         tools = self.devtools()
         tools.call("Page.navigate", url=self.base_url + "/plants")
@@ -251,13 +410,23 @@ class BrowserSmokeTests(unittest.TestCase):
             JSON.stringify({
               cards: document.querySelectorAll("#fleet-grid .fleet-card").length,
               covers: document.querySelectorAll("#fleet-grid img.fleet-card-cover").length,
-              name: document.querySelector("#fleet-grid .fleet-card strong")?.textContent || "",
-              cared: document.querySelector("#fleet-grid .fleet-card span")?.textContent || "",
+              names: [...document.querySelectorAll("#fleet-grid .fleet-card strong")]
+                .map((name) => name.textContent),
+              every_cared: [...document.querySelectorAll("#fleet-grid .fleet-card span")]
+                .map((span) => span.textContent).join(" | "),
+              cared: [...document.querySelectorAll("#fleet-grid .fleet-card")]
+                .filter((card) => card.textContent.includes("Spider"))
+                .map((card) => card.querySelector("span")?.textContent || "")[0] || "",
             })""")["result"]["value"])
 
-        self.assertEqual(drawn["cards"], 1)
+        # One plant with a probe and one weighed by hand; both get a tile,
+        # and both say when they were last cared for rather than one of them
+        # reporting on its instrument instead.
+        self.assertEqual(drawn["cards"], 2)
+        self.assertNotIn("Last report", drawn["every_cared"])
         self.assertEqual(drawn["covers"], 1)
-        self.assertEqual(drawn["name"], "Spider")
+        self.assertIn("Spider", drawn["names"])
+        self.assertIn("White bird", drawn["names"])
         # Watered, fed and weighed are different facts. The card marks each
         # with a drawing and keeps the word for anyone listening to it.
         self.assertIn("Watered", drawn["cared"])

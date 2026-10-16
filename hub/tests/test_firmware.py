@@ -388,7 +388,8 @@ class InterfaceTests(unittest.TestCase):
 
         self.assertIn(b'href="/settings/firmware"', page)
         self.assertIn(b'id="settings-firmware-panel"', page)
-        self.assertIn(b'<section class="sensor-firmware" data-page="plant-config"', page)
+        # Firmware belongs to the device, so it lives on the sensor's page.
+        self.assertIn(b'<section class="sensor-firmware" data-page="sensor-config"', page)
         self.assertIn(b'if (path === "/settings/firmware") return "firmware";', script)
         self.assertIn(b'fetch("/api/firmware", { method: "POST", body: file })', script)
         self.assertIn(b'/firmware", {\n    method: "POST"', script)

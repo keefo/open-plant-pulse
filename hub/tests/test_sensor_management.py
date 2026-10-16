@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from pathlib import Path
 from threading import Thread
@@ -24,6 +25,147 @@ class SensorManagementTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.store.close()
+
+    def test_the_last_measured_chemistry_survives_the_readings_without_it(self) -> None:
+        """pH and nutrients ride on an occasional reading, not every one.
+
+        Taken from the newest reading they were simply absent, and the
+        whole soil chemistry panel went blank between deep readings.
+        """
+        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        measured = self.store.soil_chemistry(sensor_id)
+        self.assertIsNotNone(measured["raw"])
+        self.assertIsNotNone(measured["nitrogen_mg_kg"])
+        self.assertIsNotNone(measured["at"])
+
+        # Every later reading carries no chemistry, as the firmware now sends.
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                """
+                UPDATE sensor_readings
+                SET soil_ph = NULL, nitrogen_mg_kg = NULL, phosphorus_mg_kg = NULL,
+                    potassium_mg_kg = NULL
+                WHERE sensor_id = ? AND observed_at > (
+                    SELECT MIN(observed_at) FROM sensor_readings WHERE sensor_id = ?
+                )
+                """,
+                (sensor_id, sensor_id),
+            )
+
+        still = self.store.soil_chemistry(sensor_id)
+        self.assertEqual(still["raw"], measured["raw"])
+        self.assertEqual(still["nitrogen_mg_kg"], measured["nitrogen_mg_kg"])
+        self.assertIsNotNone(still["age_seconds"])
+
+    def test_a_sensor_takes_the_room_of_the_plant_it_is_given(self) -> None:
+        """A scale adopted on its own had no room, and no way to get one.
+
+        The room was only ever set when adopting a sensor created a plant
+        to go with it. It matters: a probe's air reading is shared with
+        every plant in its room.
+        """
+        room_id = self.store.create_room("Conservatory")["room_id"]
+        plant_id = self.store.create_plant("Fern")["plant_id"]
+        self.store.update_plant(plant_id, "Fern", room_id=room_id)
+        sensor_id = self.store.adopt_scale("http://scale.local", "scale")["sensor_id"]
+        self.assertIsNone(self.store.sensor(sensor_id)["room_id"])
+
+        attached = self.store.attach_sensor(sensor_id, plant_id)
+
+        self.assertEqual(attached["room_id"], room_id)
+        self.assertEqual(attached["room"], "Conservatory")
+        # Taking it off the plant does not move it out of the room: it is
+        # still sitting where it was sitting.
+        detached = self.store.attach_sensor(sensor_id, None)
+        self.assertEqual(detached["room_id"], room_id)
+        self.assertIsNone(detached["plant_id"])
+
+    def test_the_keep_interval_offers_everything_the_store_will_take(self) -> None:
+        """A watering is watched in seconds; a big pot is watched in days."""
+        sensor_id = self.store.adopt_scale("http://scale.local", "scale")["sensor_id"]
+
+        # The ends of the range the store allows, which the menu was not
+        # offering: half a minute to watch a pot drain, a week for one that
+        # is only watered about that often.
+        self.assertEqual(
+            self.store.set_scale_keep(sensor_id, 30)["scale_keep_every_seconds"], 30)
+        self.assertEqual(
+            self.store.set_scale_keep(sensor_id, 604800)["scale_keep_every_seconds"], 604800)
+
+        for refused in (29, 604801):
+            with self.assertRaises(ValueError):
+                self.store.set_scale_keep(sensor_id, refused)
+
+        # Every choice the menu offers is one the store will accept, so no
+        # option can be picked only to be refused on save.
+        page = (
+            Path(__file__).resolve().parents[1]
+            / "src/open_plant_pulse_hub/static/index.html"
+        ).read_text(encoding="utf-8")
+        menu = page.split('<select id="scale-keep-every">', 1)[1].split("</select>", 1)[0]
+        seconds = [int(value) for value in re.findall(r'<option value="(\d+)"', menu)]
+        self.assertTrue(seconds, "the menu should offer intervals")
+        self.assertEqual(seconds, sorted(seconds), "shortest first, as a person reads it")
+        self.assertEqual(seconds[0], 30)
+        self.assertEqual(seconds[-1], 604800)
+        for value in seconds:
+            self.assertEqual(
+                self.store.set_scale_keep(sensor_id, value)["scale_keep_every_seconds"], value)
+
+    def test_a_ph_calibration_is_one_measured_reference(self) -> None:
+        """The probe reads on a scale of its own; a reference places it."""
+        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        before = self.store.soil_chemistry(sensor_id)
+        self.assertFalse(before["calibrated"])
+        self.assertEqual(before["offset"], 0)
+        raw = before["raw"]
+        self.assertIsNotNone(raw, "the fixture should carry a pH to calibrate against")
+
+        status = self.store.set_soil_ph_calibration(sensor_id, 7.0)
+
+        # The offset is worked out from what the probe actually said, so
+        # nobody has to type the reading back in.
+        self.assertAlmostEqual(status["offset"], round(7.0 - raw, 2), places=2)
+        self.assertAlmostEqual(status["ph"], 7.0, places=1)
+        self.assertEqual(status["raw"], raw)
+        self.assertEqual(status["reference"], 7.0)
+        self.assertEqual(status["reference_raw"], raw)
+        self.assertIsNotNone(status["reference_at"])
+        # The conditions travel with it: a correction found at one
+        # conductivity is not promised at another.
+        # The conductivity of the reading the pH came from, not of whatever
+        # arrived most recently -- pH rides on its own occasional reading.
+        self.assertEqual(status["reference_ec"], before["conductivity_us_cm"])
+
+        cleared = self.store.set_soil_ph_calibration(sensor_id, None)
+        self.assertFalse(cleared["calibrated"])
+        self.assertEqual(cleared["offset"], 0)
+        self.assertEqual(cleared["ph"], raw)
+
+    def test_a_calibration_is_flagged_outside_the_conditions_it_was_set_in(self) -> None:
+        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        self.store.set_soil_ph_calibration(sensor_id, 7.0)
+        self.assertFalse(self.store.soil_chemistry(sensor_id)["far_from_calibration"])
+
+        # The same probe in water four times as conductive: the figure is
+        # outside what it was calibrated for, and says so rather than lying.
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                """
+                UPDATE sensor_readings SET conductivity_us_cm = conductivity_us_cm * 4
+                WHERE sensor_id = ? AND soil_ph IS NOT NULL
+                """,
+                (sensor_id,),
+            )
+
+        self.assertTrue(self.store.soil_chemistry(sensor_id)["far_from_calibration"])
+
+    def test_a_reference_needs_a_reading_and_must_be_a_ph(self) -> None:
+        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
+        with self.assertRaises(ValueError):
+            self.store.set_soil_ph_calibration(sensor_id, 15.0)
+        with self.assertRaises(ValueError):
+            self.store.set_soil_ph_calibration("sensor-nobody", 7.0)
 
     def test_enrolls_three_sensors_and_keeps_latest_readings_scoped(self) -> None:
         sensor_ids = [item["sensor_id"] for item in self.store.sensors("unclaimed")]
@@ -257,10 +399,12 @@ class SensorManagementWebTests(unittest.TestCase):
         # a plant is one thing however many instruments are on it.
         # The air card serves both pages: the readings are the room's, and
         # a plant with no probe of its own is in the same air.
-        self.assertIn(b'<section class="climate-history" data-page="detail plant"', detail_page)
-        self.assertIn(b'<section class="sensor-settings" data-page="plant-config"', detail_page)
-        self.assertIn(b'id="raw-report-log" data-page="plant-config"', detail_page)
-        self.assertIn(b'id="detail-config-link"', detail_page)
+        self.assertIn(b'<section class="climate-history" data-page="plant"', detail_page)
+        self.assertIn(b'<section class="sensor-settings" data-page="sensor-config"', detail_page)
+        self.assertIn(b'id="raw-report-log" data-page="sensor-config"', detail_page)
+        # A sensor's page is its own configuration now, so there is no link
+        # away to a plant's page to configure it there.
+        self.assertNotIn(b'id="detail-config-link"', detail_page)
         self.assertIn(b'id="config-back-link"', detail_page)
         self.assertNotIn(b"Global reporting interval", detail_page)
         self.assertNotIn(b"Moisture alert below", detail_page)
@@ -330,12 +474,12 @@ class SensorManagementWebTests(unittest.TestCase):
         # The hub serves the application for the route as for any other page.
         with self.request(f"/sensors/{quote(sensor_id, safe='')}/settings") as response:
             self.assertEqual(response.status, 200)
-            self.assertIn(b'data-page="plant-config"', response.read())
+            self.assertIn(b'data-page="sensor-config"', response.read())
 
         # A sensor's settings are a section of its plant's configuration, so
         # the sensor's own address leads to the plant's page.
         self.assertIn(
-            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "plant-config";',
+            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "sensor-config";',
             app,
         )
         # The sensor is still named by the path, with or without the suffix.
@@ -344,7 +488,7 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("`/plants/${plantId}/config`", app)
         self.assertIn('"/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings"', onboarding)
         # Polling follows the page: no charts to feed here, and no report log there.
-        self.assertIn('if (page === "plant-config") {', app)
+        self.assertIn('if (page === "sensor-config") {', app)
 
     def test_raw_report_log_is_collapsed_last_and_remembers_its_state(self) -> None:
         with self.request("/sensors/sensor-aabbccddeeff") as response:
@@ -392,7 +536,8 @@ class SensorManagementWebTests(unittest.TestCase):
 
         page = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "index.html").read_text()
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
-        self.assertIn('id="battery"', page)
+        # Nothing shows a battery gauge now that the sensor-as-plant
+        # topbar has gone; the reading still carries it.
         self.assertIn("<th>Report</th>", page)
         self.assertIn("reading.battery_percent", app)
         self.assertIn("reading.battery_voltage_v", app)
@@ -465,7 +610,6 @@ class SensorManagementWebTests(unittest.TestCase):
             ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
             ("function renderInbox(", "if (!renderKeyChanged(list, unclaimedSensors.map("),
             ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
-            ("function renderBattery(", "if (!renderKeyChanged(element, [known, percent, charging, voltage])) return;"),
             ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;"),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
         ]:
@@ -501,10 +645,10 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("const moistureLow = profile?.watering?.refill_below;", app)
         self.assertIn("const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];", app)
         self.assertIn('id="setting-reporting-interval"', page)
-        self.assertIn('id="record-fertilized"', page)
+        # Care is recorded on the plant, not on the device that watches it.
+        self.assertIn('id="plant-fertilized"', page)
         self.assertIn("Fertilized today", page)
-        self.assertIn('id="journey-light-hours"', page)
-        self.assertIn("Total lighting hours", page)
+        self.assertIn('id="plant-journey-lighting"', page)
         self.assertIn('id="detail-setting-reporting-interval"', page)
         self.assertIn("Hub reporting interval", page)
         self.assertIn("Sensor reporting interval", page)

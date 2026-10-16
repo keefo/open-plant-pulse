@@ -154,7 +154,10 @@ h2 { font-size: 24px; }
 .connection-copy span { color: var(--muted); font-size: 12px; }
 /* Battery: an outline with a terminal nub, filled to the charge. Sized to the
    12px text beside it, and drawn in the text colour so it follows the theme. */
-.connection-copy .battery { --battery-level: var(--leaf); display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+/* The gauge carries its own layout. It was scoped to the connection block
+   in the sensor-as-plant topbar, so when the battery moved to the sensor's
+   own page it lost its shape and drew as bare text. */
+.battery { --battery-level: var(--leaf); display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .battery[data-level="low"] { --battery-level: var(--sun); }
 .battery[data-level="critical"] { --battery-level: var(--coral); }
 .battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: 3px; }
@@ -292,6 +295,10 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .history-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 .history-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .history-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+/* The reserve below thirsty is painted by a gradient defined per chart, so it
+   carries no fill here; only the floor it runs down to is drawn. */
+.history-chart .trend-dry { stroke: #a33a2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.history-chart .trend-dry-label { fill: #8a2f23; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 #plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
@@ -754,6 +761,9 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* A kind this plant has none of: still choosable, not worth reading. */
 .care-log-kinds label[data-empty="true"] { opacity: 0.55; }
 .care-log-kinds input { width: auto; margin: 0; }
+/* Under the list rather than beside the filters: it continues what is being
+   read, so it belongs where the reading stopped. */
+.care-log-more { display: flex; justify-content: center; margin-top: 12px; }
 
 /* Every weighing, folded away: a list for correcting a mistake, not for
    reading. */
@@ -763,3 +773,42 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .weighing-row { display: grid; grid-template-columns: minmax(150px, auto) 90px 1fr auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
 .weighing-row:nth-child(odd) { background: #f3f6f3; }
 .weighing-row time, .weighing-row span { color: var(--muted); }
+
+/* pH calibration: the figures first, then the one number to type. */
+.ph-explainer { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.ph-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 0 0 16px; }
+.ph-figures div { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
+.ph-figures dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.ph-figures dd { margin: 0; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* A correction found at one conductivity is not promised at another. */
+.ph-caution { margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: #faf4e6; color: var(--ink); font-size: 13px; line-height: 1.6; }
+
+/* Said once, under the heading: these figures are the last measured, not the latest. */
+.chemistry-measured { margin: -4px 0 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+/* The measured conductivity over the last couple of days: the pour, the
+   drain, and where it settles. */
+.bulk-ec-chart { width: 100%; height: auto; margin-top: 12px; }
+.bulk-ec-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+/* Pore-water conductivity over the month, against the plant's own band. */
+.pore-ec-chart { width: 100%; height: auto; margin-top: 14px; }
+.pore-ec-chart .ideal-band { fill: #cfe6cd; opacity: .5; }
+
+/* The two things done to a sensor stay side by side, whatever the width. */
+.sensor-identity-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+
+/* Giving a sensor a plant: a sentence, then the choice and the verb. */
+.sensor-attach { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
+.sensor-attach label { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.sensor-attach-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.sensor-attach-row select { flex: 1 1 220px; min-width: 0; }
+.sensor-attach-row button { flex: 0 0 auto; }
+
+/* The battery sits in a figure box on the sensor page, so it is sized to
+   the figures around it rather than to a line of status text. */
+.ph-figures .battery { font-size: 20px; font-weight: 700; gap: 8px; }
+.ph-figures .battery-glyph { width: 30px; height: 15px; border-radius: 4px; border-width: 2px; }
+.ph-figures .battery-glyph::after { right: -5px; width: 3px; height: 6px; }
+.sensor-plant-link { color: var(--leaf); text-decoration: none; border-bottom: 2px solid transparent; }
+.sensor-plant-link:hover { border-bottom-color: currentColor; }

@@ -15,24 +15,7 @@
     </div>
     <button id="open-inbox" class="nav-button" type="button">Sensor inbox <span id="inbox-count">0</span></button>
   </nav>
-  <header class="topbar" data-page="detail" hidden>
-    <div class="plant-identity">
-      <p class="eyebrow">OPEN PLANT PULSE</p>
-      <input id="plant-label" class="plant-label" value="Plant sensor" aria-label="Plant label" readonly>
-      <div class="profile-control">
-        <strong id="plant-profile-name">Plant profile</strong>
-        <span id="scientific-name"></span>
-      </div>
-    </div>
-    <div class="topbar-aside">
-      <div class="connection" aria-live="polite">
-        <span id="status-dot" class="status-dot"></span>
-        <div class="connection-copy"><strong id="status">Waiting for sensor</strong><span id="updated">No samples yet</span><span id="battery" class="battery" data-level="unknown" role="img" aria-label="Battery not reported" title="Battery not reported"><span class="battery-glyph" aria-hidden="true"><span class="battery-fill"></span></span><span class="battery-percent">&mdash;</span></span></div>
-      </div>
-      <button class="secondary-action arrange-sections" type="button">Arrange</button>
-      <a id="detail-config-link" class="secondary-action" href="/settings">Configure plant</a>
-    </div>
-  </header>
+  
 
   <header class="topbar" data-page="plant" hidden>
     <div class="plant-identity">
@@ -52,7 +35,7 @@
     </div>
   </header>
 
-  <header class="topbar" data-page="plant-config" hidden>
+  <header class="topbar" data-page="plant-config sensor-config" hidden>
     <div class="plant-identity">
       <p class="eyebrow">PLANT</p>
       <h1 id="plant-config-name">Configuration</h1>
@@ -68,7 +51,7 @@
       <h1 id="config-plant-name">Plant sensor</h1>
     </div>
     <div class="topbar-aside">
-      <a id="config-back-link" class="secondary-action" href="/">Back to plant</a>
+      <a id="config-back-link" class="secondary-action" href="/settings">Back to sensors</a>
     </div>
   </header>
 
@@ -313,7 +296,7 @@
       </div>
     </section>
 
-    <section class="primary-grid" data-page="detail" data-section="readings" aria-label="Primary plant measurements" hidden>
+    <section class="primary-grid" data-page="plant" data-section="readings" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
@@ -347,7 +330,7 @@
       </article>
     </section>
 
-    <section class="climate-history" data-page="detail plant" data-section="air" aria-labelledby="climate-history-title" hidden>
+    <section class="climate-history" data-page="plant" data-section="air" aria-labelledby="climate-history-title" hidden>
       <div class="section-heading climate-history-heading">
         <div><p class="eyebrow" id="climate-history-eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
         <div class="history-range-selector" role="group" aria-label="Chart date range">
@@ -375,7 +358,7 @@
       </div>
     </section>
 
-    <section id="plant-assessment" class="plant-assessment" data-page="detail" data-section="assessment" data-level="waiting" aria-live="polite" hidden>
+    <section id="plant-assessment" class="plant-assessment" data-page="plant" data-section="assessment" data-level="waiting" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">CURRENT HEALTH</p>
         <strong id="plant-status">Waiting</strong>
@@ -383,7 +366,7 @@
       <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
     </section>
 
-    <section id="drainage-assessment" class="drainage-assessment" data-page="detail" data-section="drainage" data-level="learning" aria-live="polite" hidden>
+    <section id="drainage-assessment" class="drainage-assessment" data-page="plant" data-section="drainage" data-level="learning" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">POT RESPONSE</p>
         <strong id="drainage-status">Learning</strong>
@@ -392,8 +375,9 @@
       <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
     </section>
 
-    <section class="chemistry" data-page="detail" data-section="chemistry" aria-label="Soil chemistry measurements" hidden>
+    <section class="chemistry" data-page="plant" data-section="chemistry" aria-label="Soil chemistry measurements" hidden>
       <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
+      <p id="chemistry-measured" class="chemistry-measured" hidden></p>
       <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
         <div class="chemistry-value"><span>Nutrient level</span><strong><b id="nutrient-level">--</b><small id="nutrient-level-basis"></small></strong></div>
         <div class="chemistry-value"><span>Pore-water EC</span><strong><b id="pore-ec">--</b><small> µS/cm</small><small id="pore-ec-target"></small></strong></div>
@@ -402,11 +386,17 @@
         <p class="range-status">Waiting for reading</p>
         <p id="pore-ec-basis" class="pore-ec-note"></p>
         <p id="pore-ec-dry-note" class="pore-ec-note pore-ec-dry-note" hidden></p>
+        <svg id="pore-ec-chart" class="history-chart pore-ec-chart" viewBox="0 0 640 170" role="img" aria-label="Pore-water conductivity over the last 30 days" hidden></svg>
+        <p id="pore-ec-chart-empty" class="history-chart-empty">Waiting for readings from a pot wet enough to estimate from</p>
+        <p id="pore-ec-chart-note" class="pore-ec-note" hidden></p>
       </article>
       <div class="chemistry-grid">
         <article class="chemistry-gauge probe-chemistry bulk-ec">
           <div class="chemistry-value"><span>Measured EC (bulk)</span><strong><b id="conductivity">--</b><small> µS/cm</small></strong></div>
           <p class="range-status">The probe's raw reading: soil, water and air between its needles together. Pore-water EC above is estimated from it; the plant's target does not apply to it.</p>
+          <svg id="bulk-ec-chart" class="history-chart bulk-ec-chart" viewBox="0 0 640 150" role="img" aria-label="Measured bulk conductivity over the last two days" hidden></svg>
+          <p id="bulk-ec-chart-empty" class="history-chart-empty">Waiting for conductivity readings</p>
+          <p id="bulk-ec-chart-note" class="bulk-ec-note" hidden></p>
         </article>
         <article class="chemistry-gauge probe-chemistry" data-metric="soil_ph">
           <div class="chemistry-value"><span>pH</span><strong><b id="ph">--</b></strong></div>
@@ -428,7 +418,7 @@
       <p id="chemistry-guidance" class="chemistry-guidance"></p>
     </section>
 
-    <section class="watering-calendar" data-page="detail" data-section="calendar" aria-labelledby="watering-calendar-title" hidden>
+    <section class="watering-calendar" data-page="plant" data-section="calendar" aria-labelledby="watering-calendar-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE RHYTHM</p><h2 id="watering-calendar-title">Current year</h2></div>
         <span id="watering-calendar-summary">Waiting for sensor history</span>
@@ -444,7 +434,7 @@
       <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span><i data-fertilized="true"></i><span>Fertilized</span></div>
     </section>
 
-    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="detail" data-section="lighting" aria-labelledby="plant-lighting-title" hidden>
+    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="plant" data-section="lighting" aria-labelledby="plant-lighting-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">GROW LIGHTS</p><h2 id="plant-lighting-title">Lighting</h2></div>
         <div class="lighting-heading-actions">
@@ -459,40 +449,8 @@
       <div id="plant-lighting-lights" class="lighting-lights"></div>
     </section>
 
-    <section class="plant-journey" data-page="detail" data-section="journey" aria-labelledby="plant-journey-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-title">Plant journey</h2></div>
-        <span id="journey-started">Waiting for sensor history</span>
-      </div>
-      <div class="journey-stats" aria-live="polite">
-        <div><strong id="journey-days">--</strong><span>Days monitored</span></div>
-        <div><strong id="journey-waterings">--</strong><span>Waterings detected</span></div>
-        <div><strong id="journey-fertilizing">--</strong><span>Fertilizations</span></div>
-        <div><strong id="journey-missed">--</strong><span>Missed watering windows</span></div>
-        <div><strong id="journey-light-hours">--</strong><span>Total lighting hours</span></div>
-      </div>
-    </section>
 
-    <section class="care-log" data-page="detail" data-section="care-log" aria-label="Plant care history" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">CARE HISTORY</p><h2>Plant care log</h2></div>
-        <div class="settings-sensor-actions">
-          <button id="record-fertilized" class="secondary-action" type="button">Fertilized today</button>
-          <button id="record-repotted" class="secondary-action" type="button">Repotted</button>
-        </div>
-      </div>
-      <div class="care-log-controls">
-        <button class="care-log-toggle" type="button" aria-expanded="true">Hide log</button>
-        <fieldset class="care-log-kinds">
-          <legend class="visually-hidden">Kinds of entry to show</legend>
-        </fieldset>
-      </div>
-      <div id="care-log-list" class="care-log-list">
-        <p class="care-log-empty">No care events detected yet.</p>
-      </div>
-    </section>
-
-    <section class="plant-weight" data-page="plant detail" data-section="weight" aria-labelledby="plant-weight-title" hidden>
+    <section class="plant-weight" data-page="plant" data-section="weight" aria-labelledby="plant-weight-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
         <span id="plant-weight-summary">Nothing weighed yet</span>
@@ -546,10 +504,10 @@
         <summary id="weighing-log-summary">Weighings recorded</summary>
         <div id="weighing-log-list" class="weighing-log-list"></div>
       </details>
-      <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last.</p>
+      <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last. The pot's <b>dry</b> weight is not asked for: it is the lightest this pot has ever been weighed, which is the driest it is known to get. The chart runs from full down to that, green above the thirsty weight and warming through to red below it, so a glance says how wet the pot is rather than only how much of this watering is left.</p>
     </section>
 
-    <section class="plant-weight forecast" data-page="plant detail" data-section="forecast" aria-labelledby="forecast-title" hidden>
+    <section class="plant-weight forecast" data-page="plant" data-section="forecast" aria-labelledby="forecast-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHEN TO WATER</p><h2 id="forecast-title">Next watering</h2></div>
         <span id="forecast-headline"></span>
@@ -575,7 +533,7 @@
       </div>
     </section>
 
-    <section class="plant-weight water-use" data-page="plant detail" data-section="water-use" aria-labelledby="water-use-title" hidden>
+    <section class="plant-weight water-use" data-page="plant" data-section="water-use" aria-labelledby="water-use-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>
         <span id="water-use-coverage"></span>
@@ -624,7 +582,7 @@
       </div>
     </section>
 
-    <section class="plant-photos" data-page="plant detail" data-section="photos" aria-labelledby="plant-photos-title" hidden>
+    <section class="plant-photos" data-page="plant" data-section="photos" aria-labelledby="plant-photos-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">PHOTOGRAPHS</p><h2 id="plant-photos-title">How it looks</h2></div>
         <div class="settings-sensor-actions">
@@ -663,6 +621,9 @@
       <div id="plant-care-log" class="care-log-list">
         <p class="care-log-empty">Nothing recorded yet.</p>
       </div>
+      <div class="care-log-more">
+        <button id="plant-care-log-more" type="button" class="secondary-action" hidden>Load more</button>
+      </div>
     </section>
 
     <section class="sensor-settings" data-page="plant-config" aria-labelledby="plant-config-title" hidden>
@@ -684,6 +645,17 @@
         <label>At home since<input id="plant-config-acquired" type="date">
           <small>When this plant came to live here, which is rarely when the
             hub first heard of it. Its card says how long that has been.</small>
+        </label>
+        <label>Bought from<input id="plant-config-purchase-place" maxlength="120"
+               placeholder="nursery, shop, or whoever gave it to you">
+          <small>Where it came from. The useful question years later is
+            whether that shop sells plants that live, and only this answers it.</small>
+        </label>
+        <label>Price paid
+          <input id="plant-config-purchase-price" type="number" min="0" step="0.01"
+                 inputmode="decimal" placeholder="leave empty for a gift or a cutting">
+          <small>What it cost, in whole currency rather than cents. A plant
+            that cost nothing is not the same as one whose price is forgotten.</small>
         </label>
         <label>Expected watering interval
           <input id="plant-config-watering-days" type="number" min="1" max="365" step="1"
@@ -735,14 +707,37 @@
         through <b>Sensor inbox</b> first.</p>
     </section>
 
-    <section class="sensor-settings" data-page="plant-config" id="sensor-settings-panel" aria-labelledby="sensor-settings-title" hidden>
+    <section class="sensor-settings" data-page="sensor-config" id="sensor-identity-panel" aria-labelledby="sensor-identity-title" hidden>
       <div class="section-heading">
-        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-settings-title">Sensor configuration</h2></div>
+        <div><p class="eyebrow" id="sensor-kind-label">SENSOR</p><h2 id="sensor-identity-title">This sensor</h2></div>
         <div class="sensor-identity">
-          <button id="plant-sensor-detach" class="secondary-action" type="button">Detach</button>
+          <div class="sensor-identity-actions">
+            <button id="plant-sensor-detach" class="secondary-action" type="button">Detach</button>
+          </div>
           <code id="settings-sensor-id"></code>
           <span id="settings-config-revision" class="config-revision" aria-live="polite"></span>
         </div>
+      </div>
+      <p id="sensor-kind-note" class="ph-explainer"></p>
+      <div class="sensor-attach" id="sensor-attach-plant" hidden>
+        <label for="sensor-attach-choice">This sensor is not on a plant yet</label>
+        <div class="sensor-attach-row">
+          <select id="sensor-attach-choice" aria-label="Plant to attach this sensor to"></select>
+          <button id="sensor-attach-save" type="button">Attach</button>
+        </div>
+      </div>
+      <dl class="ph-figures">
+        <div id="sensor-plant-figure"><dt>Attached plant</dt><dd><a id="sensor-plant-link" class="sensor-plant-link" href="/">--</a></dd></div>
+        <div><dt>Battery</dt><dd><span id="sensor-battery" class="battery" data-level="unknown" role="img" aria-label="Battery not reported"><span class="battery-glyph" aria-hidden="true"><span class="battery-fill"></span></span><span class="battery-percent">&mdash;</span></span></dd></div>
+        <div><dt>Last heard</dt><dd id="sensor-last-heard">--</dd></div>
+        <div><dt>In</dt><dd id="sensor-room">--</dd></div>
+      </dl>
+    </section>
+
+
+    <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-settings-panel" aria-labelledby="sensor-settings-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">PROBE</p><h2 id="sensor-settings-title">Reporting</h2></div>
       </div>
       <form id="sensor-settings-form" class="sensor-settings-form">
         <label>Hub reporting interval
@@ -779,7 +774,100 @@
     </section>
 
 
-    <section class="sensor-firmware" data-page="plant-config" id="sensor-firmware-panel" aria-labelledby="sensor-firmware-title" hidden>
+    <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="scale" id="scale-panel" aria-labelledby="scale-panel-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SCALE</p><h2 id="scale-panel-title">Weighing</h2></div>
+        <code id="scale-address"></code>
+      </div>
+      <dl class="ph-figures">
+        <div><dt>Reads now</dt><dd id="scale-live">--</dd></div>
+        <div><dt>Weighing every</dt><dd id="scale-interval-now">--</dd></div>
+        <div><dt>Firmware</dt><dd id="scale-firmware">--</dd></div>
+        <div><dt>Last answered</dt><dd id="scale-answered">--</dd></div>
+      </dl>
+      <p id="scale-fault" class="ph-caution" hidden></p>
+      <form id="scale-form" class="sensor-settings-form">
+        <label>Weigh every
+          <select id="scale-interval">
+            <option value="0">Continuously (10 a second)</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="300">5 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+          </select>
+          <small>The scale powers its amplifier down between readings. Its radio stays
+            awake either way, so this saves less than it looks; a plant changes slowly
+            enough that minutes are plenty.</small>
+        </label>
+        <label>Keep a weight every
+          <select id="scale-keep-every">
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+            <option value="7200">2 hours</option>
+            <option value="10800">3 hours</option>
+            <option value="21600">6 hours</option>
+            <option value="43200">12 hours</option>
+            <option value="86400">24 hours</option>
+            <option value="172800">2 days</option>
+            <option value="259200">3 days</option>
+            <option value="604800">1 week</option>
+          </select>
+          <small>How often a weight is written down. The scale weighs more often than
+            this; a pot does not change fast enough for all of it to be worth keeping.
+            The short end is for watching something happen — a watering drains and
+            settles over half an hour, and 30 seconds catches the shape of it. The long
+            end is for a pot watered every few weeks, where a weight an hour is a
+            thousand rows saying the same thing. Change it back when the watering is
+            over: a scale kept at 30 seconds fills the record faster than anybody will
+            read it.</small>
+        </label>
+        <div class="settings-actions"><button type="submit">Save</button></div>
+        <output id="scale-message"></output>
+      </form>
+    </section>
+
+
+    <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-ph-panel" aria-labelledby="sensor-ph-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-ph-title">pH calibration</h2></div>
+      </div>
+      <p class="ph-explainer">
+        The probe answers pH on a scale of its own. Measure the liquid it is
+        sitting in with strips or a meter, type that number here, and the hub
+        corrects every reading by the difference. The probe is read for pH a
+        couple of times a day, so calibrate against the last reading it took.
+      </p>
+      <dl class="ph-figures">
+        <div><dt>Probe reads</dt><dd id="ph-raw">--</dd></div>
+        <div><dt>Shown as</dt><dd id="ph-corrected">--</dd></div>
+        <div><dt>Offset</dt><dd id="ph-offset">--</dd></div>
+        <div><dt>Measured</dt><dd id="ph-measured-at">--</dd></div>
+      </dl>
+      <p id="ph-caution" class="ph-caution" hidden></p>
+      <form id="sensor-ph-form" class="sensor-settings-form">
+        <label>True pH of what it is in
+          <input id="ph-reference" type="number" min="0" max="14" step="0.1" placeholder="7.0">
+          <small id="ph-reference-note">Taken against the probe's last pH reading and the conductivity at the time.</small>
+        </label>
+        <div class="settings-actions">
+          <button type="submit">Calibrate</button>
+          <button id="ph-clear" class="secondary-action" type="button">Clear</button>
+        </div>
+        <output id="sensor-ph-message"></output>
+      </form>
+    </section>
+
+
+    <section class="sensor-firmware" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-firmware-panel" aria-labelledby="sensor-firmware-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">SENSOR</p><h2 id="sensor-firmware-title">Firmware</h2></div>
         <span id="firmware-current">Version not reported yet</span>
@@ -795,7 +883,7 @@
       <p id="firmware-precondition" class="settings-note"></p>
     </section>
 
-    <details class="raw-report-log" id="raw-report-log" data-page="plant-config" hidden>
+    <details class="raw-report-log" id="raw-report-log" data-page="sensor-config" data-sensor-kind="bthome" hidden>
       <summary>
         <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
         <span>Latest 50 · newest first</span>

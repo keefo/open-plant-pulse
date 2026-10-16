@@ -9,6 +9,10 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application.scales import (
+    read_scale,
+    set_sampling_interval,
+)
 from open_plant_pulse_hub.domain.plant_profiles import public_plant_profiles
 
 
@@ -154,8 +158,7 @@ def create_server(
             elif path == "/api/readings/history":
                 self._send_reading_history(request.query)
             elif path == "/api/care-log":
-                sensor_id = parse_qs(request.query).get("sensor_id", [None])[0]
-                self._send_json({"items": store.care_log(sensor_id=sensor_id)})
+                self._send_care_log(request.query)
             elif path == "/api/raw-reports":
                 self._send_raw_reports(request.query)
             elif path == "/api/watering-calendar":
@@ -235,12 +238,49 @@ def create_server(
                         self._optional_str(payload.get("profile_id")),
                         self._optional_str(payload.get("variety")),
                         self._optional_str(payload.get("acquired_at")),
+                        self._optional_int(payload.get("purchase_price_cents")),
+                        self._optional_str(payload.get("purchase_place")),
                     )
                 elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(
                         unquote(path[len("/api/lights/") :]),
                         str(payload.get("display_name", "")),
                         payload.get("config", {}),
+                    )
+                elif path.startswith("/api/sensors/") and path.endswith("/scale/interval"):
+                    sensor_id = unquote(
+                        path[len("/api/sensors/") : -len("/scale/interval")]
+                    )
+                    sensor = store.sensor(sensor_id)
+                    if sensor is None or not sensor.get("scale_address"):
+                        raise ValueError("that sensor is not a scale")
+                    reading = set_sampling_interval(
+                        sensor["scale_address"], int(payload.get("seconds", 0))
+                    )
+                    store.record_scale_reading(
+                        sensor_id,
+                        reading.get("grams"),
+                        str(reading.get("status")),
+                        bool(reading.get("stable")),
+                        None,
+                        interval_seconds=reading.get("interval_s"),
+                        firmware=reading.get("fw"),
+                        build=reading.get("build"),
+                    )
+                    result = store.sensor(sensor_id)
+                elif path.startswith("/api/sensors/") and path.endswith("/scale"):
+                    sensor_id = unquote(path[len("/api/sensors/") : -len("/scale")])
+                    result = store.set_scale_keep(
+                        sensor_id, int(payload.get("keep_every_seconds", 1800))
+                    )
+                elif path.startswith("/api/sensors/") and path.endswith("/ph-calibration"):
+                    sensor_id = unquote(
+                        path[len("/api/sensors/") : -len("/ph-calibration")]
+                    )
+                    reference = payload.get("reference")
+                    result = store.set_soil_ph_calibration(
+                        sensor_id,
+                        None if reference in (None, "") else float(reference),
                     )
                 elif path.startswith("/api/sensors/") and path.endswith("/plant"):
                     # Which plant a sensor is watching, set on its own: a
@@ -309,6 +349,18 @@ def create_server(
                 try:
                     self._require_same_origin()
                     store.delete_plant(self._plant_id(path[len("/api/plants/") :]))
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if path.startswith("/api/care/"):
+                try:
+                    self._require_same_origin()
+                    store.delete_care_event(unquote(path[len("/api/care/") :]))
                 except ValueError as error:
                     self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                     return
@@ -456,7 +508,10 @@ def create_server(
                     result = store.record_plant_care(
                         plant_id,
                         str(payload.get("kind", "")),
-                        None,
+                        # Care is often written down after the fact, so the
+                        # day it happened can be given; the store refuses a
+                        # future one.
+                        self._optional_str(payload.get("at")),
                         self._optional_str(payload.get("note")),
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/weight"):
@@ -500,6 +555,18 @@ def create_server(
                         str(payload.get("wifi_state", "")),
                         self._optional_str(payload.get("wifi_failure")),
                         self._optional_str(payload.get("wifi_address")),
+                    )
+                elif path == "/api/scales":
+                    # Adopting a scale means reaching it: an address that
+                    # does not answer like a scale is not adopted, so a typo
+                    # fails here rather than becoming a sensor that never
+                    # reports.
+                    address = str(payload.get("address", "")).strip()
+                    if not address.startswith(("http://", "https://")):
+                        address = "http://" + address
+                    reading = read_scale(address)
+                    result = store.adopt_scale(
+                        address, str(reading.get("name") or "Scale")
                     )
                 elif path == "/api/firmware":
                     result = self._store_firmware()
@@ -581,13 +648,40 @@ def create_server(
             except ValueError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
+        def _send_care_log(self, query_string: str) -> None:
+            """The care log, filtered and paged the way the page shows it.
+
+            `before` is the oldest event already on screen, so Load more picks
+            up exactly where the list stopped rather than by a page number
+            that shifts the moment something new is recorded.
+            """
+            fields = parse_qs(query_string)
+            sensor_id = fields.get("sensor_id", [None])[0]
+            plant = fields.get("plant_id", [None])[0]
+            before = fields.get("before", [None])[0]
+            try:
+                plant_id = None if plant in (None, "") else self._plant_id(plant)
+                limit = int(fields.get("limit", ["50"])[0])
+            except ValueError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"items": store.care_log(
+                limit,
+                sensor_id=sensor_id,
+                plant_id=plant_id,
+                hidden_kinds=store.hub_settings()["care_log_hidden_kinds"],
+                before=before,
+            )})
+
         def _send_reading_history(self, query_string: str) -> None:
             query = parse_qs(query_string)
             sensor_id = query.get("sensor_id", [None])[0]
             start_value = query.get("start", [None])[0]
             end_value = query.get("end", [None])[0]
             if start_value is None and end_value is None:
-                self._send_json({"items": store.history(sensor_id)})
+                self._send_json(
+                    {"items": store.with_pore_water(store.history(sensor_id))}
+                )
                 return
             try:
                 if not sensor_id or start_value is None or end_value is None:
@@ -603,7 +697,8 @@ def create_server(
             except ValueError as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json({"items": store.history_range(sensor_id, start_at, end_at)})
+            self._send_json({"items": store.with_pore_water(
+                store.history_range(sensor_id, start_at, end_at))})
 
         def _send_raw_reports(self, query_string: str) -> None:
             sensor_id = parse_qs(query_string).get("sensor_id", [""])[0]
@@ -709,7 +804,13 @@ def create_server(
             # chance of showing half an answer.
             plant = dict(plant)
             plant["journey"] = store.plant_journey_of(plant_id)
-            plant["care_log"] = store.care_log(50, plant_id=plant_id)
+            # Without the switched-off kinds, so a plant under a lamp does
+            # not spend its whole window on the light going on and off.
+            plant["care_log"] = store.care_log(
+                50,
+                plant_id=plant_id,
+                hidden_kinds=store.hub_settings()["care_log_hidden_kinds"],
+            )
             plant["weight"] = store.plant_weight_status(plant_id)
             # The air of the room it is in, whoever is measuring it.
             plant["room_air"] = store.room_air(plant["room_id"])

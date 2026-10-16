@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 33
+DATABASE_SCHEMA_VERSION = 39
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -979,6 +979,125 @@ MIGRATIONS: Dict[int, str] = {
            good picture of it that nothing will beat. */
         ALTER TABLE plants ADD COLUMN cover_follows_latest INTEGER NOT NULL DEFAULT 0
             CHECK (cover_follows_latest IN (0, 1));
+    """,
+    34: """
+        /* What the plant cost and where it came from.
+
+           The at-home date already says when; a household keeping plants
+           for years wants the other two halves of the same sentence. Where
+           answers the question a dying plant raises -- whether the shop is
+           worth going back to -- and only the receipt knows it.
+
+           Money is whole cents, never a float: a price typed as dollars and
+           stored as 12.99 comes back as 12.989999999999998, and a sum over
+           a shelf of plants drifts. The display currency is the household's
+           and is not stored, because a hub serves one home. */
+        ALTER TABLE plants ADD COLUMN purchase_price_cents INTEGER
+            CHECK (purchase_price_cents IS NULL OR purchase_price_cents >= 0);
+        ALTER TABLE plants ADD COLUMN purchase_place TEXT;
+    """,
+    35: """
+        /* What this probe reads against what the liquid actually is.
+
+           The soil probe answers pH on a scale of its own: in salted tap
+           water that should be near neutral it reports about 5.0. One
+           measured reference turns that into a usable number, and the
+           correction belongs here rather than in the firmware so it can be
+           changed without a cable.
+
+           A calibration is only true under the conditions it was taken in,
+           so those are kept beside it: what the probe read, what the
+           reference said, when, and the conductivity at the time. The
+           probe's answer drifts with conductivity, and a correction found
+           at 790 uS/cm is not promised to hold at 8000. Kept per sensor,
+           because the offset describes one piece of hardware. */
+        ALTER TABLE sensors ADD COLUMN soil_ph_offset REAL NOT NULL DEFAULT 0;
+        ALTER TABLE sensors ADD COLUMN soil_ph_reference REAL;
+        ALTER TABLE sensors ADD COLUMN soil_ph_reference_raw REAL;
+        ALTER TABLE sensors ADD COLUMN soil_ph_reference_at TEXT;
+        ALTER TABLE sensors ADD COLUMN soil_ph_reference_ec INTEGER;
+    """,
+    36: """
+        /* A scale the hub polls, rather than a probe that advertises itself.
+
+           It is a sensor like any other -- it is adopted, named, given a
+           room and pointed at a plant -- but it is reached over HTTP at an
+           address instead of heard over Bluetooth, so that address is what
+           identifies it. Everything it reports goes into plant_weights,
+           where the hand-typed weights already go, so the water use,
+           forecast and drainage built on them need no new path.
+
+           The poll interval is the sensor's own; how often a weight is
+           kept is separate, because the scale answers ten times a second
+           and a pot does not change that fast. */
+        ALTER TABLE sensors ADD COLUMN scale_address TEXT;
+        ALTER TABLE sensors ADD COLUMN scale_keep_every_seconds INTEGER NOT NULL DEFAULT 1800;
+        ALTER TABLE sensors ADD COLUMN scale_keep_change_grams INTEGER NOT NULL DEFAULT 20;
+        /* What the scale last said, so the console can show it without
+           waiting for the next weight to be worth keeping. */
+        ALTER TABLE sensors ADD COLUMN scale_grams INTEGER;
+        ALTER TABLE sensors ADD COLUMN scale_status TEXT;
+        ALTER TABLE sensors ADD COLUMN scale_stable INTEGER;
+        ALTER TABLE sensors ADD COLUMN scale_read_at TEXT;
+        ALTER TABLE sensors ADD COLUMN scale_error TEXT;
+    """,
+    37: """
+        /* What a scale says about itself beyond the weight.
+
+           Firmware 1.0.0 can weigh once every few minutes instead of ten
+           times a second, powering the amplifier down in between, and a
+           reading then arrives with an age: it may have been taken up to a
+           whole interval ago. Stamping it with the time it was fetched
+           would have put a five-minute-old weight on the wrong minute, and
+           the drying rate is worked out from exactly those minutes.
+
+           seq is kept so the same reading fetched twice is stored once. */
+        ALTER TABLE sensors ADD COLUMN scale_interval_seconds INTEGER;
+        ALTER TABLE sensors ADD COLUMN scale_firmware TEXT;
+        ALTER TABLE sensors ADD COLUMN scale_build TEXT;
+        ALTER TABLE sensors ADD COLUMN scale_seq INTEGER;
+    """,
+    38: """
+        /* Keeping a weight because it moved turned out not to be wanted.
+
+           A pot is weighed on a timer and that is enough: a watering shows
+           up at the next one, and the extra rule only made the record
+           lumpier in a way nobody asked to read. The column goes rather
+           than lingering as a setting nothing consults. */
+        ALTER TABLE sensors DROP COLUMN scale_keep_change_grams;
+    """,
+    39: """
+        /* A third anchor, below thirsty: what the pot weighs dry.
+
+           Thirsty is a decision -- the weight at which this plant should be
+           watered -- and it is set wherever the owner wants the cycle to
+           end. Dry is a fact about the pot: substrate with no plant-available
+           water left in it. The two were being asked to do one job, and a
+           percentage measured from a decision is a percentage of nothing in
+           particular. Measured from dry it is the fraction of the water the
+           pot can actually hold, which is the number a person means when
+           they ask how wet it is.
+
+           The kind column is spelt out in a CHECK, and SQLite cannot widen
+           one in place, so the table is rebuilt. Every row is carried over
+           unchanged; nothing is reinterpreted. */
+        CREATE TABLE plant_weights_rebuilt (
+            weight_id INTEGER PRIMARY KEY,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+            at TEXT NOT NULL,
+            grams INTEGER NOT NULL CHECK (grams > 0),
+            source TEXT NOT NULL CHECK (source IN ('manual', 'scale')),
+            kind TEXT NOT NULL CHECK (kind IN ('reading', 'watered', 'thirsty', 'dry')),
+            note TEXT,
+            observed INTEGER NOT NULL DEFAULT 1 CHECK (observed IN (0, 1))
+        );
+        INSERT INTO plant_weights_rebuilt
+            (weight_id, plant_id, at, grams, source, kind, note, observed)
+        SELECT weight_id, plant_id, at, grams, source, kind, note, observed
+        FROM plant_weights;
+        DROP TABLE plant_weights;
+        ALTER TABLE plant_weights_rebuilt RENAME TO plant_weights;
+        CREATE INDEX plant_weights_by_plant ON plant_weights(plant_id, at DESC);
     """,
 }
 

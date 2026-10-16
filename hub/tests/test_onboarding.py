@@ -609,6 +609,15 @@ class OnboardingWebTests(unittest.TestCase):
         raised.exception.close()
 
     def test_rooms_round_trip_over_the_api(self):
+        """Rooms are made, renamed and removed through the API.
+
+        The household may already have rooms: naming one while adopting a
+        sensor makes it, because a sensor's room is now the room and not a
+        label beside it. So this counts the one it creates rather than
+        assuming it is alone.
+        """
+        with self.request("/api/rooms") as response:
+            already = [r["name"] for r in json.load(response)["items"]]
         with self.request(
             "/api/rooms",
             method="POST",
@@ -617,7 +626,8 @@ class OnboardingWebTests(unittest.TestCase):
             created = json.load(response)
         self.assertEqual(created["name"], "Study")
         with self.request("/api/rooms") as response:
-            self.assertEqual([r["name"] for r in json.load(response)["items"]], ["Study"])
+            self.assertEqual(sorted(r["name"] for r in json.load(response)["items"]),
+                             sorted(already + ["Study"]))
         with self.request(
             "/api/rooms/%d" % created["room_id"],
             method="PUT",
@@ -626,7 +636,8 @@ class OnboardingWebTests(unittest.TestCase):
             self.assertEqual(json.load(response)["name"], "Back study")
         self.request("/api/rooms/%d" % created["room_id"], method="DELETE").close()
         with self.request("/api/rooms") as response:
-            self.assertEqual(json.load(response)["items"], [])
+            self.assertEqual(sorted(r["name"] for r in json.load(response)["items"]),
+                             sorted(already))
 
     def test_resetting_a_sensor_returns_it_to_onboarding(self):
         with self.request(

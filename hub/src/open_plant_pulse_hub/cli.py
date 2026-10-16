@@ -6,6 +6,7 @@ from threading import Thread
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
+from open_plant_pulse_hub.application.scales import ScaleService
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
 from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
@@ -100,6 +101,11 @@ def main() -> None:
             ),
         )
         subscriber.start()
+    # Scales are polled rather than heard, so they get their own loop. It
+    # starts whether or not any are adopted; adopting one later is picked up
+    # on the next pass without a restart.
+    scales = ScaleService(store)
+    scales.start()
     lights = None
     if not args.no_lights:
         lights = LightService(store, SIMULATED_DRIVERS if args.simulated_lights else DRIVERS)

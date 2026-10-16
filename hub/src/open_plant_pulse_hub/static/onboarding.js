@@ -285,8 +285,18 @@ function describeWifi(sensor) {
 
 function renderSettingsSensors() {
   const list = document.getElementById("settings-sensor-list");
+  /* By name, and the same order every time.
+   *
+   * The hub hands sensors back most-recently-heard first, which is useful
+   * for spotting a silent one and useless for a list somebody is reading:
+   * two sensors reporting every few seconds swapped places under the
+   * pointer. This list is "the sensors you have", so it is alphabetical,
+   * with the id to break ties so the order never depends on timing. */
+  const listed = [...fleetSensors].sort((a, b) =>
+    (a.display_name || a.sensor_id).localeCompare(b.display_name || b.sensor_id)
+    || a.sensor_id.localeCompare(b.sensor_id));
   const renderKey = JSON.stringify(
-    fleetSensors.map((sensor) => [
+    listed.map((sensor) => [
       sensor.sensor_id,
       sensor.display_name,
       sensor.room,
@@ -298,14 +308,14 @@ function renderSettingsSensors() {
   if (renderedSettingsSensorsKey === renderKey) return;
   renderedSettingsSensorsKey = renderKey;
   list.replaceChildren();
-  if (!fleetSensors.length) {
+  if (!listed.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     setText(empty, "No sensors yet. Power one on and add it.");
     list.append(empty);
     return;
   }
-  fleetSensors.forEach((sensor) => {
+  listed.forEach((sensor) => {
     const card = document.createElement("div");
     card.className = "settings-sensor";
     setData(card, "sensorId", sensor.sensor_id);
@@ -351,6 +361,12 @@ function renderSettingsSensors() {
  * two differ the moment it is reflashed. Say which it is rather than presenting
  * a cached answer as current. */
 function describeFirmware(sensor) {
+  /* A scale reports its own firmware with every weight, so it is current
+   * by definition rather than something the hub last heard over Bluetooth. */
+  if (sensor.scale?.firmware) {
+    return `firmware ${sensor.scale.firmware}`
+      + (sensor.scale.build ? ` · ${sensor.scale.build}` : "");
+  }
   if (!sensor.firmware_version) return "firmware not reported yet";
   const age = sensor.station_checked_at
     ? Math.round((Date.now() - Date.parse(sensor.station_checked_at)) / 1000)

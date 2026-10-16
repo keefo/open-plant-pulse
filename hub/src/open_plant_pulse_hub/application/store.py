@@ -10,7 +10,7 @@ import sqlite3
 from statistics import median
 from threading import Condition
 from uuid import uuid4
-from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
@@ -202,7 +202,7 @@ PLANT_SECTIONS = (
     "care-log",
 )
 
-WEIGHT_KINDS = ("reading", "watered", "thirsty")
+WEIGHT_KINDS = ("reading", "watered", "thirsty", "dry")
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
 MIN_WEIGHT_SPAN = timedelta(hours=12)
@@ -713,7 +713,10 @@ class ReadingStore:
         with self._condition:
             query = """
                 SELECT sensor_id, identity_kind, identity_value, enrollment_status,
-                       display_name, room, plant_id, profile_id, first_seen_at,
+                       display_name,
+                       (SELECT rooms.name FROM rooms
+                        WHERE rooms.room_id = sensors.room_id) AS room,
+                       plant_id, profile_id, first_seen_at,
                        last_seen_at, latest_rssi, transport, contract_version,
                        moisture_low_percent, conductivity_high_us_cm,
                        expected_interval_seconds, replaced_by_sensor_id,
@@ -724,7 +727,12 @@ class ReadingStore:
                        firmware_version, station_checked_at, firmware_update_digest,
                        firmware_update_version, firmware_update_state,
                        firmware_update_id, firmware_update_percent,
-                       firmware_update_error, firmware_update_started_at
+                       firmware_update_error, firmware_update_started_at,
+                       soil_ph_offset, soil_ph_reference, soil_ph_reference_raw,
+                       soil_ph_reference_at, soil_ph_reference_ec,
+                       scale_address, scale_keep_every_seconds,
+                       scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
+                       scale_interval_seconds, scale_firmware, scale_build, scale_seq
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -742,7 +750,10 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT sensor_id, identity_kind, identity_value, enrollment_status,
-                       display_name, room, plant_id, profile_id, first_seen_at,
+                       display_name,
+                       (SELECT rooms.name FROM rooms
+                        WHERE rooms.room_id = sensors.room_id) AS room,
+                       plant_id, profile_id, first_seen_at,
                        last_seen_at, latest_rssi, transport, contract_version,
                        moisture_low_percent, conductivity_high_us_cm,
                        expected_interval_seconds, replaced_by_sensor_id,
@@ -753,7 +764,12 @@ class ReadingStore:
                        firmware_version, station_checked_at, firmware_update_digest,
                        firmware_update_version, firmware_update_state,
                        firmware_update_id, firmware_update_percent,
-                       firmware_update_error, firmware_update_started_at
+                       firmware_update_error, firmware_update_started_at,
+                       soil_ph_offset, soil_ph_reference, soil_ph_reference_raw,
+                       soil_ph_reference_at, soil_ph_reference_ec,
+                       scale_address, scale_keep_every_seconds,
+                       scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
+                       scale_interval_seconds, scale_firmware, scale_build, scale_seq
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -920,11 +936,6 @@ class ReadingStore:
             ).rowcount
             if updated == 0:
                 raise ValueError("room_id is unknown")
-            # The sensor keeps a readable copy of its room, so renaming a room
-            # must not leave sensors labelled with the old name.
-            self._database.execute(
-                "UPDATE sensors SET room = ? WHERE room_id = ?", (name, room_id)
-            )
         return next(room for room in self.rooms() if room["room_id"] == room_id)
 
     def delete_room(self, room_id: int) -> None:
@@ -1830,6 +1841,14 @@ class ReadingStore:
         ).fetchone()
         if display_name is None:
             display_name = (held[0] if held else "") or ""
+        # A room named here is a room, not a label.
+        #
+        # The sensor used to keep the name as text beside its room_id, and
+        # the two drifted apart whenever a plant moved. The name is read
+        # from the room now, so naming one has to find or make that room,
+        # or the sensor ends up in no room at all.
+        if room_id is None and room:
+            room_id = self._room_id_named(room)
         if room is None and room_id is None:
             room, room_id = (held[1] if held else None) or "", held[3] if held else None
         if profile_id is None:
@@ -1866,7 +1885,7 @@ class ReadingStore:
         with self._condition, self._database:
             current = self._database.execute(
                 """
-                SELECT plant_id, display_name, room, expected_interval_seconds,
+                SELECT plant_id, display_name, room_id, expected_interval_seconds,
                        device_config_revision, enrollment_status
                 FROM sensors WHERE sensor_id = ?
                 """,
@@ -1894,7 +1913,10 @@ class ReadingStore:
             device_config_changed = (
                 adopting
                 or current[1] != display_name
-                or (current[2] or "") != room
+                # Compared by room, not by a copy of its name: the name is
+                # read from the room now, and comparing against a column
+                # nothing writes made every save look like a change.
+                or current[2] != room_id
                 or current[3] != expected_interval_seconds
                 or current[4] == 0
             )
@@ -1926,7 +1948,7 @@ class ReadingStore:
                 UPDATE sensors
                 SET enrollment_status = 'enrolled', archived = 0,
                     onboarding_state = 'onboarded',
-                    display_name = ?, room = ?, room_id = ?, plant_id = ?, profile_id = ?,
+                    display_name = ?, room_id = ?, plant_id = ?, profile_id = ?,
                     moisture_low_percent = ?, conductivity_high_us_cm = ?,
                     expected_interval_seconds = ?, replaced_by_sensor_id = NULL,
                     device_config_revision = ?,
@@ -1935,7 +1957,6 @@ class ReadingStore:
                 """,
                 (
                     display_name,
-                    room or None,
                     room_id,
                     plant_id,
                     profile_id,
@@ -1957,11 +1978,19 @@ class ReadingStore:
         return result
 
     def pending_device_configuration(self, sensor_id: str) -> Optional[Dict[str, Any]]:
+        if self._is_scale(sensor_id):
+            # A scale is reached over HTTP and has no device configuration to
+            # deliver. Left to the ordinary path it sat for ever at "pending",
+            # waiting for a Bluetooth conversation that will never happen.
+            return None
         with self._condition:
             row = self._database.execute(
                 """
                 SELECT device_config_revision, expected_interval_seconds,
-                       display_name, COALESCE(room, ''), wifi_enabled
+                       display_name,
+                       COALESCE((SELECT rooms.name FROM rooms
+                                 WHERE rooms.room_id = sensors.room_id), ''),
+                       wifi_enabled
                 FROM sensors
                 WHERE sensor_id = ? AND enrollment_status = 'enrolled'
                   AND device_config_revision > device_config_applied_revision
@@ -2189,10 +2218,26 @@ class ReadingStore:
                     "UPDATE care_events SET plant_id = ? WHERE sensor_id = ? AND plant_id IS NULL",
                     (plant_id, sensor_id),
                 )
-            self._database.execute(
-                "UPDATE sensors SET plant_id = ? WHERE sensor_id = ?",
-                (plant_id, sensor_id),
-            )
+            if plant_id is None:
+                self._database.execute(
+                    "UPDATE sensors SET plant_id = NULL WHERE sensor_id = ?", (sensor_id,)
+                )
+            else:
+                # A sensor is in the room its plant is in. Where else would
+                # it be? The room was asked for separately back when adopting
+                # a sensor created a plant, which left a scale adopted on its
+                # own with no room_id and a text label matching no room. The
+                # room matters: it is how a probe's air reading reaches every
+                # plant in that room.
+                self._database.execute(
+                    """
+                    UPDATE sensors
+                    SET plant_id = ?,
+                        room_id = (SELECT room_id FROM plants WHERE plant_id = ?)
+                    WHERE sensor_id = ?
+                    """,
+                    (plant_id, plant_id, sensor_id),
+                )
         if plant_id is not None:
             # The plant's kept figures were counted without this sensor's
             # events in them, or with the last plant's; they are counted
@@ -2203,6 +2248,19 @@ class ReadingStore:
         found = self.sensor(sensor_id)
         assert found is not None
         return found
+
+    def _room_id_named(self, name: str) -> Optional[int]:
+        """The room with this name, made if the household has not got one."""
+        wanted = name.strip()
+        if not wanted:
+            return None
+        with self._condition:
+            row = self._database.execute(
+                "SELECT room_id FROM rooms WHERE lower(name) = lower(?)", (wanted,)
+            ).fetchone()
+        if row is not None:
+            return int(row[0])
+        return int(self.create_room(wanted)["room_id"])
 
     def set_sensor_profile(self, sensor_id: str, profile_id: str) -> Dict[str, Any]:
         catalog = load_plant_profiles()
@@ -2480,6 +2538,27 @@ class ReadingStore:
                 for reading, received_at in self._history
             ]
 
+    def with_pore_water(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Attach the pore-water estimate to each reading of a history.
+
+        The two published models behind it live in Python, and a chart that
+        wants the line should not mean a second copy of Topp and Hilhorst in
+        JavaScript drifting away from this one. None where the soil was too
+        dry for the model, which the chart draws as a gap rather than a
+        line through soil nobody measured.
+        """
+        for item in items:
+            reading = item.get("reading") or {}
+            estimate = estimate_pore_water_ec(
+                reading.get("conductivity_us_cm"),
+                reading.get("moisture_percent"),
+                reading.get("soil_temperature_c"),
+            )
+            item["pore_water_ec_us_cm"] = (
+                None if estimate is None else round(estimate.pore_water_ec_us_cm)
+            )
+        return items
+
     def history_range(
         self,
         sensor_id: str,
@@ -2552,12 +2631,20 @@ class ReadingStore:
         limit: int = 50,
         sensor_id: Optional[str] = None,
         plant_id: Optional[int] = None,
+        hidden_kinds: Optional[Sequence[str]] = None,
+        before: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """What happened to a plant, asked for by the plant or by its sensor.
 
         Asked by sensor, the answer is still the plant's: everything that
         happened to it, including what a previous sensor noticed and what
         somebody recorded by hand with no sensor involved.
+
+        The kinds somebody has switched off are left out here rather than in
+        the browser. A plant under a lamp writes two lighting lines a day, so
+        a window of fifty events is a fortnight of the switch going on and off
+        and nothing else; taking them out first spends the window on what was
+        asked for. `before` continues from the oldest event already shown.
         """
         safe_limit = max(1, min(limit, 200))
         with self._condition:
@@ -2565,21 +2652,30 @@ class ReadingStore:
                 SELECT event_id, sensor_id, kind, detected_at, title, summary, confidence, changes_json
                 FROM care_events
             """
-            parameters: Tuple[Any, ...]
+            where: List[str] = []
+            parameters: List[Any] = []
             if plant_id is None and sensor_id is not None:
                 plant_id = self._plant_id_for(sensor_id)
             if plant_id is not None:
-                query += " WHERE plant_id = ?"
-                parameters = (plant_id, safe_limit)
+                where.append("plant_id = ?")
+                parameters.append(plant_id)
             elif sensor_id is not None:
                 # A sensor nobody has claimed: its events are its own until a
                 # plant adopts them.
-                query += " WHERE sensor_id = ?"
-                parameters = (sensor_id, safe_limit)
-            else:
-                parameters = (safe_limit,)
+                where.append("sensor_id = ?")
+                parameters.append(sensor_id)
+            kinds = [kind for kind in (hidden_kinds or []) if kind in CARE_KINDS]
+            if kinds:
+                where.append(f"kind NOT IN ({','.join('?' * len(kinds))})")
+                parameters.extend(kinds)
+            if before:
+                where.append("detected_at < ?")
+                parameters.append(before)
+            if where:
+                query += " WHERE " + " AND ".join(where)
+            parameters.append(safe_limit)
             rows = self._database.execute(
-                query + " ORDER BY detected_at DESC LIMIT ?", parameters
+                query + " ORDER BY detected_at DESC LIMIT ?", tuple(parameters)
             ).fetchall()
         return [
             {
@@ -2904,7 +3000,7 @@ class ReadingStore:
         note = (note or "").strip()
         if kind == "note" and not note:
             raise ValueError("a note needs something written in it")
-        detected_at = at or _timestamp(datetime.now(timezone.utc))
+        detected_at = self._validate_care_time(at)
         with self._condition:
             self._save_event(
                 CareEvent(
@@ -2922,6 +3018,51 @@ class ReadingStore:
                 plant_id=plant_id,
             )
         return self.plant_journey_of(plant_id)
+
+    def delete_care_event(self, event_id: str) -> Dict[str, Any]:
+        """Strike a care event that should not have been written down.
+
+        What somebody did is recorded as theirs, and so is what they did by
+        mistake: a note filed under the wrong day, or a feeding entered twice.
+        The journey figures are a cache over these rows, so they are counted
+        again afterwards rather than nudged -- a count that is derived cannot
+        be kept right by subtracting.
+        """
+        with self._condition, self._database:
+            row = self._database.execute(
+                "SELECT plant_id FROM care_events WHERE event_id = ?", (event_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("no such care event")
+            plant_id = None if row[0] is None else int(row[0])
+            self._database.execute(
+                "DELETE FROM care_events WHERE event_id = ?", (event_id,)
+            )
+            if plant_id is not None:
+                self._rebuild_journey(plant_id)
+        return EMPTY_JOURNEY if plant_id is None else self.plant_journey_of(plant_id)
+
+    @staticmethod
+    def _validate_care_time(at: Optional[str]) -> str:
+        """When the care happened, which is often before it was written down.
+
+        A plant is looked after with wet hands, and the note about it is typed
+        that evening or the next morning. Any past moment is therefore allowed.
+        A future one is not: nothing has been watered tomorrow.
+        """
+        now = datetime.now(timezone.utc)
+        if not at:
+            return _timestamp(now)
+        try:
+            when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("at must be a timestamp") from error
+        if when.tzinfo is None:
+            raise ValueError("at must say which time zone it is in")
+        when = when.astimezone(timezone.utc)
+        if when > now + timedelta(minutes=5):
+            raise ValueError("care cannot have been given in the future")
+        return _timestamp(when)
 
     def record_plant_weight(
         self,
@@ -3067,9 +3208,12 @@ class ReadingStore:
             "latest": None,
             "watered": None,
             "thirsty": None,
+            "dry": None,
             "used_grams": None,
             "capacity_grams": None,
             "remaining_percent": None,
+            "held_grams": None,
+            "water_percent": None,
             "daily_grams": None,
             "days_left": None,
         }
@@ -3086,14 +3230,31 @@ class ReadingStore:
         status["latest"] = point(latest) if latest else None
         watered = next((row for row in rows if row[2] == "watered"), None)
         thirsty = next((row for row in rows if row[2] == "thirsty"), None)
+        # What the pot weighs dry is not a decision anybody has to make: the
+        # scale has already said it. A pot cannot have held less water than
+        # the least it has ever weighed, so the lightest weighing stands
+        # unless somebody sets one deliberately. Typed-in anchors are left
+        # out of the running -- a claim about a state the pot is not in is
+        # not a weighing of it.
+        dry = next((row for row in rows if row[2] == "dry"), None)
+        if dry is None and weighings:
+            dry = min(weighings, key=lambda row: row[1])
         status["watered"] = point(watered) if watered else None
         status["thirsty"] = point(thirsty) if thirsty else None
+        status["dry"] = point(dry) if dry else None
         # How much water the pot holds is the distance between its anchors,
         # which is known as soon as both are, weighed or typed in.
         capacity = None
         if watered and thirsty and watered[1] > thirsty[1]:
             capacity = watered[1] - thirsty[1]
             status["capacity_grams"] = capacity
+        # What the pot holds between dry and full is all the water there is to
+        # hold. Capacity above is the part of it this plant is allowed to use
+        # before somebody waters, which is a smaller and more arbitrary number.
+        held = None
+        if watered and dry and watered[1] > dry[1]:
+            held = watered[1] - dry[1]
+            status["held_grams"] = held
         if latest is None:
             return status
 
@@ -3103,6 +3264,14 @@ class ReadingStore:
         if capacity:
             remaining = (latest_grams - thirsty[1]) / capacity * 100
             status["remaining_percent"] = round(min(100.0, max(0.0, remaining)))
+        # Measured from dry, so it is the fraction of the water the pot can
+        # hold rather than the fraction of a watering interval. Left uncapped
+        # at the bottom would be the honest reading, but a pot lighter than
+        # its dry weight means the anchor is wrong or the pot lost substrate,
+        # and neither is a wetness to report.
+        if held:
+            water = (latest_grams - dry[1]) / held * 100
+            status["water_percent"] = round(min(100.0, max(0.0, water)))
 
         # How fast it is drying, over the weighings since the last watering:
         # a rate measured across a watering would be a rate of filling.
@@ -3714,7 +3883,9 @@ class ReadingStore:
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'fertilizing'),
-                       plants.cover_follows_latest
+                       plants.cover_follows_latest,
+                       plants.purchase_price_cents,
+                       plants.purchase_place
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -3760,7 +3931,9 @@ class ReadingStore:
                        (SELECT MAX(detected_at) FROM care_events
                         WHERE care_events.plant_id = plants.plant_id
                           AND kind = 'fertilizing'),
-                       plants.cover_follows_latest
+                       plants.cover_follows_latest,
+                       plants.purchase_price_cents,
+                       plants.purchase_place
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -4027,6 +4200,33 @@ class ReadingStore:
             raise ValueError("that is not a date a houseplant came home")
         return _timestamp(when)
 
+    @staticmethod
+    def _validate_purchase_price_cents(price: Optional[Any]) -> Optional[int]:
+        """What it cost, in whole cents. Free is a price; negative is not."""
+        if price in (None, ""):
+            return None
+        try:
+            cents = int(round(float(price)))
+        except (TypeError, ValueError) as error:
+            raise ValueError("a purchase price must be a number") from error
+        if cents < 0:
+            raise ValueError("a plant cannot have cost less than nothing")
+        if cents > 100_000_000:
+            raise ValueError("that is not what a houseplant costs")
+        return cents
+
+    @staticmethod
+    def _validate_purchase_place(place: Optional[str]) -> Optional[str]:
+        """Where it came from, as the household would say it aloud."""
+        if place in (None, ""):
+            return None
+        place = str(place).strip()
+        if not place:
+            return None
+        if len(place) > 120:
+            raise ValueError("a place name is at most 120 characters")
+        return place
+
     def _validate_plant_profile(self, profile_id: Optional[str]) -> Optional[str]:
         """A plant may have no profile; it may not have one that does not exist."""
         if profile_id in (None, ""):
@@ -4092,6 +4292,8 @@ class ReadingStore:
         profile_id: Optional[str] = None,
         variety: Optional[str] = None,
         acquired_at: Optional[str] = None,
+        purchase_price_cents: Optional[int] = None,
+        purchase_place: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
@@ -4101,15 +4303,18 @@ class ReadingStore:
         profile_id = self._validate_plant_profile(profile_id)
         variety = self._validate_plant_variety(profile_id, variety)
         acquired_at = self._validate_acquired_at(acquired_at)
+        purchase_price_cents = self._validate_purchase_price_cents(purchase_price_cents)
+        purchase_place = self._validate_purchase_place(purchase_place)
         with self._condition, self._database:
             self._database.execute(
                 """
                 UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?,
-                                  profile_id = ?, variety = ?, acquired_at = ?
+                                  profile_id = ?, variety = ?, acquired_at = ?,
+                                  purchase_price_cents = ?, purchase_place = ?
                 WHERE plant_id = ?
                 """,
                 (display_name, room_id, expected_watering_days, profile_id, variety,
-                 acquired_at, plant_id),
+                 acquired_at, purchase_price_cents, purchase_place, plant_id),
             )
             # A sensor watching it shows the same name, profile and room, or
             # its pages and the plant's disagree about the same plant.
@@ -4206,6 +4411,10 @@ class ReadingStore:
             # given and the one nobody remembers.
             "last_fed_at": row[14],
             "cover_follows_latest": bool(row[15]),
+            # What it cost, in whole cents, and the shop. Together with
+            # acquired_at these are the receipt: when, where, how much.
+            "purchase_price_cents": row[16],
+            "purchase_place": row[17],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
@@ -4676,6 +4885,24 @@ class ReadingStore:
             "firmware_update_percent": row[34],
             "firmware_update_error": row[35],
             "firmware_update_started_at": row[36],
+            "soil_ph_offset": row[37],
+            "soil_ph_reference": row[38],
+            "soil_ph_reference_raw": row[39],
+            "soil_ph_reference_at": row[40],
+            "soil_ph_reference_ec": row[41],
+            "scale_address": row[42],
+            "scale_keep_every_seconds": row[43],
+            "scale": None if row[42] is None else {
+                "grams": row[44],
+                "status": row[45],
+                "stable": None if row[46] is None else bool(row[46]),
+                "read_at": row[47],
+                "error": row[48],
+                "interval_seconds": row[49],
+                "firmware": row[50],
+                "build": row[51],
+                "seq": row[52],
+            },
         }
 
     def _decorate_sensor(self, sensor: Dict[str, Any]) -> Dict[str, Any]:
@@ -4739,6 +4966,7 @@ class ReadingStore:
         else:
             sensor["measurements"] = "stale"
         sensor["latest"] = latest
+        sensor["soil_chemistry"] = self.soil_chemistry(sensor["sensor_id"])
         sensor["reading_count"] = int(
             self._database.execute(
                 "SELECT COUNT(*) FROM sensor_readings WHERE sensor_id = ?",
@@ -4746,6 +4974,263 @@ class ReadingStore:
             ).fetchone()[0]
         )
         return sensor
+
+    def adopt_scale(self, address: str, name: str) -> Dict[str, Any]:
+        """Take on a scale the hub can reach, or recognise one it already has.
+
+        A scale is identified by its address rather than by anything it
+        broadcasts, because it does not broadcast: the hub goes to it. The
+        same address adopted twice is the same scale, so this is safe to
+        call again after a name change or a move to a new network.
+
+        Adopting one adds a sensor and nothing else. It is enrolled on the
+        spot, because reaching a scale is the whole of pairing with it, and
+        it is attached to no plant: a scale is a thing that weighs, not a
+        thing that grows, and which plant sits on it is a separate sentence
+        somebody says later. Going through manage_sensor instead would have
+        created a plant to go with it, which is what a probe wants and a
+        scale never does.
+        """
+        address = address.strip().rstrip("/")
+        if not address:
+            raise ValueError("a scale needs an address")
+        if not name.strip():
+            raise ValueError("a scale needs a name")
+        sensor_id = "scale-" + "".join(
+            character if character.isalnum() else "-" for character in address.lower()
+        ).strip("-")
+        now = _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            existing = self._database.execute(
+                "SELECT sensor_id FROM sensors WHERE scale_address = ?", (address,)
+            ).fetchone()
+            if existing is not None:
+                self._database.execute(
+                    "UPDATE sensors SET last_seen_at = ? WHERE sensor_id = ?",
+                    (now, existing[0]),
+                )
+                sensor_id = existing[0]
+            else:
+                self._database.execute(
+                    """
+                    INSERT INTO sensors (
+                        sensor_id, identity_kind, identity_value, enrollment_status,
+                        display_name, transport, contract_version,
+                        first_seen_at, last_seen_at, onboarding_state, scale_address
+                    ) VALUES (?, 'http-address', ?, 'enrolled', ?, 'http-scale', 0, ?, ?,
+                              'onboarded', ?)
+                    """,
+                    (sensor_id, address, name.strip(), now, now, address),
+                )
+        sensor = self.sensor(sensor_id)
+        assert sensor is not None
+        return sensor
+
+    def _is_scale(self, sensor_id: str) -> bool:
+        with self._condition:
+            row = self._database.execute(
+                "SELECT transport FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone()
+        return row is not None and row[0] == "http-scale"
+
+    def scales(self) -> List[Dict[str, Any]]:
+        """Every scale the hub knows, adopted or not, for the poller."""
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT sensor_id, scale_address, plant_id, scale_keep_every_seconds,
+                       scale_seq, display_name
+                FROM sensors
+                WHERE scale_address IS NOT NULL AND COALESCE(archived, 0) = 0
+                """
+            ).fetchall()
+        return [
+            {"sensor_id": row[0], "address": row[1], "plant_id": row[2],
+             "keep_every_seconds": row[3], "seq": row[4], "display_name": row[5]}
+            for row in rows
+        ]
+
+    def record_scale_reading(
+        self,
+        sensor_id: str,
+        grams: Optional[float],
+        status: str,
+        stable: Optional[bool],
+        error: Optional[str] = None,
+        interval_seconds: Optional[int] = None,
+        firmware: Optional[str] = None,
+        build: Optional[str] = None,
+        seq: Optional[int] = None,
+    ) -> None:
+        """Keep what the scale last said, whether or not it was worth storing."""
+        now = _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET scale_grams = ?, scale_status = ?, scale_stable = ?,
+                    scale_read_at = ?, scale_error = ?, last_seen_at = ?,
+                    scale_interval_seconds = COALESCE(?, scale_interval_seconds),
+                    scale_firmware = COALESCE(?, scale_firmware),
+                    scale_build = COALESCE(?, scale_build),
+                    scale_seq = COALESCE(?, scale_seq)
+                WHERE sensor_id = ?
+                """,
+                (None if grams is None else int(round(grams)), status,
+                 None if stable is None else (1 if stable else 0),
+                 now, error, now, interval_seconds, firmware, build, seq, sensor_id),
+            )
+
+    def set_scale_keep(self, sensor_id: str, every_seconds: int) -> Dict[str, Any]:
+        """How often a weight from this scale is written down.
+
+        A week at the far end, because some pots are watered about that
+        often and a weight a day from one of those is six readings nobody
+        reads between the two that mattered. The scale keeps weighing
+        either way; this is only how much of it is kept.
+        """
+        if not 30 <= int(every_seconds) <= 604800:
+            raise ValueError("keep interval must be between 30 seconds and a week")
+        if self.sensor(sensor_id) is None:
+            raise ValueError("unknown sensor")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE sensors SET scale_keep_every_seconds = ? WHERE sensor_id = ?",
+                (int(every_seconds), sensor_id),
+            )
+        sensor = self.sensor(sensor_id)
+        assert sensor is not None
+        return sensor
+
+    def soil_chemistry(self, sensor_id: str) -> Optional[Dict[str, Any]]:
+        """The last pH and nutrients this sensor actually measured.
+
+        These ride on a reading taken a couple of times a day and on a
+        watering, so the newest reading usually carries none of them and
+        the figures worth showing are the last real ones with their age
+        beside them. A number from this morning is useful; the same number
+        presented as current is not.
+        """
+        # Read straight from the table rather than through sensor(), which
+        # decorates every sensor with this and would call us back forever.
+        with self._condition:
+            calibration = self._database.execute(
+                """
+                SELECT soil_ph_offset, soil_ph_reference, soil_ph_reference_raw,
+                       soil_ph_reference_at, soil_ph_reference_ec
+                FROM sensors WHERE sensor_id = ?
+                """,
+                (sensor_id,),
+            ).fetchone()
+            if calibration is None:
+                return None
+            row = self._database.execute(
+                """
+                SELECT soil_ph, observed_at, conductivity_us_cm,
+                       nitrogen_mg_kg, phosphorus_mg_kg, potassium_mg_kg
+                FROM sensor_readings
+                WHERE sensor_id = ? AND soil_ph IS NOT NULL
+                ORDER BY observed_at DESC LIMIT 1
+                """,
+                (sensor_id,),
+            ).fetchone()
+        offset = float(calibration[0] or 0.0)
+        status: Dict[str, Any] = {
+            "offset": round(offset, 2),
+            "reference": calibration[1],
+            "reference_raw": calibration[2],
+            "reference_at": calibration[3],
+            "reference_ec": calibration[4],
+            "calibrated": calibration[1] is not None,
+            "raw": None,
+            "ph": None,
+            "at": None,
+            "age_seconds": None,
+            "conductivity_us_cm": None,
+            "nitrogen_mg_kg": None,
+            "phosphorus_mg_kg": None,
+            "potassium_mg_kg": None,
+            "far_from_calibration": False,
+        }
+        if row is None or row[0] is None:
+            return status
+        raw = float(row[0])
+        status.update({
+            "raw": round(raw, 2),
+            "ph": round(raw + offset, 2),
+            "at": row[1],
+            "age_seconds": max(0, int((
+                datetime.now(timezone.utc)
+                - self._observation_datetime(row[1], datetime.now(timezone.utc))
+            ).total_seconds())),
+            "conductivity_us_cm": row[2],
+            "nitrogen_mg_kg": row[3],
+            "phosphorus_mg_kg": row[4],
+            "potassium_mg_kg": row[5],
+        })
+        # The probe's pH moves with conductivity, so a correction found at
+        # one is not promised at another. Said rather than silently applied.
+        reference_ec = calibration[4]
+        if status["calibrated"] and reference_ec and row[2]:
+            ratio = row[2] / float(reference_ec)
+            status["far_from_calibration"] = ratio >= 2.0 or ratio <= 0.5
+        return status
+
+    def set_soil_ph_calibration(
+        self, sensor_id: str, reference: Optional[float]
+    ) -> Dict[str, Any]:
+        """Pin the probe's pH to one measured reference, or let it go.
+
+        The offset is worked out from the last pH the probe actually
+        reported, so nobody has to type what it read -- and the conditions
+        are kept with it, because that is what makes a calibration
+        checkable later rather than a number of unknown origin.
+        """
+        if self.sensor(sensor_id) is None:
+            raise ValueError("unknown sensor")
+        if reference is None:
+            with self._condition, self._database:
+                self._database.execute(
+                    """
+                    UPDATE sensors SET soil_ph_offset = 0, soil_ph_reference = NULL,
+                           soil_ph_reference_raw = NULL, soil_ph_reference_at = NULL,
+                           soil_ph_reference_ec = NULL
+                    WHERE sensor_id = ?
+                    """,
+                    (sensor_id,),
+                )
+            status = self.soil_chemistry(sensor_id)
+            assert status is not None
+            return status
+        if not 0.0 <= float(reference) <= 14.0:
+            raise ValueError("reference must be a pH between 0 and 14")
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT soil_ph, observed_at, conductivity_us_cm
+                FROM sensor_readings
+                WHERE sensor_id = ? AND soil_ph IS NOT NULL
+                ORDER BY observed_at DESC LIMIT 1
+                """,
+                (sensor_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            raise ValueError("this sensor has not reported a pH to calibrate against")
+        raw = float(row[0])
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors SET soil_ph_offset = ?, soil_ph_reference = ?,
+                       soil_ph_reference_raw = ?, soil_ph_reference_at = ?,
+                       soil_ph_reference_ec = ?
+                WHERE sensor_id = ?
+                """,
+                (round(float(reference) - raw, 2), float(reference), raw,
+                 _timestamp(datetime.now(timezone.utc)), row[2], sensor_id),
+            )
+        status = self.soil_chemistry(sensor_id)
+        assert status is not None
+        return status
 
     @staticmethod
     def _validate_device_text(value: str, field: str, required: bool) -> None:
