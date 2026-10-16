@@ -1507,6 +1507,27 @@ class PlantApiTests(unittest.TestCase):
         }
         self.assertEqual(unbalanced, {}, f"tags that do not pair: {unbalanced}")
 
+    def test_every_element_the_scripts_reach_for_exists(self) -> None:
+        """A getElementById for an element that has gone takes the page down.
+
+        setText and setAttr are called on the result without checking it,
+        which is right -- a missing element is a mistake, not a state to
+        handle -- but the mistake throws inside the refresh, and a refresh
+        that throws stops the whole page updating. Removing markup has
+        twice left a write behind that did exactly that.
+        """
+        import re
+
+        static = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        present = set(re.findall(r'\bid="([^"]+)"', (static / "index.html").read_text()))
+        missing = {
+            f"{script.name}:{wanted}"
+            for script in static.glob("*.js")
+            for wanted in re.findall(r'getElementById\(\s*"([^"]+)"\s*\)', script.read_text())
+            if wanted not in present
+        }
+        self.assertEqual(missing, set())
+
     def test_a_sensor_is_configured_on_its_own_page_not_its_plant_s(self) -> None:
         """Administering a device and caring for a plant are different jobs.
 

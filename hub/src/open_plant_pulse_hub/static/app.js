@@ -182,10 +182,6 @@ function renderPage() {
      * nowhere to be configured, and buried the device's own settings under
      * a plant that merely happens to be in front of it. */
     const plantId = selectedSensor?.plant_id ?? null;
-    /* Back to where a sensor is found, which is the sensors list. The
-     * plant is not where this page was reached from, and a scale has no
-     * plant to go back to. */
-    setAttr(document.getElementById("config-back-link"), "href", "/settings");
     // Lighting is the plant's, so that one still goes to the plant.
     setAttr(document.getElementById("plant-lighting-change"), "href",
             plantId === null ? sensorPath(selectedSensorId, "/settings")
