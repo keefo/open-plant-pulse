@@ -90,7 +90,7 @@ grows rather than leaving every concern in one source file.
 ### Proposed file layout
 
 ```text
-sensor/firmware/main/
+sensors/soil-probe/firmware/main/
 ├── app_main.c
 ├── web_ui.c
 ├── web_ui.h
@@ -211,7 +211,7 @@ or OTA endpoints:
 - Validate OTA image target, size, signature policy, and partition capacity.
 - Do not expose Wi-Fi credentials through any read endpoint or logs.
 
-The generated `sensor/sdkconfig` remains ignored and local. Portable defaults
+The generated `sensors/soil-probe/sdkconfig` remains ignored and local. Portable defaults
 must not contain private network credentials.
 
 ## Resource budgets
@@ -291,8 +291,8 @@ bootable with previous valid configuration or firmware.
 
 For every phase:
 
-1. Run `sensor/firmware/build.sh` with web UI enabled and disabled.
-2. Flash through `sensor/firmware/flush.sh` and verify serial remains available.
+1. Run `sensors/soil-probe/firmware/build.sh` with web UI enabled and disabled.
+2. Flash through `sensors/soil-probe/firmware/flush.sh` and verify serial remains available.
 3. Exercise every endpoint with `curl`, including malformed requests.
 4. Verify the page at desktop and mobile widths with browser screenshots.
 5. Observe heap before loading, during repeated refresh, and after disconnect.

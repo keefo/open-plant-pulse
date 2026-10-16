@@ -146,7 +146,7 @@ Where things live, and what follows from it:
 
 | Change | Needs | Notes |
 | --- | --- | --- |
-| Sensor firmware | Build and flash; bump `sensor/version.txt` | By USB with `flush.sh` when the C3 is plugged in; over the air through the hub otherwise |
+| Sensor firmware | Build and flash; bump `sensors/soil-probe/version.txt` | By USB with `flush.sh` when the C3 is plugged in; over the air through the hub otherwise |
 | Rename or refactor with identical bytes on air and in flash | Nothing on the device | The running firmware stays compatible |
 | Hub code | Restart the hub service | `launchctl kickstart -k gui/$(id -u)/com.openplantpulse.hub`; it runs from the main checkout |
 | Hub database schema | Rehearse on a copy, back up, restart | The migration runs at start; every step so far kept every row |

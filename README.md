@@ -107,8 +107,8 @@ appear as they arrive.
 
 1. Read [the system architecture](docs/architecture.md) and
    [shared protocol](protocol/README.md).
-2. For hardware work, use the [sensor guide](sensor/hardware/README.md),
-   [BOM](sensor/hardware/BOM.md), [enclosure workspace](sensor/hardware/enclosure/README.md),
+2. For hardware work, use the [sensor guide](sensors/soil-probe/hardware/README.md),
+   [BOM](sensors/soil-probe/hardware/BOM.md), [enclosure workspace](sensors/soil-probe/hardware/enclosure/README.md),
    and [bring-up checklist](docs/bring-up.md).
 3. To start with a XIAO ESP32-C3 and SHT45 only, follow the
    [first sensor-node guide](docs/sht45-first-node.md). For broader embedded
@@ -131,8 +131,8 @@ Use the repository scripts for ESP32-C3 work. They locate and activate ESP-IDF,
 select the correct project directory, and keep the commands reproducible:
 
 ```sh
-sensor/firmware/build.sh
-sensor/firmware/flush.sh
+sensors/soil-probe/firmware/build.sh
+sensors/soil-probe/firmware/flush.sh
 ```
 
 `flush.sh` builds, auto-detects a single USB serial device, flashes it, and opens

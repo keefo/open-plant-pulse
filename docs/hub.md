@@ -593,8 +593,8 @@ validation.
 ### Phase 4: Physical BLE and power validation
 
 - Implement the bounded ESP32-C3 BTHome advertising lifecycle and deep sleep.
-- Bump `sensor/version.txt`, build with `sensor/firmware/build.sh`, flash with
-  `sensor/firmware/flush.sh`, and verify the running version.
+- Bump `sensors/soil-probe/version.txt`, build with `sensors/soil-probe/firmware/build.sh`, flash with
+  `sensors/soil-probe/firmware/flush.sh`, and verify the running version.
 - Verify repeated wake/measure/advertise/sleep cycles under normal and degraded
   radio conditions.
 - Measure complete-cycle and deep-sleep energy, advertisement reception rate, and

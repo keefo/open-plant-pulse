@@ -1,0 +1,33 @@
+menu "HX711 scale"
+
+    choice SCALE_LINK
+        prompt "How the scale talks to other devices"
+        default SCALE_LINK_WIFI
+
+        config SCALE_LINK_WIFI
+            bool "Wi-Fi: web page and over-the-air updates"
+        config SCALE_LINK_BLE
+            bool "Bluetooth LE: Chrome page on the Mac (mac/scale.html)"
+        config SCALE_LINK_USB
+            bool "USB only, no radio: Chrome page on the Mac (mac/scale.html)"
+    endchoice
+
+    config SCALE_HOME_WIFI_SSID
+        string "Home Wi-Fi name to join on a first boot"
+        default ""
+        help
+            Only a bootstrap. The Wi-Fi driver keeps whatever it last joined
+            in NVS, and the scale uses that in preference, so this is read on
+            a device that has never joined anything -- after a full erase, or
+            the first time a board is flashed.
+
+            Leave it empty and the scale starts its own network instead,
+            HX711-Scale at 192.168.4.1, where POST /api/wifi can give it the
+            household's. Set it in sdkconfig, which git ignores, and never in
+            a source file: this repository is public.
+
+    config SCALE_HOME_WIFI_PASS
+        string "Password for that network"
+        default ""
+
+endmenu

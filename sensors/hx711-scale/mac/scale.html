@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HX711 Scale</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--fg:#1c2230;--mute:#687184;--line:#e2e5ea;--acc:#2563eb;--on-acc:#fff;--ok:#15803d;--warn:#b45309;--bad:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#11141a;--card:#1a1f28;--fg:#e6e9ef;--mute:#8b93a3;--line:#2a313c;--acc:#60a5fa;--on-acc:#0b1220;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px;display:grid;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+h1{font-size:18px;margin:0}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px;font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.pill{font-size:12px;padding:2px 10px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.weight{font-size:56px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1;margin:4px 0}
+.weight small{font-size:22px;color:var(--mute);font-weight:400}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:12px}
+.stats div{font-size:12px;color:var(--mute)}
+.stats b{display:block;font-size:16px;color:var(--fg);font-variant-numeric:tabular-nums;font-weight:500}
+canvas{width:100%;height:170px;display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row+.row{margin-top:10px}
+button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--mute)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+input{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0}
+#log{font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.note{font-size:12px;margin:8px 0 0}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.mute{color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>HX711 Scale</h1>
+  <div class="row">
+    <span id="conn" class="pill mute">not connected</span>
+    <button class="primary" id="usb">USB</button>
+    <button id="ble">Bluetooth</button>
+    <button id="disconnect" hidden>Disconnect</button>
+  </div>
+</header>
+
+<section class="card" id="help">
+  <div id="helptext">Press <b>USB</b> when the scale is plugged into this Mac (pick <b>USB Serial</b>), or <b>Bluetooth</b> when it runs the Bluetooth firmware (pick <b>HX711-Scale</b>).</div>
+  <p class="note mute">Needs Chrome or Edge. The first time you use Bluetooth, macOS asks to let the browser use it: allow it. Close any serial monitor first, or the USB port will be busy.</p>
+</section>
+
+<section class="card">
+  <div id="state" class="mute">Not connected</div>
+  <div class="weight" id="weight">—</div>
+  <div class="stats">
+    <div>Raw<b id="raw">—</b></div>
+    <div>Delta (counts)<b id="delta">—</b></div>
+    <div>Noise (± counts, filtered)<b id="noise">—</b></div>
+    <div>Counts per gram<b id="factor">—</b></div>
+    <div>Display step<b id="step">—</b></div>
+    <div>Battery<b id="batt">—</b></div>
+    <div>Uptime<b id="up">—</b></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2 id="charttitle">Last 2 minutes</h2>
+  <canvas id="chart"></canvas>
+</section>
+
+<section class="card">
+  <h2>Controls</h2>
+  <div class="row">
+    <button class="primary" id="tare">Tare (zero)</button>
+    <span class="mute">with nothing on the scale, or press BOOT on the board</span>
+  </div>
+  <div class="row">
+    <input id="grams" type="number" min="0" step="any" placeholder="Known weight in g" style="width:170px">
+    <button id="cal">Calibrate</button>
+    <button id="reset">Clear calibration</button>
+  </div>
+  <p class="note mute">To calibrate: tare with the scale empty, put on something you know the weight of, type its grams and press Calibrate. Results show under Messages.</p>
+</section>
+
+<section class="card">
+  <h2>Messages</h2>
+  <div id="log"></div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const HIST_MS = 120000;
+const dec = new TextDecoder(), enc = new TextEncoder();
+let lastSeq = 0, lastUp = -1, calibrated = false;
+const hist = [];  // {t, v, delta}
+
+function fmtUp(s) {
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + x + 's';
+}
+
+function addLog(m, cls, t) {
+  const log = $('log'), line = document.createElement('div');
+  line.textContent = '[' + fmtUp(t ?? Math.max(lastUp, 0)) + '] ' + m;
+  line.className = cls || (m.startsWith('!!!') ? 'bad' : m.startsWith('>>>') ? 'ok' : '');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.appendChild(line);
+  while (log.childNodes.length > 300) log.removeChild(log.firstChild);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function setState(text, cls) { const e = $('state'); e.textContent = text; e.className = cls; }
+function setConn(text, cls) { const e = $('conn'); e.textContent = text; e.className = 'pill ' + cls; }
+function setControls(on) { for (const id of ['tare', 'cal', 'reset']) $(id).disabled = !on; }
+
+function show(d) {
+  calibrated = d.grams !== null;
+  const have = d.seq > 0 && d.ok;
+  if (d.up < lastUp) { hist.length = 0; lastSeq = 0; }
+  lastUp = d.up;
+
+  if (d.seq === 0) setState('Waiting for the first reading…', 'mute');
+  else if (!d.ok) setState('HX711 not answering: check the VCC, GND, DT and SCK wires', 'bad');
+  else if (d.sat) setState('Reading is maxed out: a load cell wire is loose or E+/E−/A+/A− are mixed up', 'bad');
+  else if (!calibrated) setState('Not calibrated yet: use Calibrate below', 'warn');
+  else if (d.stable) setState('● Stable', 'ok');
+  else setState('○ Settling…', 'mute');
+
+  if (have) $('weight').innerHTML = calibrated
+    ? d.grams.toFixed(d.step < 1 ? 1 : 0) + ' <small>g</small>'
+    : d.delta + ' <small>counts</small>';
+  $('raw').textContent = have ? d.raw : '—';
+  $('delta').textContent = have ? d.delta : '—';
+  $('factor').textContent = calibrated ? d.factor.toFixed(3) : 'not set';
+  $('step').textContent = calibrated ? d.step + ' g' : '—';
+  $('batt').textContent = d.seq === 0 ? '—' : d.batt < 1 ? d.batt.toFixed(2) + ' V (not wired?)' : d.batt.toFixed(2) + ' V';
+  $('up').textContent = fmtUp(d.up);
+
+  if (have && d.seq !== lastSeq) {
+    lastSeq = d.seq;
+    hist.push({ t: Date.now(), v: calibrated ? d.grams : d.delta, delta: d.delta });
+    while (hist.length && Date.now() - hist[0].t > HIST_MS) hist.shift();
+    const last = hist.slice(-10).map(p => p.delta);
+    if (last.length >= 3) {
+      const mean = last.reduce((a, b) => a + b) / last.length;
+      const sd = Math.sqrt(last.reduce((a, b) => a + (b - mean) ** 2, 0) / last.length);
+      $('noise').textContent = sd.toFixed(0);
+    }
+    draw();
+  }
+}
+
+function draw() {
+  const c = $('chart'), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const unit = calibrated ? ' g' : '';
+  $('charttitle').textContent = 'Last 2 minutes' + (calibrated ? ' (grams)' : ' (counts)');
+  if (hist.length < 2) return;
+
+  let lo = Math.min(...hist.map(p => p.v)), hi = Math.max(...hist.map(p => p.v));
+  const minSpan = calibrated ? 2 : 100;
+  if (hi - lo < minSpan) { const m = (hi + lo) / 2; lo = m - minSpan / 2; hi = m + minSpan / 2; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const now = Date.now(), L = 64, B = 18;
+  const X = t => L + (w - L - 4) * (1 - (now - t) / HIST_MS);
+  const Y = v => 6 + (h - B - 6) * (hi - v) / (hi - lo);
+
+  g.font = '11px -apple-system,system-ui,sans-serif';
+  g.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, y = Math.round(Y(v)) + 0.5;
+    g.strokeStyle = col('--line'); g.beginPath(); g.moveTo(L, y); g.lineTo(w, y); g.stroke();
+    g.fillStyle = col('--mute'); g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText((Math.abs(hi - lo) < 20 ? v.toFixed(1) : v.toFixed(0)) + unit, L - 6, y);
+  }
+  g.textBaseline = 'bottom';
+  g.textAlign = 'left'; g.fillText('2 min ago', L, h);
+  g.textAlign = 'right'; g.fillText('now', w - 4, h);
+
+  g.strokeStyle = col('--acc'); g.lineWidth = 2; g.lineJoin = 'round';
+  g.beginPath();
+  hist.forEach((p, i) => i ? g.lineTo(X(p.t), Y(p.v)) : g.moveTo(X(p.t), Y(p.v)));
+  g.stroke();
+}
+
+// ---------- connection (USB serial or Bluetooth) ----------
+let link = null;            // { kind, send(text) }
+let wanted = null;          // 'usb' or 'ble' while the user wants to stay connected
+let serialPort = null, serialReader = null, serialPipe = null;
+let device = null;
+
+function onConnected(kind, send) {
+  link = { kind, send };
+  $('log').innerHTML = '';  // the scale replays or reprints its messages, so start fresh
+  setConn(kind === 'usb' ? 'live (USB)' : 'live (Bluetooth)', 'ok');
+  setControls(true);
+  $('help').hidden = true;
+  $('usb').hidden = $('ble').hidden = true;
+  $('disconnect').hidden = false;
+}
+
+function onLost() {
+  link = null;
+  setControls(false);
+  if (wanted) {
+    setConn('reconnecting…', 'warn');
+    setState('Connection lost: reconnecting…', 'warn');
+  } else {
+    setConn('not connected', 'mute');
+    $('usb').hidden = $('ble').hidden = false;
+    $('disconnect').hidden = true;
+  }
+}
+
+// USB: Web Serial. The firmware prints "@{json}" per reading; other lines are messages.
+const BOOT_NOISE = /^(raw |I \(|D \(|V \(|ets |rst:|configsip|clk_drv|mode:|load:|ho |entry )/;
+
+function handleSerialLine(line) {
+  if (line.startsWith('@')) {
+    try { show(JSON.parse(line.slice(1))); } catch (e) { /* cut-off line */ }
+  } else if (line && !BOOT_NOISE.test(line)) {
+    addLog(line, line.startsWith('E (') ? 'bad' : line.startsWith('W (') ? 'warn' : null);
+  }
+}
+
+async function openSerial(port) {
+  await port.open({ baudRate: 115200 });
+  // Both lines low = run normally (the board's auto-reset circuit stays idle).
+  await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  serialPort = port;
+  const decoder = new TextDecoderStream();
+  serialPipe = port.readable.pipeTo(decoder.writable).catch(() => {});
+  serialReader = decoder.readable.getReader();
+  onConnected('usb', async text => {
+    const w = port.writable.getWriter();
+    try { await w.write(enc.encode(text + '\n')); } finally { w.releaseLock(); }
+  });
+  let buf = '';
+  try {
+    for (;;) {
+      const { value, done } = await serialReader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const l of lines) handleSerialLine(l.replace(/\r$/, ''));
+    }
+  } catch (e) { /* unplugged */ }
+  try { await serialPipe; await port.close(); } catch (e) {}
+  serialPort = serialReader = null;
+  onLost();
+}
+
+$('usb').onclick = async () => {
+  if (!navigator.serial) return noSupport('USB');
+  try {
+    const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x1a86 }, { usbVendorId: 0x303a }] });  // CH340, ESP32-C6 USB
+    wanted = 'usb';
+    await openSerial(port);
+  } catch (e) {
+    if (e.name !== 'NotFoundError') addLog('!!! Could not open the USB port: ' + e.message + ' (is a serial monitor still open?)');
+  }
+};
+
+// Replugging the board: reopen the port we already have permission for.
+if (navigator.serial) navigator.serial.addEventListener('connect', e => {
+  if (wanted === 'usb' && !serialPort) openSerial(e.target).catch(() => {});
+});
+
+// Bluetooth: Web Bluetooth. Must match ble.c.
+const SVC = '7a1c0001-3c5e-4b8e-9f1a-2d6c8e4b7a11';
+const STATUS = '7a1c0002-3c5e-4b8e-9f1a-2d6c8e4b7a11';
+const LOG = '7a1c0003-3c5e-4b8e-9f1a-2d6c8e4b7a11';
+const CMD = '7a1c0004-3c5e-4b8e-9f1a-2d6c8e4b7a11';
+
+async function attachBle() {
+  setConn('connecting…', 'warn');
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  const status = await svc.getCharacteristic(STATUS);
+  const log = await svc.getCharacteristic(LOG);
+  const cmd = await svc.getCharacteristic(CMD);
+  onConnected('ble', text => cmd.writeValueWithResponse(enc.encode(text)));
+  status.addEventListener('characteristicvaluechanged', e => {
+    try { show(JSON.parse(dec.decode(e.target.value))); } catch (err) { /* partial packet */ }
+  });
+  log.addEventListener('characteristicvaluechanged', e => {
+    const s = dec.decode(e.target.value), sp = s.indexOf(' ');
+    addLog(s.slice(sp + 1), null, +s.slice(0, sp));
+  });
+  await status.startNotifications();
+  await log.startNotifications();
+  show(JSON.parse(dec.decode(await status.readValue())));
+}
+
+async function bleLost() {
+  onLost();
+  while (wanted === 'ble') {
+    try { await attachBle(); return; } catch (e) { await new Promise(r => setTimeout(r, 2000)); }
+  }
+}
+
+$('ble').onclick = async () => {
+  if (!navigator.bluetooth) return noSupport('Bluetooth');
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }] });
+    device.addEventListener('gattserverdisconnected', bleLost);
+    wanted = 'ble';
+    await attachBle();
+  } catch (e) {
+    if (e.name !== 'NotFoundError') {
+      wanted = null;
+      onLost();
+      addLog('!!! Could not connect over Bluetooth: ' + e.message);
+    }
+  }
+};
+
+$('disconnect').onclick = async () => {
+  const was = wanted;
+  wanted = null;
+  if (was === 'usb' && serialReader) serialReader.cancel();
+  else if (was === 'ble' && device && device.gatt.connected) device.gatt.disconnect();
+  else onLost();
+};
+
+function noSupport(what) {
+  $('help').hidden = false;
+  $('helptext').textContent = 'This browser can\'t use ' + what + ' from a web page. Open this file in Chrome or Edge.';
+  $('helptext').className = 'bad';
+}
+
+async function send(cmd, note) {
+  if (!link) return;
+  addLog(note, 'mute');
+  try { await link.send(cmd); }
+  catch (e) { addLog('!!! Could not send: ' + e.message); }
+}
+
+$('tare').onclick = () => send('t', 'Taring…');
+$('cal').onclick = () => {
+  const g = parseFloat($('grams').value);
+  if (!(g > 0)) { $('grams').focus(); return; }
+  send(String(g), 'Calibrating with ' + g + ' g…');
+};
+$('reset').onclick = () => {
+  if (confirm('Clear the saved calibration?')) send('r', 'Clearing calibration…');
+};
+addEventListener('resize', draw);
+setControls(false);
+</script>
+</body>
+</html>

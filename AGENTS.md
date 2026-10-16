@@ -6,10 +6,10 @@
   or unverified.
 - Treat version bumps, builds, flashes, device restarts, and physical-hardware checks
   as part of the task when the request or repository workflow requires them.
-- For sensor firmware releases, update `sensor/version.txt` before building, use
-  `sensor/firmware/build.sh` and `sensor/firmware/flush.sh`, and verify the running
+- For sensor firmware releases, update `sensors/soil-probe/version.txt` before building, use
+  `sensors/soil-probe/firmware/build.sh` and `sensors/soil-probe/firmware/flush.sh`, and verify the running
   device reports the new version when hardware is available.
-- Deploy sensor firmware either over USB-C with `sensor/firmware/flush.sh`, or
+- Deploy sensor firmware either over USB-C with `sensors/soil-probe/firmware/flush.sh`, or
   over the air by uploading the built image to the hub (`POST /api/firmware`)
   and requesting the install (`POST /api/sensors/<id>/firmware`). Either way,
   confirm the sensor then reports the new version. Give every deployed binary a

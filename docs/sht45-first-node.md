@@ -164,7 +164,7 @@ retry. Confirm the exact recovery sequence against the XIAO board revision.
 Keep sensor communication out of `app_main.c`. Add this component layout:
 
 ```text
-sensor/firmware/components/sht45/
+sensors/soil-probe/firmware/components/sht45/
 ├── CMakeLists.txt
 ├── include/
 │   └── sht45.h

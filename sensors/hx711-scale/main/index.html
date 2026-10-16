@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HX711 Scale</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--fg:#1c2230;--mute:#687184;--line:#e2e5ea;--acc:#2563eb;--on-acc:#fff;--ok:#15803d;--warn:#b45309;--bad:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#11141a;--card:#1a1f28;--fg:#e6e9ef;--mute:#8b93a3;--line:#2a313c;--acc:#60a5fa;--on-acc:#0b1220;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px;display:grid;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:18px;margin:0}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 10px;font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.pill{font-size:12px;padding:2px 10px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.weight{font-size:56px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1;margin:4px 0}
+.weight small{font-size:22px;color:var(--mute);font-weight:400}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:12px}
+.stats div{font-size:12px;color:var(--mute)}
+.stats b{display:block;font-size:16px;color:var(--fg);font-variant-numeric:tabular-nums;font-weight:500}
+canvas{width:100%;height:170px;display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row+.row{margin-top:10px}
+button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--mute)}
+button.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+select,input{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0}
+#log{font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.note{font-size:12px;margin:8px 0 0}
+.display{text-align:center;padding:28px 14px 22px}
+.big{font-size:clamp(72px,24vw,150px);font-weight:600;font-variant-numeric:tabular-nums;line-height:1;transition:opacity .2s}
+.big .unit{font-size:.3em;color:var(--mute);font-weight:400;margin-left:.12em}
+.big.live{animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.55}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.big.live{animation:none;opacity:.45}}
+#bigstate{margin-top:10px;font-size:15px}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.mute{color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<header><h1 id="name">HX711 Scale</h1><span><span id="battpill" class="pill mute" hidden></span> <span id="conn" class="pill mute">connecting…</span></span></header>
+
+<section class="card display">
+  <div class="big" id="big"><span id="bignum">—</span><span class="unit">g</span></div>
+  <div id="bigstate" class="mute">Waiting for the scale…</div>
+</section>
+
+<section class="card">
+  <h2>Details</h2>
+  <div id="state" class="mute">Waiting for the first reading…</div>
+  <div class="weight" id="weight">—</div>
+  <div class="stats">
+    <div>Raw<b id="raw">—</b></div>
+    <div>Delta (counts)<b id="delta">—</b></div>
+    <div>Noise (± counts, filtered)<b id="noise">—</b></div>
+    <div>Counts per gram<b id="factor">—</b></div>
+    <div>Display step<b id="step">—</b></div>
+    <div>Battery<b id="batt">—</b></div>
+    <div>Uptime<b id="up">—</b></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2 id="charttitle">Last 2 minutes</h2>
+  <canvas id="chart"></canvas>
+</section>
+
+<section class="card">
+  <h2>Controls</h2>
+  <div class="row">
+    <button class="primary" id="tare">Tare (zero)</button>
+    <span class="mute">with nothing on the scale</span>
+  </div>
+  <div class="row">
+    <input id="grams" type="number" min="0" step="any" placeholder="Known weight in g" style="width:170px">
+    <button id="cal">Calibrate</button>
+    <button id="reset">Clear calibration</button>
+  </div>
+  <div id="ctlmsg" class="note" hidden></div>
+  <div class="row">
+    <label for="interval" class="mute">Sampling</label>
+    <select id="interval">
+      <option value="0">10 per second (fastest, most power)</option>
+      <option value="1">Every second</option>
+      <option value="5">Every 5 seconds</option>
+      <option value="10">Every 10 seconds</option>
+      <option value="30">Every 30 seconds</option>
+      <option value="60">Every minute</option>
+      <option value="300">Every 5 minutes</option>
+      <option value="900">Every 15 minutes</option>
+      <option value="3600">Every hour</option>
+      <option value="7200">Every 2 hours</option>
+      <option value="10800">Every 3 hours</option>
+      <option value="14400">Every 4 hours</option>
+      <option value="21600">Every 6 hours</option>
+      <option value="43200">Every 12 hours (least power)</option>
+    </select>
+  </div>
+  <p class="note mute">To calibrate: tare with the scale empty, put on something you know the weight of, type its grams and press Calibrate. Results show under Messages.</p>
+</section>
+
+<section class="card">
+  <h2>Messages</h2>
+  <div id="log"></div>
+</section>
+
+<section class="card">
+  <h2>Firmware</h2>
+  <div class="mute">Running firmware: <span id="fw">—</span></div>
+  <div class="row" style="margin-top:10px">
+    <input id="fwfile" type="file" accept=".bin" style="flex:1 1 200px">
+    <button id="fwbtn">Update firmware</button>
+  </div>
+  <div id="fwstatus" class="note mute">Choose build/hx711_scale.bin from the project folder.</div>
+</section>
+
+<section class="card">
+  <h2>Name</h2>
+  <form id="nameform" class="row">
+    <input id="newname" placeholder="e.g. Kitchen Scale" maxlength="32" autocomplete="off" style="flex:1 1 200px">
+    <button>Save name</button>
+  </form>
+  <div id="namemsg" class="note mute"></div>
+  <p class="note mute">Letters, digits, spaces and dashes. The name also becomes the scale's address: "Kitchen Scale" is http://kitchen-scale.local</p>
+</section>
+
+<section class="card">
+  <h2>Wi-Fi</h2>
+  <div id="wifi" class="mute">—</div>
+  <form id="wifiform" class="row" style="margin-top:10px">
+    <input id="ssid" placeholder="Home Wi-Fi name" maxlength="32" autocomplete="off" style="flex:1 1 160px">
+    <input id="pass" type="password" placeholder="Password" maxlength="63" style="flex:1 1 160px">
+    <button>Join</button>
+  </form>
+  <p class="note mute">Joining your home Wi-Fi lets you open this page at its .local address (see Name) from your normal network. Leave the name empty and press Join to forget it.</p>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const HIST_MS = 120000;
+let shownName = null;
+let lastSeq = 0, lastLog = 0, lastUp = -1, failures = 0, calibrated = false;
+const hist = [];  // {t, v, delta}
+
+function fmtUp(s) {
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + x + 's';
+}
+
+function addLog(m, cls, t) {
+  const log = $('log'), line = document.createElement('div');
+  line.textContent = '[' + fmtUp(t ?? Math.max(lastUp, 0)) + '] ' + m;
+  line.className = cls || (m.startsWith('!!!') ? 'bad' : m.startsWith('>>>') ? 'ok' : '');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.appendChild(line);
+  while (log.childNodes.length > 300) log.removeChild(log.firstChild);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  if (taring && /^(>>> Tared|!!! Tare failed)/.test(m)) tareDone = true;
+  if (/^(>>>|!!!)/.test(m) && Date.now() < ctlUntil) {  // answer to a button: show it next to the buttons too
+    const c = $('ctlmsg');
+    c.textContent = m.replace(/^(>>>|!!!) /, '');
+    c.className = 'note ' + line.className;
+    c.hidden = false;
+  }
+}
+let ctlUntil = 0;
+function ctlWait(text) {
+  ctlUntil = Date.now() + 10000;
+  const c = $('ctlmsg');
+  c.textContent = text; c.className = 'note mute'; c.hidden = false;
+}
+
+function setState(text, cls) { const e = $('state'); e.textContent = text; e.className = cls; }
+function setConn(ok) { const e = $('conn'); e.textContent = ok ? 'live' : 'offline'; e.className = 'pill ' + (ok ? 'ok' : 'bad'); }
+
+// Big number, like a bathroom scale. Polls arrive every 0.5 s:
+//   - while the weight moves it pulses and shows the median of the last 1.5 s
+//   - after 1 s of steady readings it locks and holds through wobbles
+//   - it unlocks as soon as the reading is more than 3 display steps away (a new weight),
+//     and follows a small settle (1 to 3 steps) after 2 s
+const MEDIAN_POLLS = 3, LOCK_POLLS = 2, UNLOCK_POLLS = 1, RELOCK_POLLS = 4, LIVE_MS = 500;
+let locked = null, steady = 0, away = 0, drift = 0, recent = [], liveShown = null, liveAt = 0;
+function median(a) { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; }
+// Tare: show 0 at once, and ignore readings taken before the scale re-zeroed.
+let taring = 0, tareDone = false, tareSeq = null;
+function startTare() { taring = Date.now(); tareDone = false; tareSeq = null; }
+function resetBig() { locked = null; steady = away = drift = 0; recent = []; liveShown = null; }
+function every(s) { return s % 3600 === 0 ? (s / 3600 === 1 ? 'hour' : s / 3600 + ' h') : s % 60 === 0 ? (s === 60 ? 'minute' : s / 60 + ' min') : s + ' s'; }
+function ago(s) { return s < 2 ? 'just now' : s < 90 ? s + ' s ago' : Math.round(s / 60) + ' min ago'; }
+
+function showBig(d, have) {
+  let text = '—', live = false, msg, cls;
+  if (!have || d.sat) {
+    resetBig();
+    [msg, cls] = d.seq === 0 ? ['Waiting for the scale…', 'mute'] : ['Scale problem: see Details below', 'bad'];
+  } else if (!calibrated) {
+    resetBig();
+    [msg, cls] = ['Calibrate first: see Controls below', 'warn'];
+  } else {
+    const step = d.step || 1, g = d.grams;
+    if (taring) {
+      if (tareDone && tareSeq === null) tareSeq = d.seq;  // this reading may still be from before the tare
+      if (Date.now() - taring < 4000 && (tareSeq === null || d.seq <= tareSeq)) {
+        $('bignum').textContent = (0).toFixed(step < 1 ? 1 : 0);
+        $('big').classList.remove('live');
+        $('bigstate').textContent = 'Taring…';
+        $('bigstate').className = 'mute';
+        return;
+      }
+      taring = 0;
+      resetBig();
+      if (Math.abs(g) <= 3 * step) locked = 0;
+    }
+    recent.push(g);
+    if (recent.length > MEDIAN_POLLS) recent.shift();
+    steady = d.stable ? steady + 1 : 0;
+
+    if (locked !== null) {
+      const diff = Math.abs(g - locked);
+      away = diff > 3 * step ? away + 1 : 0;
+      drift = d.stable && diff >= step && diff <= 3 * step ? drift + 1 : 0;
+      if (away >= UNLOCK_POLLS) { locked = null; liveShown = null; }
+      else if (drift >= RELOCK_POLLS) { locked = median(recent); drift = 0; }
+    }
+    if (locked === null && steady >= LOCK_POLLS) { locked = median(recent); away = drift = 0; }
+
+    let v = locked;
+    if (v === null) {
+      const now = Date.now();
+      if (liveShown === null || now - liveAt >= LIVE_MS) { liveShown = median(recent); liveAt = now; }
+      v = liveShown;
+      live = true;
+    }
+    // Like a bathroom scale, a small dip below zero (up to 2 steps) shows as 0.
+    const zero = v < step / 2 && v > -2.5 * step;
+    text = (zero ? 0 : v).toFixed(step < 1 ? 1 : 0);
+    [msg, cls] = live ? ['Measuring…', 'mute'] : zero ? ['Ready', 'mute'] : ['✓ Stable', 'ok'];
+    if (d.interval) msg += ' · measured ' + ago(d.age) + ' · every ' + every(d.interval);
+  }
+  $('bignum').textContent = text;
+  $('big').classList.toggle('live', live);
+  $('bigstate').textContent = msg;
+  $('bigstate').className = cls;
+}
+
+function show(d) {
+  calibrated = d.grams !== null;
+  const have = d.seq > 0 && d.ok;
+  showBig(d, have);
+  if (d.seq === 0) setState('Waiting for the first reading…', 'mute');
+  else if (!d.ok) setState('HX711 not answering: check the VCC, GND, DT and SCK wires', 'bad');
+  else if (d.sat) setState('Reading is maxed out: a load cell wire is loose or E+/E−/A+/A− are mixed up', 'bad');
+  else if (!calibrated) setState('Not calibrated yet: use Calibrate below', 'warn');
+  else if (d.stable) setState('● Stable', 'ok');
+  else setState('○ Settling…', 'mute');
+
+  if (have) $('weight').innerHTML = calibrated
+    ? d.grams.toFixed(d.step < 1 ? 1 : 0) + ' <small>g</small>'
+    : d.delta + ' <small>counts</small>';
+  $('raw').textContent = have ? d.raw : '—';
+  $('delta').textContent = have ? d.delta : '—';
+  $('factor').textContent = calibrated ? d.factor.toFixed(3) : 'not set';
+  $('step').textContent = calibrated ? d.step + ' g' : '—';
+  $('batt').textContent = d.seq === 0 ? '—' : d.batt_pct < 0 ? d.batt.toFixed(2) + ' V (not wired?)'
+    : d.batt.toFixed(2) + ' V · ' + d.batt_pct + '%';
+  const bp = $('battpill');
+  bp.hidden = !(d.seq > 0 && d.batt_pct >= 0);
+  if (!bp.hidden) {
+    bp.textContent = 'Battery ' + d.batt_pct + '%' + (d.batt_pct < 20 ? ' · charge soon' : '');
+    bp.className = 'pill ' + (d.batt_pct < 10 ? 'bad' : d.batt_pct < 20 ? 'warn' : 'mute');
+    bp.title = d.batt.toFixed(2) + ' V. Reads high while charging.';
+  }
+  $('up').textContent = fmtUp(d.up);
+  $('fw').textContent = d.fw + ' (build ' + d.build + ')';
+
+  if (have && d.seq !== lastSeq) {
+    lastSeq = d.seq;
+    hist.push({ t: Date.now(), v: calibrated ? d.grams : d.delta, delta: d.delta });
+    while (hist.length && Date.now() - hist[0].t > HIST_MS) hist.shift();
+    const last = hist.slice(-10).map(p => p.delta);
+    if (last.length >= 3) {
+      const mean = last.reduce((a, b) => a + b) / last.length;
+      const sd = Math.sqrt(last.reduce((a, b) => a + (b - mean) ** 2, 0) / last.length);
+      $('noise').textContent = sd.toFixed(0);
+    }
+    draw();
+  }
+
+  if (d.name !== shownName) {
+    shownName = d.name;
+    $('name').textContent = d.name;
+    document.title = d.name;
+    $('namemsg').textContent = 'Address: http://' + d.host + '.local';
+  }
+
+  const sel = $('interval');
+  if (document.activeElement !== sel && String(d.interval) !== sel.value) {
+    if (![...sel.options].some(o => o.value === String(d.interval)))
+      sel.add(new Option('Every ' + every(d.interval), d.interval));
+    sel.value = String(d.interval);
+  }
+
+  const w = d.wifi, el = $('wifi');
+  el.innerHTML = '';
+  const p1 = document.createElement('div');
+  p1.textContent = w.ap_on ? 'Scale network "' + w.ap + '": on, http://192.168.4.1'
+    : 'Scale network "' + w.ap + '": off while the home Wi-Fi works (saves power). It comes back if the home Wi-Fi is lost.';
+  const p2 = document.createElement('div');
+  p2.textContent = {
+    off: 'Home Wi-Fi: not set',
+    connecting: 'Home Wi-Fi: joining "' + w.ssid + '"…',
+    connected: 'Home Wi-Fi: "' + w.ssid + '" at http://' + w.ip + ' or http://' + d.host + '.local',
+    failed: 'Home Wi-Fi: could not join "' + w.ssid + '". Check the name and password.',
+  }[w.state];
+  p2.className = { connected: 'ok', failed: 'bad', connecting: 'warn' }[w.state] || '';
+  el.append(p1, p2);
+}
+
+function draw() {
+  const c = $('chart'), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const unit = calibrated ? ' g' : '';
+  $('charttitle').textContent = 'Last 2 minutes' + (calibrated ? ' (grams)' : ' (counts)');
+  if (hist.length < 2) return;
+
+  let lo = Math.min(...hist.map(p => p.v)), hi = Math.max(...hist.map(p => p.v));
+  const minSpan = calibrated ? 2 : 100;
+  if (hi - lo < minSpan) { const m = (hi + lo) / 2; lo = m - minSpan / 2; hi = m + minSpan / 2; }
+  const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+  const now = Date.now(), L = 64, B = 18;
+  const X = t => L + (w - L - 4) * (1 - (now - t) / HIST_MS);
+  const Y = v => 6 + (h - B - 6) * (hi - v) / (hi - lo);
+
+  g.font = '11px -apple-system,system-ui,sans-serif';
+  g.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, y = Math.round(Y(v)) + 0.5;
+    g.strokeStyle = col('--line'); g.beginPath(); g.moveTo(L, y); g.lineTo(w, y); g.stroke();
+    g.fillStyle = col('--mute'); g.textAlign = 'right'; g.textBaseline = 'middle';
+    g.fillText((Math.abs(hi - lo) < 20 ? v.toFixed(1) : v.toFixed(0)) + unit, L - 6, y);
+  }
+  g.textBaseline = 'bottom';
+  g.textAlign = 'left'; g.fillText('2 min ago', L, h);
+  g.textAlign = 'right'; g.fillText('now', w - 4, h);
+
+  g.strokeStyle = col('--acc'); g.lineWidth = 2; g.lineJoin = 'round';
+  g.beginPath();
+  hist.forEach((p, i) => i ? g.lineTo(X(p.t), Y(p.v)) : g.moveTo(X(p.t), Y(p.v)));
+  g.stroke();
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/status?since=' + lastLog, { cache: 'no-store' });
+    const d = await r.json();
+    failures = 0;
+    setConn(true);
+    if (d.up < lastUp || d.logseq < lastLog) {
+      // Board restarted: start the history again and fetch its log from the beginning.
+      addLog('--- Board restarted ---', 'warn', d.up);
+      hist.length = 0; lastSeq = 0; lastLog = 0;
+    } else {
+      for (const l of d.logs) addLog(l.m, null, l.t);
+      lastLog = d.logseq;
+    }
+    lastUp = d.up;
+    show(d);
+  } catch (e) {
+    if (++failures >= 3) setConn(false);
+  }
+  setTimeout(poll, 500);
+}
+
+async function post(url, body) {
+  try {
+    const r = await fetch(url, { method: 'POST', body });
+    if (!r.ok) addLog('!!! ' + (await r.text()));
+  } catch (e) {
+    addLog('!!! Could not reach the scale');
+  }
+}
+
+$('tare').onclick = () => {
+  addLog('Taring…', 'mute'); ctlWait('Taring…');
+  if (calibrated) { startTare(); $('bignum').textContent = '0'; $('bigstate').textContent = 'Taring…'; }
+  post('/api/cmd', 't');
+};
+$('cal').onclick = () => {
+  const g = parseFloat($('grams').value);
+  if (!(g > 0)) { ctlWait('Type the weight in grams first.'); $('grams').focus(); return; }
+  addLog('Calibrating with ' + g + ' g…', 'mute');
+  ctlWait('Calibrating with ' + g + ' g…');
+  post('/api/cmd', String(g));
+};
+$('interval').onchange = e => {
+  addLog('Changing sampling…', 'mute');
+  ctlWait('Changing sampling…');
+  post('/api/cmd', 'i ' + e.target.value);
+  e.target.blur();
+};
+$('reset').onclick = () => {
+  if (confirm('Clear the saved calibration?')) { addLog('Clearing calibration…', 'mute'); ctlWait('Clearing calibration…'); post('/api/cmd', 'r'); }
+};
+$('nameform').onsubmit = async e => {
+  e.preventDefault();
+  const n = $('newname').value.trim();
+  if (!n) { $('newname').focus(); return; }
+  try {
+    const r = await fetch('/api/name', { method: 'POST', body: n });
+    if (r.ok) {
+      $('newname').value = '';
+      shownName = null;  // refresh the header and address from the next reading
+    } else {
+      $('namemsg').textContent = await r.text();
+      $('namemsg').className = 'note bad';
+      return;
+    }
+  } catch (err) {
+    $('namemsg').textContent = 'Could not reach the scale';
+    $('namemsg').className = 'note bad';
+    return;
+  }
+  $('namemsg').className = 'note ok';
+};
+$('wifiform').onsubmit = e => {
+  e.preventDefault();
+  post('/api/wifi', $('ssid').value.trim() + '\n' + $('pass').value);
+  $('pass').value = '';
+};
+$('fwbtn').onclick = () => {
+  const f = $('fwfile').files[0], st = $('fwstatus');
+  if (!f) { st.textContent = 'Choose a .bin file first.'; return; }
+  const x = new XMLHttpRequest();
+  x.open('POST', '/api/ota');
+  x.upload.onprogress = e => { st.textContent = 'Uploading… ' + Math.round(100 * e.loaded / e.total) + '%'; };
+  x.onload = () => {
+    st.textContent = x.status === 200 ? 'Done. The scale is restarting with the new firmware.' : 'Failed: ' + x.responseText;
+    st.className = 'note ' + (x.status === 200 ? 'ok' : 'bad');
+  };
+  x.onerror = () => { st.textContent = 'Upload failed: lost connection to the scale.'; st.className = 'note bad'; };
+  st.className = 'note mute';
+  $('fwbtn').disabled = true;
+  x.onloadend = () => { $('fwbtn').disabled = false; };
+  x.send(f);
+};
+addEventListener('resize', draw);
+poll();
+</script>
+</body>
+</html>

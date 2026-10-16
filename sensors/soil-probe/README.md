@@ -24,12 +24,12 @@ Read the [firmware guide](../docs/firmware.md),
 From the repository root, use the canonical scripts:
 
 ```sh
-sensor/firmware/build.sh
-sensor/firmware/flush.sh
+sensors/soil-probe/firmware/build.sh
+sensors/soil-probe/firmware/flush.sh
 ```
 
 The flash script builds first, auto-detects a single USB serial port, flashes,
-and opens the monitor. Run `sensor/firmware/flush.sh --help` for explicit port
+and opens the monitor. Run `sensors/soil-probe/firmware/flush.sh --help` for explicit port
 and flash-only options. Reuse these scripts in development and automation rather
 than assembling separate `idf.py` command sequences.
 

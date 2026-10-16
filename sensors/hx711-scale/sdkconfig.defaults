@@ -1,0 +1,16 @@
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
+# Two 1.7 MB app slots for over-the-air updates
+CONFIG_PARTITION_TABLE_TWO_OTA_LARGE=y
+# Go back to the previous firmware if a new one crashes before its web page is up
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Browsers send long headers
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+# How the scale talks: CONFIG_SCALE_LINK_WIFI (the default), CONFIG_SCALE_LINK_USB,
+# or CONFIG_SCALE_LINK_BLE together with CONFIG_BT_ENABLED=y and CONFIG_BT_NIMBLE_ENABLED=y
+# (plus CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y on the original ESP32). Delete sdkconfig after changing this.
+# Power saving: the processor slows down and sleeps between tasks
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y

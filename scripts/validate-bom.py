@@ -32,7 +32,7 @@ ALLOWED_STATUSES = {
 
 def main() -> None:
     root_path = Path(__file__).resolve().parent.parent
-    bom_path = root_path / "sensor" / "hardware" / "bom.csv"
+    bom_path = root_path / "sensors" / "soil-probe" / "hardware" / "bom.csv"
     with bom_path.open(newline="", encoding="utf-8") as bom_file:
         reader = csv.DictReader(bom_file)
         if tuple(reader.fieldnames or ()) != EXPECTED_COLUMNS:

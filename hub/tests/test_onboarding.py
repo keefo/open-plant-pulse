@@ -451,7 +451,7 @@ class ReachabilityTests(unittest.TestCase):
 
     def setUp(self):
         self.source = (
-            Path(__file__).parents[2] / "sensor/firmware/main/app_main.c"
+            Path(__file__).parents[2] / "sensors/soil-probe/firmware/main/app_main.c"
         ).read_text()
 
     def test_a_powered_sensor_stays_reachable(self):

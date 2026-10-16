@@ -279,7 +279,7 @@ brainstorm's sub-20-microamp system target is therefore not a validated baseline
 Add source artifacts only when they exist:
 
 ```text
-sensor/hardware/
+sensors/soil-probe/hardware/
 ├── bom.csv         Canonical top-level assembly BOM
 ├── BOM.md          BOM schema and maintenance policy
 ├── electronics/    KiCad schematic, PCB, libraries, and fabrication outputs

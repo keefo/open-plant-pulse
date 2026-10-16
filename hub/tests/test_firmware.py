@@ -94,13 +94,13 @@ class ImageParsingTests(unittest.TestCase):
                 parse_firmware_image(data)
 
     def test_the_real_built_image_is_accepted_when_one_is_present(self) -> None:
-        built = Path(__file__).parents[2] / "sensor" / "build" / "open_plant_pulse.bin"
+        built = Path(__file__).parents[2] / "sensors" / "soil-probe" / "build" / "open_plant_pulse.bin"
         if not built.exists():
             self.skipTest("no firmware has been built in this checkout")
         image = parse_firmware_image(built.read_bytes())
 
         self.assertEqual(image.project, "open_plant_pulse")
-        version = (Path(__file__).parents[2] / "sensor" / "version.txt").read_text().strip()
+        version = (Path(__file__).parents[2] / "sensors" / "soil-probe" / "version.txt").read_text().strip()
         self.assertEqual(image.version, version)
 
 

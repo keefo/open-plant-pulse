@@ -15,8 +15,8 @@ the tested v5.5.5 installation commands. Set `IDF_PATH` to use another location.
 From the repository root:
 
 ```sh
-sensor/firmware/build.sh
-sensor/firmware/flush.sh
+sensors/soil-probe/firmware/build.sh
+sensors/soil-probe/firmware/flush.sh
 ```
 
 `build.sh` selects `esp32c3` when needed and builds the project. `flush.sh` runs
@@ -24,32 +24,32 @@ that build, detects one `/dev/cu.usbmodem*`, `/dev/cu.usbserial*`,
 `/dev/ttyACM*`, or `/dev/ttyUSB*` device, flashes it, and opens the serial
 monitor. Useful alternatives are:
 
-> **Build in the working tree, not a clean checkout.** `sensor/sdkconfig` is
+> **Build in the working tree, not a clean checkout.** `sensors/soil-probe/sdkconfig` is
 > ignored by git and holds the Wi-Fi SSID and password. A tree without one --
 > a fresh clone, or a `git worktree` made to keep unrelated work out of the
 > image -- gets a default config with `CONFIG_OPP_WIFI_SSID=""`, and
 > `web_ui_start` then logs "Wi-Fi disabled" and leaves the radio off. The node
 > still reports over BLE, so this looks like a healthy sensor until you reach
 > for its console. Over-the-air recovery needs Wi-Fi, so the only way back is
-> USB. If a build must happen somewhere else, copy `sensor/sdkconfig` in first
+> USB. If a build must happen somewhere else, copy `sensors/soil-probe/sdkconfig` in first
 > and diff `CONFIG_OPP` between the two sdkconfigs before flashing anything.
 > Done once, 2026-10-12, costing a USB trip to the plant.
 
 
 ```sh
-sensor/firmware/flush.sh --port /dev/cu.usbmodem14801
-sensor/firmware/flush.sh --no-monitor
+sensors/soil-probe/firmware/flush.sh --port /dev/cu.usbmodem14801
+sensors/soil-probe/firmware/flush.sh --no-monitor
 ```
 
 In a terminal both scripts fold compile and flash output into one progress bar
 and hide ESP-IDF's activation messages; warnings and errors still print in
-full, and the complete output is kept in `sensor/build/build.log` and
-`sensor/build/flash.log`. On failure the last 40 lines are shown. Set
+full, and the complete output is kept in `sensors/soil-probe/build/build.log` and
+`sensors/soil-probe/build/flash.log`. On failure the last 40 lines are shown. Set
 `OPP_VERBOSE=1` for the full output in the terminal. When output is not a
 terminal (CI, a pipe, a log file) it is printed unchanged.
 
 Builds are deployed over USB-C with `flush.sh`, or over the air through the
-hub: upload the built `sensor/build/open_plant_pulse.bin` in Settings ->
+hub: upload the built `sensors/soil-probe/build/open_plant_pulse.bin` in Settings ->
 Firmware (or `POST /api/firmware`) and install it from the sensor's page (or
 `POST /api/sensors/<id>/firmware` with its digest). Over the air needs the
 sensor advertising, which development builds do continuously
@@ -73,7 +73,7 @@ or advanced configuration such as `idf.py menuconfig`.
 
 ### Firmware version
 
-The authoritative firmware version is stored in `sensor/version.txt` and follows
+The authoritative firmware version is stored in `sensors/soil-probe/version.txt` and follows
 [Semantic Versioning](https://semver.org/). Update that file before building a
 release. ESP-IDF embeds its value in the application descriptor, boot output,
 and firmware image. The `/status` response exposes it as `firmware_version`; the
@@ -126,7 +126,7 @@ development values, not proof of a sensor's register map:
 
 ### Partitions and over-the-air updates
 
-`sensor/partitions.csv` gives the board two 1600 KiB application slots inside its
+`sensors/soil-probe/partitions.csv` gives the board two 1600 KiB application slots inside its
 4 MB of flash, with `nvs` at the offset and size it has always had:
 
 ```
@@ -141,7 +141,7 @@ Because `nvs` did not move, the one cable flash that introduces this layout keep
 a sensor's bond, pairing code and configuration. Firmware from before 0.12.0 has
 a single slot and cannot install anything over the air, so a sensor running one
 needs that flash by cable. Everything after it is installed from the hub: see
-[the proposal](proposals/firmware-over-the-air.md) for how, and `sensor/version.txt`
+[the proposal](proposals/firmware-over-the-air.md) for how, and `sensors/soil-probe/version.txt`
 for what is running.
 
 A newly installed image boots on trial. It is kept once it has advertised, which
@@ -153,7 +153,7 @@ predecessor at the next reset, with no help from anybody.
 Configure the development network locally without committing credentials:
 
 ```sh
-source sensor/firmware/idf-env.sh
+source sensors/soil-probe/firmware/idf-env.sh
 cd sensor
 idf.py menuconfig
 ```

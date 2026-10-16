@@ -1,0 +1,2 @@
+# C6 boards like the XIAO and SuperMini only have the chip's own USB port, so use it for the console.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

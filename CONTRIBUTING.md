@@ -20,4 +20,4 @@ Prefer focused commits under `sensor`, `hub`, `protocol`, `deploy`, `docs`, or
 `examples`. Changes to the sensor-to-hub payload must update both products and a
 shared protocol fixture in the same pull request.
 Generated ESP-IDF build output and local `sdkconfig` files are ignored; update
-`sensor/sdkconfig.defaults` only for portable project defaults.
+`sensors/soil-probe/sdkconfig.defaults` only for portable project defaults.

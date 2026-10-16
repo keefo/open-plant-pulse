@@ -3,7 +3,7 @@ set -eu
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="$root_dir/build/host-tests"
-sensor_dir="$root_dir/sensor"
+sensor_dir="$root_dir/sensors/soil-probe"
 
 mkdir -p "$build_dir"
 cc -std=c11 -Wall -Wextra -Werror \
