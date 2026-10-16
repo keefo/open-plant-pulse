@@ -284,6 +284,48 @@ config OPP_SOIL_PROBE_PH_INTERVAL_SECONDS
         and conductivity only, and say so rather than repeating the last
         pH as though it had just been measured.
 
+config OPP_SOIL_PROBE_PH_ON_WATERING_RISE
+    int "Moisture rise in tenths of a percent that asks for a pH reading"
+    range 0 1000
+    default 150
+    help
+        A jump this large means the pot was watered, and watering is the one
+        moment pH is worth measuring: new water, perhaps fertiliser, and
+        whatever the pour did to the soil's chemistry. Zero switches this
+        off and leaves pH to the clock alone.
+
+        150 is 15.0 percentage points, which is what the hub already calls
+        a watering, so the two agree about what happened.
+
+config OPP_SOIL_PROBE_PH_SETTLE_SECONDS
+    int "Seconds to wait after a watering before reading pH"
+    range 0 86400
+    default 0
+    help
+        How long to leave the pot alone after a watering before spending
+        four minutes on pH. Zero reads straight away.
+
+        Water poured on a pot is still finding its way down for a while,
+        so a reading taken at once describes the pour as much as the soil.
+        Reading immediately answers "what did I just put in", which is the
+        question somebody standing over the plant is asking; the twice-daily
+        readings give the settled picture either way.
+
+config OPP_SOIL_PROBE_PH_MIN_INTERVAL_SECONDS
+    int "Shortest gap between deep pH readings"
+    range 0 86400
+    default 900
+    help
+        A floor under how often the probe can be held on for four minutes.
+        A moisture jump is not always a watering -- pushing the probe back
+        into the pot looks exactly the same -- and without this a noisy
+        afternoon could spend the battery on pH.
+
+        Fifteen minutes rather than an hour, because a watering is supposed
+        to be read at once and an hour would swallow one that followed soon
+        after a scheduled reading. A rise only fires once per watering, so
+        this guards against something going wrong rather than normal use.
+
 config OPP_SOIL_PROBE_BAUD_RATE
     int "Soil probe baud rate"
     default 4800

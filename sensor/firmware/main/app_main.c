@@ -226,10 +226,40 @@ static bool acquire_air_sample(opp_bthome_report_t *report)
 static RTC_DATA_ATTR int64_t soil_seconds_since_deep;
 static RTC_DATA_ATTR bool soil_deep_ever;
 
+/* The same booking across a deep sleep, where the only memory is RTC and
+ * the only clock is how long the node was told to sleep for. */
+static RTC_DATA_ATTR uint16_t soil_previous_moisture_tenths;
+static RTC_DATA_ATTR bool soil_previous_moisture_known;
+static RTC_DATA_ATTR bool soil_watering_booked;
+static RTC_DATA_ATTR int64_t soil_seconds_since_booking;
+
 static bool soil_deep_due(void)
 {
-    return !soil_deep_ever ||
-           soil_seconds_since_deep >= CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS;
+    if (!soil_deep_ever) {
+        return true;
+    }
+    if (soil_seconds_since_deep >= CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS) {
+        return true;
+    }
+    return soil_watering_booked &&
+           soil_seconds_since_booking >= CONFIG_OPP_SOIL_PROBE_PH_SETTLE_SECONDS &&
+           soil_seconds_since_deep >= CONFIG_OPP_SOIL_PROBE_PH_MIN_INTERVAL_SECONDS;
+}
+
+static void soil_note_moisture(uint16_t moisture_tenths)
+{
+    if (CONFIG_OPP_SOIL_PROBE_PH_ON_WATERING_RISE > 0 &&
+        soil_previous_moisture_known &&
+        moisture_tenths > soil_previous_moisture_tenths &&
+        moisture_tenths - soil_previous_moisture_tenths >=
+            (uint16_t)CONFIG_OPP_SOIL_PROBE_PH_ON_WATERING_RISE) {
+        soil_watering_booked = true;
+        soil_seconds_since_booking = 0;
+        ESP_LOGI(TAG, "Moisture rose %.1f points; pH booked",
+                 (moisture_tenths - soil_previous_moisture_tenths) / 10.0);
+    }
+    soil_previous_moisture_tenths = moisture_tenths;
+    soil_previous_moisture_known = true;
 }
 
 static bool acquire_soil_sample(opp_bthome_report_t *report)
@@ -266,9 +296,11 @@ static bool acquire_soil_sample(opp_bthome_report_t *report)
         return false;
     }
 
+    soil_note_moisture(soil.moisture_tenths_percent);
     if (deep) {
         soil_deep_ever = true;
         soil_seconds_since_deep = 0;
+        soil_watering_booked = false;
     }
     set_soil(report, &soil, deep ? &soil : NULL);
     ESP_LOGI(TAG, "Fresh soil sample moisture=%.1f%% temperature=%.1f C ec=%u uS/cm",
@@ -285,6 +317,9 @@ static void enter_deep_sleep(void)
         (uint64_t)config.reporting_interval_seconds * UINT64_C(1000000);
     /* The only clock production has across a sleep is the sleep itself. */
     soil_seconds_since_deep += config.reporting_interval_seconds;
+    if (soil_watering_booked) {
+        soil_seconds_since_booking += config.reporting_interval_seconds;
+    }
     esp_err_t error = esp_sleep_enable_timer_wakeup(sleep_us);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "Could not configure timer wake-up: %s", esp_err_to_name(error));

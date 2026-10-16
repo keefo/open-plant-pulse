@@ -43,7 +43,11 @@ static opp_soil_probe_sample_record_t latest_sample;
 static int64_t latest_sample_time_us;
 static bool latest_sample_valid;
 static bool monitor_enabled;
-static esp_err_t last_error = ESP_ERR_INVALID_STATE;
+/* Nothing has been read yet, which is not the same as a read that failed.
+ * Starting this at an error made the console report a broken probe for as
+ * long as the first sample took -- five seconds once, four minutes once the
+ * first sample became the deep one. */
+static esp_err_t last_error = ESP_OK;
 static RTC_DATA_ATTR uint64_t sample_sequence;
 
 /* One request/reply exchange at a time: the monitor task and a debug read from
@@ -439,20 +443,75 @@ int64_t opp_soil_probe_seconds_until_deep(void)
     return left_us <= 0 ? 0 : left_us / 1000000;
 }
 
+/* A watering asks for pH, once the pot has stopped moving.
+ *
+ * The moment the soil chemistry changes is the moment pH is worth the four
+ * minutes, so a jump in moisture books a reading rather than taking one:
+ * water poured on a pot is still finding its way down, and a probe read
+ * during that measures the pour. The booking comes due later. */
+static int64_t watering_due_at_us;
+static bool watering_booked;
+static bool first_sample_done;
+static uint16_t previous_moisture_tenths;
+static bool previous_moisture_known;
+
+static void note_moisture(uint16_t moisture_tenths)
+{
+    if (CONFIG_OPP_SOIL_PROBE_PH_ON_WATERING_RISE <= 0) {
+        previous_moisture_tenths = moisture_tenths;
+        previous_moisture_known = true;
+        return;
+    }
+    const uint16_t rise = (previous_moisture_known &&
+                           moisture_tenths > previous_moisture_tenths)
+                              ? (uint16_t)(moisture_tenths - previous_moisture_tenths)
+                              : 0U;
+    const bool jumped =
+        previous_moisture_known &&
+        rise >= (uint16_t)CONFIG_OPP_SOIL_PROBE_PH_ON_WATERING_RISE;
+    previous_moisture_tenths = moisture_tenths;
+    previous_moisture_known = true;
+    if (!jumped) {
+        return;
+    }
+    portENTER_CRITICAL(&sample_lock);
+    /* A later jump moves the booking rather than making a second one: a
+     * long watering arrives as several rises and wants one reading. */
+    watering_due_at_us = esp_timer_get_time() +
+                         (int64_t)CONFIG_OPP_SOIL_PROBE_PH_SETTLE_SECONDS * 1000000;
+    watering_booked = true;
+    portEXIT_CRITICAL(&sample_lock);
+    ESP_LOGI(TAG, "Moisture rose %.1f points; pH booked in %d s",
+             rise / 10.0, CONFIG_OPP_SOIL_PROBE_PH_SETTLE_SECONDS);
+}
+
 /* Whether this sample should pay the long warm-up that pH needs. */
 static bool deep_reading_due(void)
 {
+    const int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&sample_lock);
     const bool ever = deep_ever_taken;
     const int64_t last = last_deep_us;
+    const bool booked = watering_booked;
+    const int64_t booked_for = watering_due_at_us;
     portEXIT_CRITICAL(&sample_lock);
     if (!ever) {
-        /* The first reading after a boot is deep, so a node that has just
-         * been flashed says something about pH without waiting half a day. */
+        /* A node that has just been flashed should still say something
+         * about pH without waiting half a day -- but not as its very first
+         * sample. Four minutes before the first reading of any kind leaves
+         * the console with nothing to show and the probe looking broken.
+         * So: one fast sample, then the deep one. */
+        return first_sample_done;
+    }
+    const int64_t since = now - last;
+    if (since >= (int64_t)CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS * 1000000) {
         return true;
     }
-    return esp_timer_get_time() - last >=
-           (int64_t)CONFIG_OPP_SOIL_PROBE_PH_INTERVAL_SECONDS * 1000000;
+    /* A booked reading still waits out the floor, because a jump in
+     * moisture is not always a watering -- a probe pushed back into its
+     * pot looks the same -- and the battery should not pay for every one. */
+    return booked && now >= booked_for &&
+           since >= (int64_t)CONFIG_OPP_SOIL_PROBE_PH_MIN_INTERVAL_SECONDS * 1000000;
 }
 
 static void record_deep(const opp_soil_probe_reading_t *reading)
@@ -462,6 +521,8 @@ static void record_deep(const opp_soil_probe_reading_t *reading)
     deep_reading_pending = true;
     last_deep_us = esp_timer_get_time();
     deep_ever_taken = true;
+    /* Whatever booked this has been answered. */
+    watering_booked = false;
     portEXIT_CRITICAL(&sample_lock);
 }
 
@@ -475,6 +536,7 @@ static void record_result(esp_err_t error, const opp_soil_probe_reading_t *readi
         return;
     }
     last_error = error;
+    first_sample_done = true;
     if (error == ESP_OK) {
         latest_sample.values = *reading;
         latest_sample.sequence = ++sample_sequence;
@@ -538,6 +600,9 @@ static void soil_probe_monitor_task(void *context)
         release_probe();
         xSemaphoreGive(power_lock());
         record_result(error, &reading);
+        if (error == ESP_OK) {
+            note_moisture(reading.moisture_tenths_percent);
+        }
         if (deep && error == ESP_OK) {
             record_deep(&reading);
             ESP_LOGI(TAG, "Deep reading taken: ph=%.1f n=%u p=%u k=%u mg/kg",
