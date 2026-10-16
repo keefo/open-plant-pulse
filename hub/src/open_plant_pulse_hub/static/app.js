@@ -844,11 +844,20 @@ function renderSensorAttach() {
       }
     }
   }
-  const reading = selectedSensor.latest?.reading;
+  /* A scale keeps its charge in its status rather than in its weight, and
+   * reports volts beside the percentage. The gauge draws the same either
+   * way; only where the numbers come from differs. */
   const gauge = document.getElementById("sensor-battery");
   if (gauge !== null) {
-    setHidden(gauge.closest("div"), isScale(selectedSensor));
-    if (reading) renderBattery(gauge, reading);
+    const charge = isScale(selectedSensor)
+      ? (selectedSensor.scale?.battery_percent == null ? null : {
+          battery_percent: selectedSensor.scale.battery_percent,
+          battery_voltage_v: selectedSensor.scale.battery_volts,
+          battery_charging: null,
+        })
+      : selectedSensor.latest?.reading;
+    setHidden(gauge.closest("div"), charge == null);
+    if (charge) renderBattery(gauge, charge);
   }
   /* "4 seconds ago" becoming "5 seconds ago" is the one thing on this page
    * that changes every single second, and it tells nobody anything they are

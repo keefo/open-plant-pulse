@@ -732,7 +732,8 @@ class ReadingStore:
                        soil_ph_reference_at, soil_ph_reference_ec,
                        scale_address, scale_keep_every_seconds,
                        scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
-                       scale_interval_seconds, scale_firmware, scale_build, scale_seq
+                       scale_interval_seconds, scale_firmware, scale_build, scale_seq,
+                       scale_battery_volts, scale_battery_percent
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -769,7 +770,8 @@ class ReadingStore:
                        soil_ph_reference_at, soil_ph_reference_ec,
                        scale_address, scale_keep_every_seconds,
                        scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
-                       scale_interval_seconds, scale_firmware, scale_build, scale_seq
+                       scale_interval_seconds, scale_firmware, scale_build, scale_seq,
+                       scale_battery_volts, scale_battery_percent
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -4902,6 +4904,8 @@ class ReadingStore:
                 "firmware": row[50],
                 "build": row[51],
                 "seq": row[52],
+                "battery_volts": row[53],
+                "battery_percent": row[54],
             },
         }
 
@@ -5079,6 +5083,19 @@ class ReadingStore:
                 (None if grams is None else int(round(grams)), status,
                  None if stable is None else (1 if stable else 0),
                  now, error, now, interval_seconds, firmware, build, seq, sensor_id),
+            )
+
+    def record_scale_battery(
+        self, sensor_id: str, volts: Optional[float], percent: Optional[int]
+    ) -> None:
+        """What the scale said about its cell, when it was last asked."""
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors SET scale_battery_volts = ?, scale_battery_percent = ?
+                WHERE sensor_id = ?
+                """,
+                (volts, percent, sensor_id),
             )
 
     def set_scale_keep(self, sensor_id: str, every_seconds: int) -> Dict[str, Any]:

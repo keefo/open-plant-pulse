@@ -35,6 +35,10 @@ from typing import Any, Dict, Optional
 LOG = logging.getLogger(__name__)
 
 POLL_SECONDS = 20.0
+# How often to ask a scale about its battery. It is a separate request, and
+# a cell does not move between one weighing and the next, so it is asked
+# rarely: every wake of the radio is charge spent to report charge.
+BATTERY_SECONDS = 600.0
 REQUEST_TIMEOUT_SECONDS = 2.5
 # How long a queued command is given to show up in the readings.
 APPLY_TIMEOUT_SECONDS = 6.0
@@ -100,6 +104,22 @@ def set_sampling_interval(address: str, seconds: int) -> Dict[str, Any]:
     return reading
 
 
+def read_scale_status(address: str, timeout: float = REQUEST_TIMEOUT_SECONDS) -> Dict[str, Any]:
+    """Ask a scale about itself: the charge, mostly.
+
+    `since` is given an impossible log sequence so the scale leaves its
+    message log out, which is two thirds of the answer and none of what
+    the hub wants from it.
+    """
+    url = address.rstrip("/") + "/api/status?since=999999999"
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as reply:
+        payload = json.load(reply)
+    if not isinstance(payload, dict):
+        raise ValueError("that address did not answer like a scale")
+    return payload
+
+
 class ScaleService:
     """Polls each adopted scale and keeps the weights worth keeping."""
 
@@ -111,6 +131,7 @@ class ScaleService:
         # The last weight kept per plant, so a reading is judged against what
         # the plant actually weighed rather than against the previous poll.
         self._last_kept: Dict[int, Any] = {}
+        self._battery_asked: Dict[str, float] = {}
 
     def start(self) -> None:
         if self._thread is not None:
@@ -161,6 +182,7 @@ class ScaleService:
             build=_text(reading.get("build")),
             seq=_whole(seq),
         )
+        self._maybe_ask_battery(sensor_id, scale["address"])
         if status != "ok" or not stable or not isinstance(grams, (int, float)):
             return None
         plant_id = scale.get("plant_id")
@@ -178,6 +200,26 @@ class ScaleService:
         age = _whole(reading.get("age_s")) or 0
         taken = datetime.now(timezone.utc) - timedelta(seconds=max(0, min(age, 3600)))
         return self._keep(plant_id, int(round(grams)), scale, taken)
+
+    def _maybe_ask_battery(self, sensor_id: str, address: str) -> None:
+        last = self._battery_asked.get(sensor_id, 0.0)
+        now = time.monotonic()
+        if now - last < BATTERY_SECONDS:
+            return
+        self._battery_asked[sensor_id] = now
+        try:
+            status = read_scale_status(address)
+        except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+            # The weight is what matters; a charge the hub could not ask for
+            # is not worth marking the scale as faulty over.
+            return
+        volts = status.get("batt")
+        percent = status.get("batt_pct")
+        self._store.record_scale_battery(
+            sensor_id,
+            float(volts) if isinstance(volts, (int, float)) else None,
+            int(percent) if isinstance(percent, (int, float)) else None,
+        )
 
     def _keep(self, plant_id: int, grams: int, scale: Dict[str, Any],
               taken: Optional[datetime] = None) -> Optional[int]:

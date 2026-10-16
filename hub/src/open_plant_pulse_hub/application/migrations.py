@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 39
+DATABASE_SCHEMA_VERSION = 40
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -1098,6 +1098,17 @@ MIGRATIONS: Dict[int, str] = {
         DROP TABLE plant_weights;
         ALTER TABLE plant_weights_rebuilt RENAME TO plant_weights;
         CREATE INDEX plant_weights_by_plant ON plant_weights(plant_id, at DESC);
+    """,
+    40: """
+        /* What a scale has left in its cell.
+
+           It does not come with the weight: the weight endpoint answers
+           what it weighs and nothing else, and the charge is in the status
+           the scale's own page uses. So it is asked for separately and far
+           less often -- a battery does not move between one weighing and
+           the next, and every request costs the radio a wake. */
+        ALTER TABLE sensors ADD COLUMN scale_battery_volts REAL;
+        ALTER TABLE sensors ADD COLUMN scale_battery_percent INTEGER;
     """,
 }
 
