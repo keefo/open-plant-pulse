@@ -89,7 +89,6 @@ let wateringCalendarRequestKey = null;
 let wateringIntervalSummary = null;
 let selectedSensorId = null;
 let selectedSensor = null;
-let managingSensorId = null;
 let fleetSensors = [];
 let unclaimedSensors = [];
 let renderedSettingsKey = null;
@@ -225,12 +224,6 @@ function renderPage() {
     // one pass that decides what is shown.
     if (sensorKind(selectedSensor) === "bthome") renderSensorFirmware();
   }
-  if (page === "config") {
-    setText(document.getElementById("config-plant-name"), selectedSensor
-      ? selectedSensor.display_name || selectedSensor.sensor_id
-      : selectedSensorId || "Sensor");
-    renderSensorFirmware();
-  }
   if (page === "settings") renderSettingsTab();
   if (page === "onboarding") renderOnboarding();
   document.title = titleForPage(page);
@@ -239,10 +232,6 @@ function renderPage() {
 function titleForPage(page) {
   if (page === "sensor-config" && selectedSensor) {
     return `${selectedSensor.display_name || selectedSensor.sensor_id} · Sensor · Open Plant Pulse`;
-  }
-  if (page === "config") {
-    const name = selectedSensor?.display_name || selectedSensorId || "Sensor";
-    return `${name} · Configuration · Open Plant Pulse`;
   }
   if (page === "plant") {
     return `${selectedPlant?.display_name || "Plant"} · Open Plant Pulse`;
@@ -324,7 +313,6 @@ function setFleetCardCover(card, photoId, digest) {
  * comes from /api/plants and a sensor is looked up against it.
  */
 function renderHousehold() {
-  setText(document.getElementById("inbox-count"), unclaimedSensors.length);
   const grid = document.getElementById("fleet-grid");
   if (grid === null) return;
   const sensorsByPlant = new Map(
@@ -355,7 +343,7 @@ function renderHousehold() {
     if (grid.querySelector(".empty-state") === null) {
       const empty = document.createElement("p");
       empty.className = "empty-state";
-      setText(empty, "No plants yet. Add one, or open the sensor inbox to enrol a sensor.");
+      setText(empty, "No plants yet. Add one, or add a sensor to start a plant.");
       grid.append(empty);
     }
     return;
@@ -370,17 +358,6 @@ function renderHousehold() {
   });
 }
 
-/* How long it has lived here, short enough for a card.
- *
- * The unit a plant's age is worth saying in changes as it gets older --
- * nobody counts a three-year-old plant in days -- so the number stays small
- * and only the unit changes: 22d, 7mo, 2y, 2y 3mo. The whole phrase goes in
- * the tooltip for anyone who wants it spelled out.
- */
-function timeAtHome(since) {
-  const spans = timeAtHomeParts(since);
-  return spans === null ? null : `Home ${spans.short}`;
-}
 
 function timeAtHomeParts(since) {
   if (!since) return null;
@@ -637,33 +614,6 @@ function updateHouseholdCard(card, plant, sensor) {
   setData(due, "state", days == null ? "unknown" : days <= 2 ? "soon" : "later");
 }
 
-function renderInbox() {
-  const list = document.getElementById("inbox-list");
-  if (!renderKeyChanged(list, unclaimedSensors.map(sensor => [
-    sensor.sensor_id, sensor.transport, sensor.latest_rssi, sensor.last_seen_at
-  ]))) return;
-  list.replaceChildren();
-  if (!unclaimedSensors.length) {
-    const empty = document.createElement("p");
-    setText(empty, "No unclaimed sensors are nearby.");
-    list.append(empty);
-    return;
-  }
-  for (const sensor of unclaimedSensors) {
-    const item = document.createElement("article");
-    item.className = "inbox-item";
-    const name = document.createElement("strong");
-    setText(name, sensor.sensor_id);
-    const details = document.createElement("small");
-    setText(details, `${sensor.transport} · RSSI ${sensor.latest_rssi ?? "unknown"} · last seen ${new Date(sensor.last_seen_at).toLocaleString()}`);
-    const enroll = document.createElement("button");
-    enroll.type = "button";
-    setText(enroll, "Enroll");
-    enroll.addEventListener("click", () => openSettings(sensor));
-    item.append(name, enroll, details);
-    list.append(item);
-  }
-}
 
 function formatReportingInterval(intervalSeconds) {
   if (intervalSeconds < 60) {
@@ -1225,22 +1175,22 @@ function renderHubHealth(health) {
 
 async function refreshFleet() {
   const requestSequence = ++fleetRequestSequence;
-  const [fleetResponse, inboxResponse, healthResponse] = await Promise.all([
+  const [fleetResponse, unclaimedResponse, healthResponse] = await Promise.all([
     fetch("/api/sensors?status=enrolled"),
     fetch("/api/sensors?status=unclaimed"),
     fetch("/api/health")
   ]);
-  if (!fleetResponse.ok || !inboxResponse.ok || !healthResponse.ok) {
+  if (!fleetResponse.ok || !unclaimedResponse.ok || !healthResponse.ok) {
     throw new Error("fleet request failed");
   }
-  const [fleetPayload, inboxPayload, healthPayload] = await Promise.all([
+  const [fleetPayload, unclaimedPayload, healthPayload] = await Promise.all([
     fleetResponse.json(),
-    inboxResponse.json(),
+    unclaimedResponse.json(),
     healthResponse.json()
   ]);
   if (requestSequence !== fleetRequestSequence) return;
   fleetSensors = fleetPayload.items;
-  unclaimedSensors = inboxPayload.items;
+  unclaimedSensors = unclaimedPayload.items;
   renderHubHealth(healthPayload);
   /* Which sensor this page is about.
    *
@@ -1252,7 +1202,6 @@ async function refreshFleet() {
   selectedSensorId = sensorIdFromLocation() ?? plantSensor()?.sensor_id ?? null;
   selectedSensor = fleetSensors.find((sensor) => sensor.sensor_id === selectedSensorId) || null;
   renderHousehold();
-  renderInbox();
   renderSensorSettings();
   renderSensorAttach();
   renderScalePanel();
@@ -1281,42 +1230,7 @@ async function selectSensor(sensorId) {
   await refresh();
 }
 
-function openSettings(sensor) {
-  managingSensorId = sensor.sensor_id;
-  document.getElementById("setting-name").value = sensor.display_name || "";
-  document.getElementById("setting-room").value = sensor.room || "";
-  document.getElementById("setting-profile").value = sensor.profile_id || profiles.default_profile;
-  selectReportingInterval(
-    document.getElementById("setting-reporting-interval"),
-    sensor.expected_interval_seconds
-  );
-  setText(document.getElementById("settings-message"), "");
-  if (document.getElementById("inbox-dialog").open) document.getElementById("inbox-dialog").close();
-  document.getElementById("settings-dialog").showModal();
-}
 
-async function saveManagedSensor(event) {
-  event.preventDefault();
-  const response = await fetch(`/api/sensors/${encodeURIComponent(managingSensorId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      display_name: document.getElementById("setting-name").value,
-      room: document.getElementById("setting-room").value,
-      profile_id: document.getElementById("setting-profile").value,
-      expected_interval_seconds: Number(document.getElementById("setting-reporting-interval").value)
-    })
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    setText(document.getElementById("settings-message"), payload.error || "Could not save sensor");
-    return;
-  }
-  document.getElementById("settings-dialog").close();
-  selectedSensorId = payload.sensor_id;
-  await refreshFleet();
-  await selectSensor(payload.sensor_id);
-}
 
 function formatValue(value, metricName) {
   return Number(value).toFixed(metricPrecision[metricName] || 0);
@@ -2277,10 +2191,10 @@ async function refreshMoistureTrend() {
 async function loadProfiles() {
   const response = await fetch("/api/plant-profiles");
   profiles = await response.json();
-  const settingSelect = document.getElementById("setting-profile");
+  // One profile list now. The other belonged to the enroll dialog, which
+  // duplicated what /onboarding does and has gone with the sensor inbox.
   const onboardingSelect = document.getElementById("onboarding-profile");
   for (const [id, profile] of Object.entries(profiles.profiles)) {
-    settingSelect.add(new Option(profile.name, id));
     onboardingSelect.add(new Option(profile.name, id));
   }
   setText(document.getElementById("chemistry-guidance"), profiles.guidance);
@@ -2753,29 +2667,6 @@ async function refresh() {
       return;
     }
     const query = sensorQuery();
-    // Each page asks only for what it shows. The configuration page has the raw
-    // report log and nothing that plots a reading; the plant page is the other
-    // way round, and neither should pay for the other's requests every second.
-    if (page === "config") {
-      const rawReportsResponse = await fetch(`/api/raw-reports${query}`);
-      if (rawReportsResponse.ok) renderRawReports((await rawReportsResponse.json()).items);
-      await Promise.all([refreshFirmwareImages(), refreshPlantLighting()]);
-      return;
-    }
-    const [latestResponse, careLogResponse] = await Promise.all([
-      fetch(`/api/readings/latest${query}`),
-      fetch(`/api/care-log${query}`)
-    ]);
-    if (latestResponse.ok) renderReading(await latestResponse.json());
-    if (careLogResponse.ok) {
-      careLogPaging.set("plant-care-log", query.replace(/^[?]/, ""));
-      renderCareLog((await careLogResponse.json()).items);
-    }
-    await Promise.all([
-      refreshClimateHistory(), refreshMoistureTrend(), refreshWateringCalendar(),
-      refreshPotResponse(), refreshPlantLighting(),
-      refreshPlantPhotos(), refreshPlant()
-    ]);
   } catch (error) {
     // Said out loud as well as shown. This catch is here for a hub that has
     // gone away, but it will just as happily swallow a page that threw, and
@@ -3605,13 +3496,6 @@ const SENSOR_KINDS = {
   },
 };
 
-/* The scale under this plant's pot, if it has one. */
-function plantScale() {
-  const plantId = plantIdFromLocation();
-  return plantId === null
-    ? null
-    : fleetSensors.find((sensor) => sensor.plant_id === plantId && isScale(sensor)) || null;
-}
 
 function plantSensor() {
   const plantId = plantIdFromLocation();
@@ -4805,9 +4689,6 @@ async function recordPlantWeight() {
   await refreshPlant();
 }
 
-document.getElementById("open-inbox").addEventListener("click", () => document.getElementById("inbox-dialog").showModal());
-document.getElementById("close-settings").addEventListener("click", () => document.getElementById("settings-dialog").close());
-document.getElementById("settings-form").addEventListener("submit", saveManagedSensor);
 document.querySelectorAll("[data-history-range]").forEach((button) => {
   button.addEventListener("click", () => {
     selectedHistoryRange = button.dataset.historyRange;

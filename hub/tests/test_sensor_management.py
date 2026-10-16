@@ -391,7 +391,7 @@ class SensorManagementWebTests(unittest.TestCase):
         with self.request(f"/sensors/{encoded_id}") as response:
             detail_page = response.read()
         self.assertIn(b"Configuration", detail_page)
-        self.assertIn(b"Reporting interval", detail_page)
+        self.assertIn(b"Hub reporting interval", detail_page)
         self.assertIn(b'id="detail-setting-reporting-interval"', detail_page)
         # Watching a plant and configuring it are separate pages served by one
         # document, so what tells them apart is the page each section is on.
@@ -405,7 +405,9 @@ class SensorManagementWebTests(unittest.TestCase):
         # A sensor's page is its own configuration now, so there is no link
         # away to a plant's page to configure it there.
         self.assertNotIn(b'id="detail-config-link"', detail_page)
-        self.assertIn(b'id="config-back-link"', detail_page)
+        # The old sensor-configuration page has gone; its back link with
+        # it. A sensor's page is its configuration now.
+        self.assertNotIn(b'id="config-back-link"', detail_page)
         self.assertNotIn(b"Global reporting interval", detail_page)
         self.assertNotIn(b"Moisture alert below", detail_page)
         self.assertNotIn(b"Conductivity alert above", detail_page)
@@ -566,7 +568,7 @@ class SensorManagementWebTests(unittest.TestCase):
 
         self.assertNotIn('setInterval(refresh, 1000)', app)
         self.assertIn('window.setTimeout(poll, 1000)', app)
-        self.assertIn('fetch(`/api/raw-reports${query}`)', app)
+        self.assertIn('fetch(`/api/raw-reports${sensorQuery()}`)', app)
         self.assertIn("function renderRawReports(items)", app)
         self.assertIn('if (wateringCalendarRequestKey === requestKey) return;', app)
         self.assertIn('wateringCalendarRequestKey = requestKey;', app)
@@ -608,7 +610,6 @@ class SensorManagementWebTests(unittest.TestCase):
         # Lists and charts are rebuilt only when what they are drawn from changes.
         for renderer, guard in [
             ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
-            ("function renderInbox(", "if (!renderKeyChanged(list, unclaimedSensors.map("),
             ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
             ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;"),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
@@ -644,7 +645,8 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertNotIn("setting-conductivity", app)
         self.assertIn("const moistureLow = profile?.watering?.refill_below;", app)
         self.assertIn("const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];", app)
-        self.assertIn('id="setting-reporting-interval"', page)
+        # The enroll dialog's copy of this control has gone with the
+        # dialog; /onboarding asks for the interval in its own flow.
         # Care is recorded on the plant, not on the device that watches it.
         self.assertIn('id="plant-fertilized"', page)
         self.assertIn("Fertilized today", page)
@@ -656,8 +658,10 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("readonly", page)
         self.assertIn('id="device-config-status"', page)
         self.assertIn("sent when the sensor next reports", page)
+        # Once each: the enroll dialog carried a second copy of this list
+        # and has gone, along with the sensor inbox that opened it.
         for label in ("Every 30 seconds", "Every minute", "Every 30 minutes"):
-            self.assertEqual(page.count(label), 2)
+            self.assertEqual(page.count(label), 1)
         # Thirty seconds is the floor. Anything shorter spends the whole cycle
         # advertising and arrives no fresher, because a report carries what the
         # sensor last sampled on its own schedule.

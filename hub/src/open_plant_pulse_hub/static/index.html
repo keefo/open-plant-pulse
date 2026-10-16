@@ -13,7 +13,6 @@
       <a id="fleet-link" class="nav-link" href="/">Plants</a>
       <a id="settings-link" class="nav-link" href="/settings">Settings</a>
     </div>
-    <button id="open-inbox" class="nav-button" type="button">Sensor inbox <span id="inbox-count">0</span></button>
   </nav>
   
 
@@ -45,51 +44,7 @@
     </div>
   </header>
 
-  <header class="topbar" data-page="config" hidden>
-    <div class="plant-identity">
-      <p class="eyebrow">SENSOR CONFIGURATION</p>
-      <h1 id="config-plant-name">Plant sensor</h1>
-    </div>
-    <div class="topbar-aside">
-      <a id="config-back-link" class="secondary-action" href="/settings">Back to sensors</a>
-    </div>
-  </header>
-
   <section id="hub-health" class="hub-health" data-page="fleet" aria-live="polite"></section>
-
-  <dialog id="inbox-dialog">
-    <form method="dialog" class="dialog-card">
-      <div class="section-heading"><div><p class="eyebrow">NEW DEVICES</p><h2>Sensor inbox</h2></div><button value="cancel" aria-label="Close">×</button></div>
-      <p>These nearby sensors have been observed but are not assigned to a plant.</p>
-      <div id="inbox-list" class="inbox-list"></div>
-    </form>
-  </dialog>
-
-  <dialog id="settings-dialog">
-    <form id="settings-form" class="dialog-card">
-      <div class="section-heading"><div><p class="eyebrow">NEW SENSOR</p><h2>Enroll sensor</h2></div><button id="close-settings" type="button" aria-label="Close">×</button></div>
-      <p>Assign this observed sensor to a plant. Device settings are sent when the sensor next reports.</p>
-      <label>Plant name<input id="setting-name" maxlength="80" required></label>
-      <label>Room<input id="setting-room" maxlength="80"></label>
-      <label>Plant profile<select id="setting-profile" required></select></label>
-      <label>Reporting interval
-        <select id="setting-reporting-interval" required>
-          <option value="30">Every 30 seconds</option>
-          <option value="60">Every minute</option>
-          <option value="300">Every 5 minutes</option>
-          <option value="900">Every 15 minutes</option>
-          <option value="1800" selected>Every 30 minutes</option>
-          <option value="3600">Every hour</option>
-          <option value="10800">Every 3 hours</option>
-          <option value="21600">Every 6 hours</option>
-          <option value="43200">Every 12 hours</option>
-          <option value="86400">Every 24 hours</option>
-        </select>
-      </label>
-      <div class="dialog-actions"><button type="submit">Enroll sensor</button></div>
-      <output id="settings-message"></output>
-    </form>
-  </dialog>
 
   <main>
     <div id="arrange-bar" class="arrange-bar" hidden>
@@ -703,8 +658,8 @@
       <p class="settings-note">Adopting a sensor and deciding which plant it
         watches are separate: a probe can be moved from one pot to another, or
         taken out while a plant is repotted, without being set up again. Only
-        a sensor this hub has already adopted can be attached — new ones go
-        through <b>Sensor inbox</b> first.</p>
+        a sensor this hub has already adopted can be attached — a new one is
+        added under <b>Add a sensor</b>.</p>
     </section>
 
     <section class="sensor-settings" data-page="sensor-config" id="sensor-identity-panel" aria-labelledby="sensor-identity-title" hidden>

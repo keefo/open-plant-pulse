@@ -191,22 +191,6 @@ function renderRoomChoices() {
     : "No rooms yet. Add one in Settings first.");
 }
 
-function fillRoomSelect(select) {
-  if (select === null) return;
-  const renderKey = JSON.stringify(rooms.map((room) => [room.room_id, room.name]));
-  if (select.dataset.renderKey === renderKey) return;
-  const chosen = select.value;
-  setData(select, "renderKey", renderKey);
-  select.replaceChildren();
-  rooms.forEach((room) => {
-    const option = document.createElement("option");
-    option.value = room.room_id;
-    setText(option, room.name);
-    select.append(option);
-  });
-  if (chosen) select.value = chosen;
-  setDisabled(select, rooms.length === 0);
-}
 
 function startRoomEdit(roomId) {
   const room = rooms.find((candidate) => candidate.room_id === roomId);

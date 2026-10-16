@@ -28,11 +28,6 @@ body {
 .primary-links { display: flex; flex: 1; gap: 6px; margin-left: 18px; }
 .nav-link { padding: 8px 12px; border-radius: 5px; color: var(--muted); text-decoration: none; }
 .nav-link:hover, .nav-link.active { color: var(--leaf); background: #e5f1e8; }
-.sensor-tabs { display: flex; gap: 6px; flex: 1; overflow-x: auto; padding: 8px; }
-.sensor-tab, .nav-button, button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; font: inherit; cursor: pointer; }
-.sensor-tab { color: var(--muted); text-decoration: none; white-space: nowrap; }
-.sensor-tab.active { color: white; background: var(--leaf); border-color: var(--leaf); }
-.nav-button span { display: inline-grid; min-width: 19px; height: 19px; place-items: center; margin-left: 4px; border-radius: 10px; color: white; background: var(--coral); font-size: 11px; }
 .hub-health { margin-top: 14px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: #ffffffcc; font-size: 12px; }
 .hub-health strong { color: var(--ink); }
 .fleet-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
@@ -111,8 +106,26 @@ body {
    Left", and millilitres keep their small l. */
 .fleet-card small[data-state="watered"], .fleet-card small[data-state="thirsty"],
 .fleet-card small[data-state="manual"] { text-transform: none; }
+/* Every button on the site, including the plain ones the browser would
+   otherwise draw itself. This rule once shared a selector list with two
+   classes that had gone, and removing dead selectors took the live one
+   with it -- the forms went back to browser buttons for a few minutes. */
+button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; font: inherit; cursor: pointer; }
 .settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
-.settings-panel > label { font-weight: 700; }
+/* One treatment for a form control, wherever the form is.
+ *
+ * The settings forms were left on the browser's own inputs while the plant
+ * and sensor forms had styled ones, so the same kind of field looked like
+ * two different things depending on which page it was on. */
+.settings-panel > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.settings-panel input:not(.switch):not([type="hidden"]),
+.settings-panel select,
+.settings-panel textarea {
+  width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px;
+  background: white; color: var(--ink); font: inherit;
+}
+.settings-panel input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
+.settings-panel textarea { min-height: 72px; resize: vertical; }
 .settings-panel small, .settings-panel output { color: var(--muted); }
 .inline-control { display: flex; align-items: center; gap: 10px; }
 .inline-control input { width: 100px; }
@@ -121,29 +134,13 @@ body {
 .empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--line); color: var(--muted); text-align: center; background: white; }
 dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0; box-shadow: 0 20px 80px #17211b55; }
 dialog::backdrop { background: #17211b88; }
-.dialog-card { padding: 24px; display: grid; gap: 15px; }
-.dialog-card > p { margin: 0; color: var(--muted); line-height: 1.5; }
-.dialog-card label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.dialog-card input, .dialog-card select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
-.dialog-card .section-heading button { border: 0; font-size: 24px; }
-.inbox-list { display: grid; gap: 10px; }
-.inbox-item { padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; border: 1px solid var(--line); border-radius: 5px; }
-.inbox-item small { color: var(--muted); }
-.dialog-actions, .replacement-control { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
-.dialog-actions button[type="submit"] { color: white; background: var(--leaf); border-color: var(--leaf); }
 .danger { color: #9a3f29; }
-.replacement-control { padding-top: 15px; border-top: 1px solid var(--line); }
-.replacement-control label:first-child { flex: 1; }
-.replacement-control .checkbox { grid-template-columns: auto 1fr; align-items: center; }
-.replacement-control .checkbox input { width: auto; }
 .topbar { min-height: 132px; display: flex; align-items: center; justify-content: space-between; gap: 28px; border-bottom: 1px solid var(--line); }
 .eyebrow { margin: 0 0 5px; color: var(--leaf); font-size: 12px; font-weight: 700; }
 h1, h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
 h1 { font-size: 34px; }
 h2 { font-size: 24px; }
 .plant-identity { display: grid; gap: 4px; }
-.plant-label { width: min(560px, 70vw); padding: 0; border: 0; border-bottom: 1px solid transparent; outline: 0; color: var(--ink); background: transparent; font: 500 34px Georgia, "Times New Roman", serif; letter-spacing: 0; }
-.plant-label:hover, .plant-label:focus { border-color: var(--line); }
 .profile-control { display: flex; align-items: center; gap: 9px; min-height: 28px; color: var(--muted); font-size: 12px; }
 .profile-control strong { color: var(--ink); }
 .profile-control span { font-style: italic; }
@@ -171,8 +168,6 @@ h2 { font-size: 24px; }
 .battery-bolt { position: absolute; top: -1px; left: 50%; width: 7px; height: 10px; transform: translateX(-50%); filter: drop-shadow(0.75px 0 0 currentColor) drop-shadow(-0.75px 0 0 currentColor) drop-shadow(0 0.75px 0 currentColor) drop-shadow(0 -0.75px 0 currentColor); }
 .battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--panel); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
 .battery-voltage::before { content: "\00b7"; margin-right: 5px; }
-.status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 5px #d9a32722; }
-.status-dot.live { background: var(--leaf); box-shadow: 0 0 0 5px #19734c22; }
 main { padding: 32px 0 60px; display: grid; gap: 28px; }
 /* Standing beside the pot's response, the two conclusions the hub draws read
    as a pair: same rule above and below, same tinted ground, and this one
@@ -445,21 +440,17 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .sensor-settings .section-heading { margin-bottom: 0; }
 .sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
-.sensor-settings-form label:not(.switch-row), .replacement-control label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.sensor-settings-form input:not(.switch), .sensor-settings-form select, .replacement-control select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
+.sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .sensor-settings-form input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
 .settings-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
-.replacement-control { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: white; }
-.destructive-actions { padding-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--line); }
 
 @media (max-width: 760px) {
   .household-nav { align-items: stretch; flex-wrap: wrap; padding: 10px 0; }
   .primary-links { margin-left: auto; }
-  .sensor-tabs { order: 3; flex-basis: 100%; padding: 0; }
   .topbar { min-height: 118px; align-items: flex-start; padding: 24px 0; flex-direction: column; gap: 18px; }
   h1 { font-size: 28px; }
-  .plant-label { width: 100%; font-size: 28px; }
   .connection { justify-content: flex-start; }
   .topbar-aside { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
   .primary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -494,7 +485,6 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .weight-watered-check input { width: auto; }
   .sensor-settings-form { grid-template-columns: 1fr; }
   .settings-actions, .sensor-settings-form output { grid-column: auto; }
-  .replacement-control { align-items: stretch; flex-direction: column; }
 }
 
 /* A switch, built on a real checkbox so it keeps its keyboard behaviour and
