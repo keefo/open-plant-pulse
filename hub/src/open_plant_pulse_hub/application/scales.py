@@ -39,6 +39,12 @@ POLL_SECONDS = 20.0
 # a cell does not move between one weighing and the next, so it is asked
 # rarely: every wake of the radio is charge spent to report charge.
 BATTERY_SECONDS = 600.0
+# The longest a scale will weigh between readings. Firmware 1.0.0 took an
+# hour at most; a later build of it takes twelve, which is a sensible span
+# for a pot and a large saving for a cell. The scale rejects anything over
+# its own limit and says so in its log, so this is only here to fail early
+# with a readable reason rather than to be the authority.
+MAX_INTERVAL_SECONDS = 43200
 REQUEST_TIMEOUT_SECONDS = 2.5
 # How long a queued command is given to show up in the readings.
 APPLY_TIMEOUT_SECONDS = 6.0
@@ -83,8 +89,10 @@ def set_sampling_interval(address: str, seconds: int) -> Dict[str, Any]:
     rejected in a log line nobody is watching -- so the setting is read
     back and what it actually is, is what gets reported.
     """
-    if seconds != 0 and not 1 <= seconds <= 3600:
-        raise ValueError("sampling interval must be 0, or 1 to 3600 seconds")
+    if seconds != 0 and not 1 <= seconds <= MAX_INTERVAL_SECONDS:
+        raise ValueError(
+            f"sampling interval must be 0, or 1 to {MAX_INTERVAL_SECONDS} seconds"
+        )
     command_scale(address, f"i {int(seconds)}")
     # The reply means queued, not done: the scale needs about a second to
     # pick the command up. Reading back at once saw the old value and
