@@ -4388,6 +4388,59 @@ function plantWeightPoints() {
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
+/* A readout that follows the pointer across a chart's dots.
+ *
+ * Drawn inside the SVG rather than as an HTML overlay so it scales and
+ * clips with the chart, and so nothing has to track the chart's position
+ * on the page. It is the last thing appended, so it sits above the line.
+ *
+ * Touch gets it on a tap: there is no hover on a phone, and a number you
+ * cannot reach is worse than no number.
+ */
+function attachPointReadout(chart, marks, size) {
+  if (!marks.length) return;
+  const readout = svgElement("g", { class: "point-readout", opacity: "0" });
+  const bubble = svgElement("rect", { class: "point-readout-bubble", rx: 5, x: 0, y: 0,
+                                      width: 10, height: 30 });
+  const value = svgElement("text", { class: "point-readout-value", x: 0, y: 0 });
+  const when = svgElement("text", { class: "point-readout-when", x: 0, y: 0 });
+  readout.append(bubble, value, when);
+
+  const show = (mark) => {
+    setText(value, mark.text);
+    setText(when, mark.when);
+    // Measured after the text is in, because the bubble is sized to it.
+    const widest = Math.max(value.getComputedTextLength(), when.getComputedTextLength());
+    const boxWidth = widest + 14;  // seven pixels of air each side
+    const boxHeight = 34;
+    // Flipped to whichever side has room, so a dot near an edge still reads.
+    const left = Math.min(Math.max(mark.cx - boxWidth / 2, 2), size.width - boxWidth - 2);
+    const topEdge = mark.cy - boxHeight - 10 < 2 ? mark.cy + 12 : mark.cy - boxHeight - 10;
+    setAttr(bubble, "x", left);
+    setAttr(bubble, "y", topEdge);
+    setAttr(bubble, "width", boxWidth);
+    setAttr(bubble, "height", boxHeight);
+    setAttr(value, "x", left + 7);
+    setAttr(value, "y", topEdge + 15);
+    setAttr(when, "x", left + 7);
+    setAttr(when, "y", topEdge + 28);
+    setAttr(readout, "opacity", "1");
+  };
+  const hide = () => setAttr(readout, "opacity", "0");
+
+  for (const mark of marks) {
+    const target = svgElement("circle", {
+      class: "point-target", cx: mark.cx, cy: mark.cy, r: 14,
+    });
+    target.addEventListener("pointerenter", () => show(mark));
+    target.addEventListener("pointerdown", () => show(mark));
+    target.addEventListener("pointerleave", hide);
+    chart.append(target);
+  }
+  chart.addEventListener("pointerleave", hide);
+  chart.append(readout);
+}
+
 function renderPlantWeightChart() {
   const chart = document.getElementById("plant-weight-chart");
   const empty = document.getElementById("plant-weight-chart-empty");
@@ -4549,6 +4602,18 @@ function renderPlantWeightChart() {
   chart.append(svgElement("circle", {
     class: "history-point latest-point", cx: x(latest.timestamp), cy: y(latest.grams), r: 3.5,
   }));
+
+  /* What a dot is worth, when the pointer is on it.
+   *
+   * The dots are two and a half pixels across, which is the right size to
+   * read a shape from and far too small to hit, so each gets a target ten
+   * times its size that draws nothing. */
+  attachPointReadout(chart, points.map((point) => ({
+    cx: x(point.timestamp), cy: y(point.grams),
+    text: `${showWeight(point.grams)} ${weightUnit()}`,
+    when: new Date(point.timestamp).toLocaleString([],
+      { dateStyle: "medium", timeStyle: "short" }),
+  })), { width, height });
 
   const unit = weightUnit();
   setText(summary,
