@@ -7,6 +7,7 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.application.scales import ScaleService
+from open_plant_pulse_hub.application.zigbee import SerialGateway, ZigbeeService
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
 from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
@@ -50,6 +51,16 @@ def main() -> None:
         "--no-firmware-server",
         action="store_true",
         help="keep firmware images but do not serve them to sensors",
+    )
+    parser.add_argument(
+        "--no-zigbee",
+        action="store_true",
+        help="do not look for a Zigbee coordinator on the serial ports",
+    )
+    parser.add_argument(
+        "--zigbee-port",
+        default=None,
+        help="serial port of the Zigbee coordinator; found automatically if omitted",
     )
     parser.add_argument(
         "--no-lights",
@@ -106,6 +117,13 @@ def main() -> None:
     # on the next pass without a restart.
     scales = ScaleService(store)
     scales.start()
+    # The Zigbee gateway, if one is plugged in. It looks for a coordinator on
+    # its own and keeps looking, so the hub starts the same whether or not the
+    # board is present, and picks it up when it appears.
+    zigbee = None
+    if not args.no_zigbee:
+        zigbee = ZigbeeService(store, SerialGateway(args.zigbee_port))
+        zigbee.start()
     lights = None
     if not args.no_lights:
         lights = LightService(store, SIMULATED_DRIVERS if args.simulated_lights else DRIVERS)
@@ -119,6 +137,7 @@ def main() -> None:
         allow_network=args.allow_network,
         lights=lights,
         photos=photos,
+        zigbee=zigbee,
     )
     host, port = server_address(server)
     shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host

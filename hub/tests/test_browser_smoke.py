@@ -15,6 +15,7 @@ installed, so it costs nothing on a machine that cannot run it.
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -145,44 +146,136 @@ class BrowserSmokeTests(unittest.TestCase):
         self.store.set_hub_wifi_network("Household")
 
         self.server = create_server(self.store, "127.0.0.1", 0, photos=library)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"
 
-        self.profile = tempfile.mkdtemp(prefix="smoke-")
-        self.chrome = subprocess.Popen(
+    @classmethod
+    def setUpClass(cls) -> None:
+        """One browser for the whole class.
+
+        Starting Chrome costs about a second and tearing it down costs
+        more, which was paid eleven times over for a browser that each test
+        then used identically. Tests still get a fresh store, a fresh
+        server and a blank page; what they share is the process.
+        """
+        cls.profile = tempfile.mkdtemp(prefix="smoke-")
+        cls.chrome = subprocess.Popen(
             [str(CHROME), "--headless", "--disable-gpu", "--no-first-run",
-             f"--user-data-dir={self.profile}", "--remote-debugging-port=0", "about:blank"],
+             f"--user-data-dir={cls.profile}", "--remote-debugging-port=0", "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.chrome.terminate()
+        cls.chrome.wait(timeout=20)
+        shutil.rmtree(cls.profile, ignore_errors=True)
+
     def tearDown(self) -> None:
-        self.chrome.terminate()
-        self.chrome.wait(timeout=20)
-        shutil.rmtree(self.profile, ignore_errors=True)
+        # Back to nothing, so one test's page cannot be the next one's
+        # starting state. The browser persists; what it is showing does not.
+        try:
+            tools = DevTools(self._target_url())
+            tools.call("Page.navigate", url="about:blank")
+            tools.sock.close()
+        except Exception:
+            pass
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2.0)
         self.store.close()
         self.directory.cleanup()
 
-    def devtools(self) -> DevTools:
+    # Counting the page's own requests, so a test can wait for data to have
+    # arrived rather than for a number of seconds to have passed. Injected
+    # before any document runs, which is the only way to see the first fetch
+    # a page makes.
+    WATCH_FETCHES = """
+        window.__settled = 0;
+        window.__inflight = 0;
+        window.__lastSettle = 0;
+        const original = window.fetch;
+        window.fetch = function (...args) {
+            window.__inflight++;
+            return original.apply(this, args).finally(() => {
+                window.__inflight--;
+                window.__settled++;
+                window.__lastSettle = Date.now();
+            });
+        };
+    """
+
+    # A fetch resolving is not the page having drawn it: the counter above
+    # ticks in a finally, while the code that renders the answer runs after
+    # the await that follows. So readiness is the network going quiet --
+    # nothing in flight, and nothing new for long enough that the render
+    # after the last answer has certainly run.
+    QUIET_MS = 150
+
+    def wait_until(self, tools: "DevTools", expression: str,
+                   timeout: float = 15.0, note: str = "") -> None:
+        """Poll the page until it says yes, or give up and say what it said.
+
+        These were fixed sleeps of three and a half to five seconds each,
+        which is both slower than the page (it polls every second) and less
+        certain than asking it: a slow machine could still read the page
+        before it was ready, and a fast one waited anyway.
+        """
+        deadline = time.time() + timeout
+        last = None
+        while time.time() < deadline:
+            answer = tools.call("Runtime.evaluate", returnByValue=True,
+                                expression=f"Boolean({expression})")
+            last = answer.get("result", {}).get("value")
+            if last:
+                return
+            time.sleep(0.05)
+        self.fail(f"waited {timeout}s for {note or expression} (last saw {last!r})")
+
+    def open_page(self, tools: "DevTools", url: str) -> None:
+        """Go to a page and wait until its first data has been drawn."""
+        tools.call("Page.navigate", url=url)
+        self.wait_until(
+            tools,
+            "document.readyState === 'complete' && window.__settled > 0"
+            f" && window.__inflight === 0"
+            f" && Date.now() - window.__lastSettle > {self.QUIET_MS}",
+            note=f"{url} to load and draw its data",
+        )
+
+    def after_a_poll(self, tools: "DevTools", rounds: int = 1) -> None:
+        """Wait for the page to poll again, by watching it actually happen."""
+        before = tools.call("Runtime.evaluate", returnByValue=True,
+                            expression="window.__settled")["result"]["value"]
+        self.wait_until(
+            tools,
+            f"window.__settled >= {before} + {rounds} && window.__inflight === 0"
+            f" && Date.now() - window.__lastSettle > {self.QUIET_MS}",
+            note=f"{rounds} more poll(s) to complete and be drawn")
+
+    def _target_url(self) -> str:
         port_file = Path(self.profile) / "DevToolsActivePort"
         deadline = time.time() + 30
         while time.time() < deadline and not port_file.exists():
-            time.sleep(0.1)
+            time.sleep(0.05)
         self.assertTrue(port_file.exists(), "Chrome did not start")
         port = port_file.read_text().splitlines()[0]
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/json/list", timeout=10
         ) as answer:
             target = next(t for t in json.load(answer) if t["type"] == "page")
-        tools = DevTools(target["webSocketDebuggerUrl"])
+        return target["webSocketDebuggerUrl"]
+
+    def devtools(self) -> DevTools:
+        tools = DevTools(self._target_url())
         self.addCleanup(tools.sock.close)
         tools.call("Page.enable")
         tools.call("Runtime.enable")
         tools.call("Log.enable")
+        tools.call("Page.addScriptToEvaluateOnNewDocument", source=self.WATCH_FETCHES)
         return tools
 
     def test_a_page_shows_itself_before_its_data_arrives(self) -> None:
@@ -193,7 +286,11 @@ class BrowserSmokeTests(unittest.TestCase):
         tools.call("Network.emulateNetworkConditions", offline=False, latency=400,
                    downloadThroughput=-1, uploadThroughput=-1)
         tools.call("Page.navigate", url=f"{self.base_url}/plants/{self.plant_id}")
-        time.sleep(0.9)
+        # Deliberately not open_page: the whole point is to look before the
+        # data lands. The document being ready is the moment to look, and
+        # the latency above is what keeps the answer from beating us there.
+        self.wait_until(tools, "document.readyState === 'complete'",
+                        note="the document to finish parsing")
         early = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               sections: [...document.querySelectorAll("main [data-section]")]
@@ -213,14 +310,55 @@ class BrowserSmokeTests(unittest.TestCase):
                  f"/sensors/{self.sensor_id}", f"/sensors/{self.sensor_id}/settings",
                  "/settings"]
         for page in pages:
-            tools.call("Page.navigate", url=self.base_url + page)
-            time.sleep(2.5)
+            self.open_page(tools, self.base_url + page)
         self.assertEqual(tools.complaints, [], "the pages reported errors")
+
+    def test_every_form_control_is_styled(self) -> None:
+        """A control the stylesheet never reaches looks like 1995.
+
+        The class-existence test next door cannot catch this. Every class on
+        the name field of the Zigbee device page is defined -- the gap is
+        that inputs are styled by descendant rules scoped to ancestors that
+        field does not have, so nothing in the cascade reaches it. Asking
+        "does this class have a rule" and asking "did any rule land on this
+        element" are different questions, and only the browser can answer
+        the second.
+
+        The test is for the default look rather than a particular one: an
+        unstyled control keeps the user agent's own border, which on this
+        platform is a 2px inset in a colour no rule here ever sets.
+        """
+        tools = self.devtools()
+        pages = ["/plants", f"/plants/{self.plant_id}/config",
+                 f"/sensors/{self.sensor_id}/settings", "/settings",
+                 "/settings/rooms", "/settings/zigbee",
+                 # A device page, which exists whether or not that device
+                 # does: its controls are drawn from the markup, and an
+                 # unstyled one is unstyled either way.
+                 "/zigbee/acebe6fffe0d7f18"]
+        bare = []
+        for page in pages:
+            self.open_page(tools, self.base_url + page)
+            found = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+                JSON.stringify([...document.querySelectorAll(
+                    "main input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=file]), "
+                    + "main select, main textarea")]
+                  .filter(el => el.offsetParent !== null)
+                  .filter(el => {
+                    const style = getComputedStyle(el);
+                    // A control nothing has styled keeps the user agent's
+                    // inset border and no padding worth the name.
+                    return style.borderStyle === "inset"
+                        || (parseFloat(style.paddingLeft) < 4 && style.borderRadius === "0px");
+                  })
+                  .map(el => (el.id || el.name || el.tagName.toLowerCase())))""")["result"]["value"])
+            bare.extend(f"{page}:{name}" for name in found)
+        self.assertEqual(bare, [], f"form controls no rule reaches: {bare}")
+        self.assertEqual(tools.complaints, [])
 
     def test_a_plant_page_draws_what_it_was_given(self) -> None:
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/plants/{self.plant_id}")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}")
         drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               photos: document.querySelectorAll(".photo-tile").length,
@@ -233,7 +371,8 @@ class BrowserSmokeTests(unittest.TestCase):
         # Each of these was blank at some point because a render threw.
         self.assertEqual(drawn["photos"], 1)
         self.assertIn("2019", drawn["caption"])
-        self.assertEqual(drawn["weight"], "2.10")
+        # Grams, the only unit the page has: 2100 g, not 2.10 kg.
+        self.assertEqual(drawn["weight"], "2100")
         self.assertEqual(drawn["name"], "Spider")
         self.assertEqual(tools.complaints, [])
 
@@ -245,9 +384,7 @@ class BrowserSmokeTests(unittest.TestCase):
         """
         tools = self.devtools()
         # The sensor's settings are the sensor's page now, not its plant's.
-        tools.call("Page.navigate",
-                   url=f"{self.base_url}/sensors/{self.sensor_id}/settings")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/sensors/{self.sensor_id}/settings")
         panel = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             (() => {
               const toggle = document.getElementById("detail-console-toggle");
@@ -266,8 +403,7 @@ class BrowserSmokeTests(unittest.TestCase):
     def test_the_ph_panel_shows_what_the_probe_said_and_what_it_means(self) -> None:
         """The figures, not just the form: a blank panel is a render that threw."""
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{self.sensor_id}/settings")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/sensors/{self.sensor_id}/settings")
         drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             (() => {
               const panel = document.getElementById("sensor-ph-panel");
@@ -291,8 +427,7 @@ class BrowserSmokeTests(unittest.TestCase):
         while the wheel was still being turned.
         """
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/plants/{self.plant_id}/config")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}/config")
         # Changed the way a sheet changes it: a value and an input event,
         # with the field itself not focused.
         tools.call("Runtime.evaluate", expression="""
@@ -300,7 +435,8 @@ class BrowserSmokeTests(unittest.TestCase):
             field.value = "2021-03-05";
             field.dispatchEvent(new Event("input", {bubbles: true}));
             document.body.focus();""")
-        time.sleep(4)
+        # Several polls, proven to have happened rather than waited out.
+        self.after_a_poll(tools, rounds=3)
         held = tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               value: document.getElementById("plant-config-acquired").value,
@@ -320,15 +456,15 @@ class BrowserSmokeTests(unittest.TestCase):
         """
         scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/sensors/{scale_id}/settings")
         # Chosen the way a menu is chosen, then the pointer goes elsewhere.
         tools.call("Runtime.evaluate", expression="""
             const field = document.getElementById("scale-keep-every");
             field.value = "604800";
             field.dispatchEvent(new Event("change", {bubbles: true}));
             document.body.focus();""")
-        time.sleep(4)
+        # Several polls, proven to have happened rather than waited out.
+        self.after_a_poll(tools, rounds=3)
         held = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               value: document.getElementById("scale-keep-every").value,
@@ -337,6 +473,78 @@ class BrowserSmokeTests(unittest.TestCase):
         # Still the week that was picked, and not because the menu is held.
         self.assertEqual(held["value"], "604800")
         self.assertNotEqual(held["focused"], "scale-keep-every")
+        self.assertEqual(tools.complaints, [])
+
+
+    def zigbee_service(self, eui: str, interval: int):
+        """A Zigbee service whose device keeps reporting the rate it has.
+
+        Standing in for a scale that has been told to change and has not
+        got round to it yet, which is the whole of the bug.
+        """
+        from open_plant_pulse_hub.application.zigbee import ZigbeeService
+        from open_plant_pulse_hub.application.zigbee.network import Reading
+
+        class Network:
+            def devices(self): return []
+            def notes(self, _eui): return {}
+            def on_joined(self, handler): pass
+            def on_delivery(self, handler): pass
+            def on_reading(self, handler): self.handler = handler
+            def send(self, *args, **kwargs): return 1
+
+        network = Network()
+        service = ZigbeeService(self.store, network)
+        network.handler(Reading(eui=eui, kind="scale", values={
+            "grams": 1500.0, "ok": True, "stable": True, "saturated": False,
+            "wifi": True, "interval": interval, "batt": 3.9, "batt_pct": 70,
+        }))
+        return service
+
+    def test_a_zigbee_rate_being_chosen_is_not_undone_by_the_device(self) -> None:
+        """The same bug as above, on the page that had no such guard.
+
+        A Zigbee device reports its rate with every reading, and the page
+        wrote that back over the menu once a second. The command was on its
+        way the whole time -- a sleepy device collects it on its own
+        schedule -- so a setting that was working looked like one that
+        refused to stick.
+        """
+        eui = "acebe6fffe0d7f18"
+        self.store.seen_zigbee_device(eui, "scale")
+        self.store.enroll_zigbee_device(eui, "Pot scale")
+        # A device that is reporting, because the bug is the report being
+        # written back over the menu. Without one there is nothing to
+        # overwrite and the test passes whatever the page does.
+        service = self.zigbee_service(eui, interval=60)
+        server = create_server(self.store, "127.0.0.1", 0, zigbee=service)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                        daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2.0)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        host, port = server_address(server)
+
+        tools = self.devtools()
+        self.open_page(tools, f"http://{host}:{port}/zigbee/{eui}")
+        tools.call("Runtime.evaluate", expression="""
+            const field = document.getElementById("zigbee-scale-interval");
+            field.value = "43200";
+            field.dispatchEvent(new Event("change", {bubbles: true}));
+            document.body.focus();""")
+        self.after_a_poll(tools, rounds=3)
+        held = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              value: document.getElementById("zigbee-scale-interval").value,
+              focused: document.activeElement.id,
+              says: document.getElementById("zigbee-scale-interval-state").textContent,
+            })""")["result"]["value"])
+        # Still twelve hours, and the page says it is on its way rather than
+        # pretending the device already agreed.
+        self.assertEqual(held["value"], "43200")
+        self.assertNotEqual(held["focused"], "zigbee-scale-interval")
+        self.assertIn("Sent", held["says"])
         self.assertEqual(tools.complaints, [])
 
     def test_the_page_holds_still_while_a_form_is_being_filled_in(self) -> None:
@@ -350,8 +558,7 @@ class BrowserSmokeTests(unittest.TestCase):
         """
         scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/sensors/{scale_id}/settings")
         tools.call("Runtime.evaluate", expression="""
             window.__touched = [];
             document.getElementById("scale-keep-every").focus();
@@ -361,7 +568,7 @@ class BrowserSmokeTests(unittest.TestCase):
                        {childList: true, subtree: true, attributes: true, characterData: true});
         """)
         # Several polls, including the once-a-second "last answered" counter.
-        time.sleep(5)
+        self.after_a_poll(tools, rounds=3)
         state = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({touched: window.__touched.slice(0, 10),
                             active: document.activeElement && document.activeElement.id})
@@ -381,8 +588,7 @@ class BrowserSmokeTests(unittest.TestCase):
         """
         scale_id = self.store.adopt_scale("http://scale.local", "Pot scale")["sensor_id"]
         tools = self.devtools()
-        tools.call("Page.navigate", url=f"{self.base_url}/sensors/{scale_id}/settings")
-        time.sleep(3.5)
+        self.open_page(tools, f"{self.base_url}/sensors/{scale_id}/settings")
         tools.call("Runtime.evaluate", expression="""
             window.__flips = [];
             for (const section of document.querySelectorAll("[data-sensor-kind]")) {
@@ -390,7 +596,7 @@ class BrowserSmokeTests(unittest.TestCase):
                 .observe(section, {attributes: true, attributeFilter: ["hidden"]});
             }""")
         # Several polls' worth: the page refreshes about once a second.
-        time.sleep(5)
+        self.after_a_poll(tools, rounds=3)
         flips = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
                                       expression="JSON.stringify(window.__flips)")["result"]["value"])
         self.assertEqual(flips, [], "no section should be shown only to be hidden again")
@@ -402,10 +608,246 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(set(shown), {"scale"})
         self.assertEqual(tools.complaints, [])
 
+    def test_a_scale_page_draws_what_it_has_weighed(self) -> None:
+        """Drift is read in the minutes between the weights that are kept.
+
+        The chart is drawn from the device's own retained reports, not from
+        the weights filed against a plant: those are one every few hours by
+        design, and "has it settled since I moved it" lives in between.
+        """
+        eui = "acebe6fffe0d7f18"
+        self.store.seen_zigbee_device(eui, "scale")
+        now = datetime.now(timezone.utc)
+        grams, drop = 15400.0, 60.0
+        for i in range(40):
+            at = (now - timedelta(minutes=5 * (40 - i))).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.store.record_zigbee_report(
+                eui, {"grams": round(grams, 1), "stable": i % 7 == 0},
+                kind="scale", lqi=10, rssi=-65, at=at)
+            grams -= drop
+            drop *= 0.88
+
+        tools = self.devtools()
+        tools.call("Page.navigate", url=f"{self.base_url}/zigbee/{eui}")
+        time.sleep(4)
+        drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const sec = document.getElementById("zigbee-weight-history");
+              const svg = document.getElementById("zigbee-weight-chart");
+              const batt = document.getElementById("zigbee-battery-history");
+              return JSON.stringify({
+                shown: !sec.hasAttribute("hidden") && !svg.hasAttribute("hidden"),
+                settled: svg.querySelectorAll(".weight-point.settled").length,
+                unsettled: svg.querySelectorAll(".weight-point.unsettled").length,
+                summary: document.getElementById("zigbee-weight-summary").textContent,
+                aboveBattery: !!(sec.compareDocumentPosition(batt) & 4),
+              });
+            })()""")["result"]["value"])
+
+        self.assertTrue(drawn["shown"])
+        self.assertTrue(drawn["aboveBattery"], "weight sits above the battery chart")
+        # Unsettled readings are drawn, not dropped: a scale that never
+        # settles is the thing somebody is looking for.
+        self.assertEqual(drawn["settled"] + drawn["unsettled"], 40)
+        self.assertGreater(drawn["unsettled"], 0)
+        # Drift is quoted in grams whatever unit the weight is in; "0.02 kg
+        # an hour" is no use to somebody watching a scale settle.
+        self.assertIn("g an hour", drawn["summary"])
+        self.assertIn("still settling", drawn["summary"])
+        self.assertEqual(tools.complaints, [])
+
+    PHONE_FIT = """
+        (() => {
+          const de = document.documentElement;
+          const vw = de.clientWidth;
+          // Something inside a scrolling box is allowed to reach past the
+          // screen — that is what the box is for. Only unscrollable spill is
+          // a page whose right-hand side the user cannot get to.
+          const scrollable = (el) => {
+            for (let p = el.parentElement; p; p = p.parentElement) {
+              if (/auto|scroll/.test(getComputedStyle(p).overflowX)) return true;
+            }
+            return false;
+          };
+          const over = [...document.querySelectorAll("body *")]
+            .filter((el) => el.getBoundingClientRect().width > 0)
+            .filter((el) => el.getBoundingClientRect().right > vw + 1)
+            .filter((el) => !scrollable(el));
+          return JSON.stringify({
+            viewport: vw,
+            page: de.scrollWidth,
+            // Only the outermost offender in each chain: its children are
+            // carried along, not separately broken.
+            spilled: over
+              .filter((el) => !over.some((o) => o !== el && o.contains(el)))
+              .map((el) => `${el.tagName.toLowerCase()}`
+                + `${(el.className || "").toString().trim()
+                     ? "." + el.className.toString().trim().split(/\\s+/)[0] : ""}`
+                + `@${Math.round(el.getBoundingClientRect().right)}`),
+          });
+        })()"""
+
+    def test_no_page_runs_off_the_side_of_a_phone(self) -> None:
+        """Every page fits the screen it is read on.
+
+        Each page is a grid item of <main>, and a grid item's default
+        `min-width: auto` lets its min-content width beat the track: one row
+        that will not wrap is enough to drag the entire page sideways. Seven
+        settings tabs did it to 630px on a 390px screen, and the "Sort by" row
+        did a smaller version of it to the household page. This sweeps the lot
+        rather than checking the one page somebody happened to photograph.
+        """
+        tools = self.devtools()
+        # 320 is the narrowest phone still in use, and it is where a fixed
+        # floor shows up first; 390 is what most people are holding.
+        for width in (320, 390):
+            tools.call("Emulation.setDeviceMetricsOverride", width=width, height=844,
+                       deviceScaleFactor=3, mobile=True)
+            for page in ("/", "/plants", "/sensors", "/settings", "/settings/rooms",
+                         "/settings/lights", "/settings/wifi", "/settings/time",
+                         "/settings/firmware", "/settings/zigbee", "/onboarding"):
+                with self.subTest(width=width, page=page):
+                    self.open_page(tools, self.base_url + page)
+                    fit = json.loads(tools.call(
+                        "Runtime.evaluate", returnByValue=True,
+                        expression=self.PHONE_FIT)["result"]["value"])
+                    self.assertEqual(fit["viewport"], width)
+                    self.assertEqual(
+                        fit["page"], fit["viewport"],
+                        f"{page} is {fit['page']}px wide on a {width}px screen;"
+                        f" {fit['spilled']} spill over")
+                    self.assertEqual(fit["spilled"], [], page)
+        self.assertEqual(tools.complaints, [])
+
+    def test_a_wide_table_scrolls_instead_of_widening_the_page(self) -> None:
+        """Five columns do not fit a phone, and must not try to.
+
+        The radio-neighbours table's min-content was 357px — a hard floor that
+        held the whole settings page at 399px on every phone width, because a
+        table will not shrink below its columns. The fix is a scrolling box
+        around it, not narrower columns.
+        """
+        tools = self.devtools()
+        tools.call("Emulation.setDeviceMetricsOverride", width=320, height=844,
+                   deviceScaleFactor=3, mobile=True)
+        self.open_page(tools, self.base_url + "/settings/zigbee")
+        table = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const de = document.documentElement;
+              const table = document.getElementById("zigbee-neighbours");
+              // The table is hidden until the gateway reports neighbours,
+              // which is why a fixture with no radio data never showed this.
+              table.removeAttribute("hidden");
+              // A real neighbour row: a 16-hex-digit EUI in a monospace cell
+              // is what makes the first column wide.
+              table.tBodies[0].innerHTML =
+                "<tr><td>acebe6fffe0d7f18</td><td>Router</td>"
+                + "<td>0x0000</td><td>-65 dBm</td><td>132 of 255</td></tr>";
+              const box = table.parentElement;
+              const fits = () => ({
+                page: de.scrollWidth,
+                viewport: de.clientWidth,
+                boxFits: box.getBoundingClientRect().width <= de.clientWidth + 1,
+                scrolls: box.scrollWidth > Math.ceil(box.getBoundingClientRect().width),
+              });
+              const wrapping = fits();
+              // Headers wrap, so the table usually squeezes in. Hex EUIs and
+              // signal figures are what will not break: hold the cells on one
+              // line and the table is genuinely wider than the phone.
+              table.style.whiteSpace = "nowrap";
+              const nowrap = fits();
+              table.style.whiteSpace = "";
+              return JSON.stringify({
+                wrapping, nowrap,
+                boxed: /auto|scroll/.test(getComputedStyle(box).overflowX),
+                reachable: box.tabIndex >= 0,
+              });
+            })()""")["result"]["value"])
+
+        self.assertTrue(table["boxed"], "the table sits in a box that can scroll")
+        for state in ("wrapping", "nowrap"):
+            with self.subTest(cells=state):
+                seen = table[state]
+                self.assertEqual(seen["page"], seen["viewport"],
+                                 f"page is {seen['page']}px on a {seen['viewport']}px screen")
+                self.assertTrue(seen["boxFits"])
+        # Unbreakable cells are the case the box exists for.
+        self.assertTrue(table["nowrap"]["scrolls"],
+                        "columns that cannot wrap are scrollable to instead of overflowing")
+        # Scrolling boxes are reached by keyboard too, as the raw report log
+        # already is.
+        self.assertTrue(table["reachable"], "the scrolling box takes focus")
+        self.assertEqual(tools.complaints, [])
+
+    def test_a_row_of_controls_wraps_rather_than_eating_the_margin(self) -> None:
+        """Fitting on screen is not the same as being laid out.
+
+        The household page's "Sort by … / Add a plant" row is one line that
+        will not shrink. Without wrapping it stayed inside the viewport but
+        overran its own section's padding, putting the button flush against
+        the border — which reads as broken even though nothing is clipped.
+        """
+        tools = self.devtools()
+        tools.call("Emulation.setDeviceMetricsOverride", width=390, height=844,
+                   deviceScaleFactor=3, mobile=True)
+        self.open_page(tools, self.base_url + "/")
+        row = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const section = document.querySelector(".fleet-overview");
+              const el = section.querySelector(".settings-sensor-actions");
+              const cs = getComputedStyle(section);
+              const box = section.getBoundingClientRect();
+              // Where the section's content is allowed to reach.
+              const edge = box.right - parseFloat(cs.paddingRight)
+                                     - parseFloat(cs.borderRightWidth);
+              const kids = [...el.children].map((k) => k.getBoundingClientRect());
+              return JSON.stringify({
+                edge: Math.round(edge),
+                reach: Math.round(Math.max(...kids.map((k) => k.right))),
+                lines: new Set(kids.map((k) => Math.round(k.top))).size,
+              });
+            })()""")["result"]["value"])
+
+        self.assertGreaterEqual(
+            row["edge"], row["reach"],
+            f"controls reach {row['reach']}px, past the section's content edge"
+            f" at {row['edge']}px")
+        self.assertGreaterEqual(row["lines"], 2, "the row wrapped instead of overrunning")
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_settings_tabs_stay_reachable_on_a_phone(self) -> None:
+        """The tabs that do not fit are scrolled to, not clipped away."""
+        tools = self.devtools()
+        tools.call("Emulation.setDeviceMetricsOverride", width=390, height=844,
+                   deviceScaleFactor=3, mobile=True)
+        self.open_page(tools, self.base_url + "/settings")
+        bar = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            (() => {
+              const de = document.documentElement;
+              const bar = document.querySelector(".settings-tabs");
+              const tabs = [...bar.querySelectorAll(".settings-tab")];
+              const lines = (tab) => Math.round(
+                tab.getBoundingClientRect().height /
+                parseFloat(getComputedStyle(tab).lineHeight || "0"));
+              return JSON.stringify({
+                tabs: tabs.length,
+                fits: bar.getBoundingClientRect().width <= de.clientWidth,
+                scrolls: bar.scrollWidth > Math.ceil(bar.getBoundingClientRect().width),
+                wrapped: tabs.filter((t) => lines(t) > 1).map((t) => t.textContent.trim()),
+              });
+            })()""")["result"]["value"])
+
+        self.assertGreaterEqual(bar["tabs"], 7, "there are enough tabs to overflow")
+        self.assertTrue(bar["fits"], "the bar itself is no wider than the screen")
+        self.assertTrue(bar["scrolls"], "the tabs that do not fit are scrollable to")
+        # "Wi-Fi" broke onto two lines rather than the bar admitting it was
+        # out of room.
+        self.assertEqual(bar["wrapped"], [])
+        self.assertEqual(tools.complaints, [])
+
     def test_the_household_page_draws_a_tile_for_the_plant(self) -> None:
         tools = self.devtools()
-        tools.call("Page.navigate", url=self.base_url + "/plants")
-        time.sleep(3.5)
+        self.open_page(tools, self.base_url + "/plants")
         drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
               cards: document.querySelectorAll("#fleet-grid .fleet-card").length,

@@ -231,7 +231,8 @@ class ChemistryApiTests(unittest.TestCase):
         store.add(soil_reading(1, now - timedelta(days=2), 102, 53.2))
         store.add(soil_reading(2, now, 0, 17.0, 21.7))
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)

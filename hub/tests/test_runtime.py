@@ -53,6 +53,8 @@ class CareLogTests(unittest.TestCase):
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
+        store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                            "strelitzia", None, None, 1800)
         # The journey belongs to the plant, so naming one is what gives this
         # sensor's history somewhere to be counted — and what adopts the
         # events detected before anybody had named it.
@@ -83,6 +85,8 @@ class CareLogTests(unittest.TestCase):
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
+        store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                            "strelitzia", None, None, 1800)
 
         assessments = store.drainage_assessments(reading.sensor_id)
 
@@ -103,9 +107,12 @@ class CareLogTests(unittest.TestCase):
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
+        store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                            "strelitzia", None, None, 1800)
 
         self.assertEqual(
-            store.watering_interval_summary(reading.sensor_id),
+            store.watering_interval_summary(
+                store.sensor(reading.sensor_id)["plant_id"]),
             {"typical_days": 15.0, "interval_count": 2},
         )
 
@@ -169,9 +176,11 @@ class CareLogTests(unittest.TestCase):
         ]
         for report_id, observed_at, moisture in samples:
             store.add(replace(reading, report_id=report_id, observed_at=observed_at, moisture_percent=moisture))
+        store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                            "strelitzia", None, None, 1800)
 
         activity = store.watering_calendar(
-            reading.sensor_id,
+            store.sensor(reading.sensor_id)["plant_id"],
             "2027-01-01T00:00:00Z",
             "2027-01-06T00:00:00Z",
         )
@@ -197,6 +206,8 @@ class CareLogTests(unittest.TestCase):
         store = ReadingStore()
         try:
             store.add(reading)
+            store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                                "strelitzia", None, None, 1800)
             rows = []
             for report_id in range(1, 40321):
                 day_index = (report_id - 1) // 120
@@ -225,7 +236,7 @@ class CareLogTests(unittest.TestCase):
 
             started = time.monotonic()
             activity = store.watering_calendar(
-                reading.sensor_id,
+                store.sensor(reading.sensor_id)["plant_id"],
                 "2026-01-01T00:00:00Z",
                 "2027-01-01T00:00:00Z",
             )
@@ -311,7 +322,8 @@ class WebApiTests(unittest.TestCase):
         ):
             store.add(replace(reading, report_id=report_id, observed_at=observed_at))
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -341,7 +353,8 @@ class WebApiTests(unittest.TestCase):
         store.add(reading)
         store.manage_sensor(reading.sensor_id, "Fern", "Office", "strelitzia", None, None, 1800)
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -369,7 +382,8 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_sensor_scoped_pot_response_history(self) -> None:
         server = create_server(ReadingStore(), "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -385,19 +399,22 @@ class WebApiTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=1.0)
 
-    def test_serves_sensor_watering_calendar_range(self) -> None:
+    def test_serves_a_plants_watering_calendar_range(self) -> None:
         store = ReadingStore()
         reading = sample_reading()
         store.add(replace(reading, report_id=1, observed_at="2027-03-01T10:00:00Z", moisture_percent=30.0))
         store.add(replace(reading, report_id=2, observed_at="2027-03-01T10:10:00Z", moisture_percent=60.0))
+        store.manage_sensor(reading.sensor_id, "Fern", "Office",
+                            "strelitzia", None, None, 1800)
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
             query = urlencode(
                 {
-                    "sensor_id": reading.sensor_id,
+                    "plant_id": store.sensor(reading.sensor_id)["plant_id"],
                     "start": "2027-01-01T00:00:00Z",
                     "end": "2028-01-01T00:00:00Z",
                 }
@@ -428,7 +445,8 @@ class WebApiTests(unittest.TestCase):
 
     def test_accepts_valid_sensor_profile_selection(self) -> None:
         server = create_server(ReadingStore(), "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -461,7 +479,8 @@ class WebApiTests(unittest.TestCase):
             }
 
         server = create_server(store, "127.0.0.1", 0, scanner_health)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -486,7 +505,8 @@ class WebApiTests(unittest.TestCase):
         store = ReadingStore()
         store.add(sample_reading())
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -507,7 +527,8 @@ class WebApiTests(unittest.TestCase):
         store.add(replace(reading, report_id=1, moisture_percent=35.0))
         store.add(replace(reading, report_id=2, moisture_percent=70.0))
         server = create_server(store, "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)
@@ -524,7 +545,8 @@ class WebApiTests(unittest.TestCase):
 
     def test_serves_plant_chemistry_profiles(self) -> None:
         server = create_server(ReadingStore(), "127.0.0.1", 0)
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         thread.start()
         try:
             host, port = server_address(server)

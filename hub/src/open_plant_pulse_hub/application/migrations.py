@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 40
+DATABASE_SCHEMA_VERSION = 48
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -852,7 +852,8 @@ MIGRATIONS: Dict[int, str] = {
            For a pot, mass is the only measure of water with no soil-type
            assumption and no calibration: the probe reads two centimetres
            around its needles, the scale reads the whole pot. Grams, because
-           that is what a scale measures; kilograms are an entry convenience.
+           that is what a scale measures, and the only unit the page
+           ever offered after kilograms were dropped.
 
            kind says what the weighing was for. 'watered' is the ceiling, set
            once drainage stops; 'thirsty' is the floor, set when the plant
@@ -1109,6 +1110,144 @@ MIGRATIONS: Dict[int, str] = {
            the next, and every request costs the radio a wake. */
         ALTER TABLE sensors ADD COLUMN scale_battery_volts REAL;
         ALTER TABLE sensors ADD COLUMN scale_battery_percent INTEGER;
+    """,
+    41: """
+        /* Which Zigbee devices have been let in.
+
+           A device that joins the radio network is not thereby adopted: it
+           has announced itself, nothing more. Keeping the accepted ones here
+           means an unexpected arrival stays visible and inert until somebody
+           says yes, rather than quietly appearing among the working sensors.
+
+           A JSON list of EUI-64s, the only identifier a Zigbee device keeps
+           across rejoins. */
+        ALTER TABLE hub_settings ADD COLUMN zigbee_accepted TEXT;
+    """,
+    42: """
+        /* Zigbee devices are sensors, not a species of their own.
+
+           Version 41 kept the accepted ones in a list here, which was a
+           second sensor registry standing next to the first: no names, no
+           plants, no rooms, no archiving, because none of the machinery for
+           those knew such a thing existed. The sensors table already has
+           every column it needs -- a stable identity, an enrollment status
+           that includes "unclaimed", a plant and a room -- so a device that
+           joins the radio becomes a row there like anything else. */
+        ALTER TABLE hub_settings DROP COLUMN zigbee_accepted;
+    """,
+    43: """
+        /* When a scale's weight is worth writing down.
+
+           Until now this was only an interval: keep one reading every so
+           many seconds. That gives a dense drying curve, which is what the
+           forecast wants, and it makes two days hard to compare, because
+           each day's weights were taken at whatever time the clock happened
+           to land on.
+
+           A time of day is the other useful answer: one weight a day, taken
+           at the same hour, so a week of them is a week of like for like.
+           Null means the interval is in charge, which is what every scale
+           has done so far. */
+        ALTER TABLE sensors ADD COLUMN scale_keep_at_hour INTEGER;
+    """,
+    44: """
+        /* A battery's charge over time, so how fast it drains is visible.
+
+           One row an hour per sensor, not one per reading. A scale
+           reporting every ten seconds would otherwise write three million
+           rows a year to describe a curve that moves a few percent a day,
+           and a chart covering a year cannot draw them anyway. An hour is
+           finer than anything a battery does and keeps a decade under a
+           hundred thousand rows.
+
+           The hour is the key, so a second reading in the same hour
+           replaces the first rather than accumulating. Last writer wins:
+           the most recent sample in an hour is the one worth keeping. */
+        CREATE TABLE battery_history (
+            sensor_id   TEXT NOT NULL,
+            hour        TEXT NOT NULL,   /* YYYY-MM-DDTHH:00:00Z */
+            percent     INTEGER,
+            volts       REAL,
+            PRIMARY KEY (sensor_id, hour)
+        );
+        CREATE INDEX battery_history_by_time ON battery_history (sensor_id, hour DESC);
+    """,
+    45: """
+        /* Which board an image was built for.
+
+           The soil probe is an ESP32-C3 and the scale and gateway are C6.
+           Until now the library refused anything that was not a C3, so the
+           scale's firmware could not be stored at all -- and once it can
+           be, the hub has to know which board each image belongs to so it
+           never offers a C3 image to a C6. */
+        ALTER TABLE firmware_images ADD COLUMN chip TEXT NOT NULL DEFAULT 'esp32c3';
+    """,
+    46: """
+        /* The name a Zigbee device answers to when its Wi-Fi is on.
+
+           The device announces this over Zigbee when it joins and every
+           ten minutes after, and the hub kept it in memory -- so a hub
+           restart lost it until the next announcement. That was merely
+           untidy while Wi-Fi was always on, and became a blocker once it
+           normally is not: an update has to switch Wi-Fi on and then know
+           where to send the image, and waiting up to ten minutes to be
+           told a name the hub has known for months is not a plan. */
+        ALTER TABLE sensors ADD COLUMN zigbee_host TEXT;
+    """,
+    47: """
+        /* What every Zigbee device said, kept for a week.
+
+           Until now a report was judged the instant it arrived and then
+           thrown away: only the last one survived, in memory, for the
+           control panel to display. That left no room to be clever and
+           none to be wrong. A weight wanted at six in the morning had to
+           wait for the device to speak at six in the morning, because
+           there was nothing to look back at; a hub restarted at midnight
+           knew nothing until the next report; and a reading judged wrongly
+           was judged wrongly forever, with no record to re-read.
+
+           So the raw report is kept as the device sent it -- its own
+           values, under its own names, with the signal it arrived on --
+           and the judging happens over that. A week is enough to answer
+           every question anybody has asked of it so far and small enough
+           that nobody has to think about the size: a device reporting
+           every half hour leaves under four hundred rows.
+
+           The values are stored as the device's own JSON rather than
+           split into columns, because the next device will have different
+           ones and a schema change per device model is not a plan. */
+        CREATE TABLE zigbee_reports (
+            report_id INTEGER PRIMARY KEY,
+            eui TEXT NOT NULL,
+            at TEXT NOT NULL,
+            kind TEXT,
+            values_json TEXT NOT NULL,
+            lqi INTEGER,
+            rssi INTEGER
+        );
+        CREATE INDEX zigbee_reports_by_device ON zigbee_reports(eui, at DESC);
+        CREATE INDEX zigbee_reports_by_age ON zigbee_reports(at);
+    """,
+    48: """
+        /* The hub's own time zone, named rather than inferred.
+
+           Until now anything that needed a wall clock -- the hour a scale
+           writes the day's weight, the day a watering belongs to -- read it
+           off whatever the machine believed, and the scale schedule did not
+           even do that: it read the hour off UTC, so six in the morning
+           meant eleven the night before in Vancouver.
+
+           Reading the machine's zone instead would have fixed that one and
+           left the setting invisible, which is the wrong trade for a hub
+           somebody may reach from a phone in another country, or run on a
+           server that keeps UTC because servers do. So it is written down,
+           as an IANA name, and everything that needs an hour of the day
+           asks for it.
+
+           NULL means the machine's own zone, which is the right default for
+           a hub running on the kitchen computer and the only answer
+           available before anybody has chosen. */
+        ALTER TABLE hub_settings ADD COLUMN timezone TEXT;
     """,
 }
 

@@ -95,7 +95,7 @@ The firmware can talk to other devices in one of three ways, picked with `CONFIG
 | **Bluetooth** | Open `mac/scale.html` in Chrome and press **Bluetooth**. |
 | **USB only** (no radio) | Open `mac/scale.html` in Chrome and press **USB**. |
 
-Every link shows the live weight, a 2-minute chart, the noise level and the battery voltage, with Tare/Calibrate buttons and the debug messages. The **BOOT** button on the board also tares.
+Every link shows the live weight, a 2-minute chart, the noise level and the battery voltage, with Tare/Calibrate buttons and the debug messages. Taring is done from the hub, over Zigbee, or with "t" over serial; no button on the board tares, because BOOT sits beside RESET and a tare under a loaded pot is saved and hard to notice.
 
 **Current state:** this board's 3.3 V regulator is damaged (3V3 sits at 3.0 V and dips under load), so it resets whenever Wi-Fi or Bluetooth starts. It runs the USB-only link until the regulator or board is replaced.
 

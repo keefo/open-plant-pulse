@@ -1,0 +1,17 @@
+# Name,   Type, SubType, Offset,   Size, Flags
+#
+# Based on ESP-IDF's two_ota_large layout, with somewhere to put a core
+# dump. Without one a panic leaves nothing behind: the log lives in RAM and
+# the reset reason is overwritten by the next reset, which is usually the
+# first thing anybody does. Two silent hangs cost an evening each for want
+# of 64 KB.
+#
+# The app partitions are 4 KB smaller than the stock 1700K so the core dump
+# fits inside 4 MB without moving anything else. A built image is about
+# 1.25 MB, so there is well over 400 KB of headroom either way.
+nvs,      data, nvs,     ,        0x6000,
+otadata,  data, ota,     ,        0x2000,
+phy_init, data, phy,     ,        0x1000,
+ota_0,    app,  ota_0,   ,        1696K,
+ota_1,    app,  ota_1,   ,        1696K,
+coredump, data, coredump,,        64K,

@@ -297,8 +297,10 @@ class ManualCareTests(unittest.TestCase):
     def test_a_fed_day_is_marked_on_the_year(self) -> None:
         self.store.record_manual_care("plant-01", "fertilizing", at="2026-09-20T17:00:00Z")
 
+        # The calendar is keyed on the plant, not the sensor watching it.
         days = self.store.watering_calendar(
-            "plant-01", "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z"
+            self.store.sensor("plant-01")["plant_id"],
+            "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z"
         )
         fed = [day for day in days if day["fertilizing_count"]]
 
@@ -415,3 +417,150 @@ class PlantAsSubjectTests(unittest.TestCase):
         self.assertEqual(
             self.store.rebuild_journey_of(plant_id), self.store.plant_journey_of(plant_id)
         )
+
+
+class CalendarWithoutASensorTests(unittest.TestCase):
+    """A plant's care history does not depend on anything watching it."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+
+    def test_a_plant_with_no_sensor_still_has_a_year(self) -> None:
+        """Nine of ten plants here have no probe, and all nine were blank.
+
+        The calendar was keyed on a sensor id and derived the plant from
+        it, so a plant nobody had wired up showed an empty year for ever --
+        although watering and feeding are typed in by hand and stored
+        against the plant.
+        """
+        plant_id = self.store.create_plant("orchid")["plant_id"]
+        self.store.record_plant_care(plant_id, "watering", at="2026-05-02T09:00:00Z")
+        self.store.record_plant_care(plant_id, "watering", at="2026-05-20T09:00:00Z")
+        self.store.record_plant_care(plant_id, "fertilizing", at="2026-05-20T09:05:00Z")
+
+        days = self.store.watering_calendar(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+
+        watered = [day for day in days if day["watering_count"]]
+        fed = [day for day in days if day["fertilizing_count"]]
+        self.assertEqual(len(watered), 2)
+        self.assertEqual(len(fed), 1)
+        # No probe, so no soil shading -- the measured part is the only part
+        # that goes missing.
+        self.assertTrue(all(day.get("final_moisture_percent") is None
+                            for day in days))
+
+    def test_the_watering_rhythm_is_the_plants_too(self) -> None:
+        plant_id = self.store.create_plant("jesmin")["plant_id"]
+        for day in ("2026-05-01", "2026-05-11", "2026-05-21"):
+            self.store.record_plant_care(plant_id, "watering", at=f"{day}T09:00:00Z")
+        summary = self.store.watering_interval_summary(plant_id)
+        self.assertEqual(summary["interval_count"], 2)
+        self.assertEqual(summary["typical_days"], 10.0)
+
+    def test_a_weighed_plant_gets_its_calendar_shaded_from_the_pot(self) -> None:
+        """A scale measures wetness from the other side of the same thing.
+
+        Nearly all of what a pot gains and loses is water, so a plant that
+        is weighed has the information to shade its year even with no probe
+        in it. Most plants here are weighed and unprobed, and their years
+        were blank beside the one watched plant's.
+        """
+        plant_id = self.store.create_plant("marble queen small")["plant_id"]
+        for at, grams, kind in [
+            ("2026-05-01T09:00:00Z", 506, "watered"),
+            ("2026-05-04T09:00:00Z", 470, "reading"),
+            ("2026-05-08T09:00:00Z", 430, "reading"),
+            ("2026-05-14T09:00:00Z", 380, "dry"),
+        ]:
+            self.store.record_plant_weight(plant_id, grams, kind=kind, at=at)
+
+        wetness = self.store.plant_wetness_from_weight(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+
+        # Full on the day it was watered, empty at its driest, falling between.
+        self.assertEqual(wetness["2026-05-01"], 100.0)
+        self.assertEqual(wetness["2026-05-14"], 0.0)
+        self.assertGreater(wetness["2026-05-04"], wetness["2026-05-08"])
+
+        days = self.store.watering_calendar(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+        shaded = {d["date"] for d in days
+                  if d.get("final_moisture_percent") is not None}
+        # Every day of the drying run, weighed or not: the four
+        # weighings and the days between them, which are a straight
+        # line down from one to the next.
+        self.assertTrue({"2026-05-01", "2026-05-04", "2026-05-08",
+                         "2026-05-14"} <= shaded)
+        self.assertIn("2026-05-06", shaded)
+        self.assertEqual(len(shaded), 14)
+        self.assertEqual(self.store.plant_wetness_source(plant_id), "weight")
+
+    def test_a_probe_is_not_overridden_by_the_scale(self) -> None:
+        """One scale of wetness per chart, and the probe's wins.
+
+        A row of squares meaning soil for part of the year and pot weight
+        for the rest is a chart that changes meaning halfway along.
+        """
+        plant_id = self.store.create_plant("white bird")["plant_id"]
+        self.store.record_plant_weight(plant_id, 15900, kind="watered",
+                                       at="2026-05-01T09:00:00Z")
+        self.store.record_plant_weight(plant_id, 15000, kind="dry",
+                                       at="2026-05-10T09:00:00Z")
+        self.assertEqual(self.store.plant_wetness_source(plant_id), "weight")
+
+    def test_a_day_between_two_weighings_is_filled_in(self) -> None:
+        """A pot dries steadily, so the day nobody weighed is not a mystery.
+
+        Weighing is a daily habit that gets missed, and every miss left a
+        blank square in the middle of a drying run that is otherwise a
+        smooth slope either side of it.
+        """
+        plant_id = self.store.create_plant("marble queen small")["plant_id"]
+        for at, grams, kind in [
+            ("2026-05-01T09:00:00Z", 500, "watered"),
+            ("2026-05-02T09:00:00Z", 478, "reading"),
+            ("2026-05-04T09:00:00Z", 435, "reading"),   # the 3rd is missing
+            ("2026-05-05T09:00:00Z", 400, "dry"),
+        ]:
+            self.store.record_plant_weight(plant_id, grams, kind=kind, at=at)
+
+        wetness = self.store.plant_wetness_from_weight(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+
+        self.assertIn("2026-05-03", wetness)
+        # Halfway between its neighbours, because that is what a straight
+        # line between two weighings says.
+        self.assertAlmostEqual(
+            wetness["2026-05-03"],
+            (wetness["2026-05-02"] + wetness["2026-05-04"]) / 2, places=0)
+
+    def test_a_gap_a_pot_was_watered_across_is_left_alone(self) -> None:
+        """Nothing here knows which day of the gap the watering happened.
+
+        Filling it would draw a gentle rise over several days, showing a
+        slow soaking that never happened instead of one sudden refill.
+        """
+        plant_id = self.store.create_plant("orchid")["plant_id"]
+        self.store.record_plant_weight(plant_id, 380, kind="dry",
+                                       at="2026-05-01T09:00:00Z")
+        self.store.record_plant_weight(plant_id, 500, kind="watered",
+                                       at="2026-05-06T09:00:00Z")
+
+        wetness = self.store.plant_wetness_from_weight(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+
+        self.assertEqual(sorted(wetness), ["2026-05-01", "2026-05-06"])
+
+    def test_a_long_silence_is_not_a_drying_curve(self) -> None:
+        """Two weighings three months apart say nothing about April."""
+        plant_id = self.store.create_plant("air plant")["plant_id"]
+        self.store.record_plant_weight(plant_id, 500, kind="watered",
+                                       at="2026-03-01T09:00:00Z")
+        self.store.record_plant_weight(plant_id, 300, kind="dry",
+                                       at="2026-06-01T09:00:00Z")
+
+        wetness = self.store.plant_wetness_from_weight(
+            plant_id, "2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+
+        self.assertEqual(sorted(wetness), ["2026-03-01", "2026-06-01"])

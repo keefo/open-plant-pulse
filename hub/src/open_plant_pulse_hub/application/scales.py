@@ -32,6 +32,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+from .weights import WeightKeeper
+
 LOG = logging.getLogger(__name__)
 
 POLL_SECONDS = 20.0
@@ -136,9 +138,7 @@ class ScaleService:
         self._poll_seconds = poll_seconds
         self._stopping = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        # The last weight kept per plant, so a reading is judged against what
-        # the plant actually weighed rather than against the previous poll.
-        self._last_kept: Dict[int, Any] = {}
+        self._keeper = WeightKeeper(store)
         self._battery_asked: Dict[str, float] = {}
 
     def start(self) -> None:
@@ -231,40 +231,21 @@ class ScaleService:
 
     def _keep(self, plant_id: int, grams: int, scale: Dict[str, Any],
               taken: Optional[datetime] = None) -> Optional[int]:
-        last = self._last_kept.get(plant_id)
-        if last is None:
-            last = self._latest_weight(plant_id)
-            if last is not None:
-                self._last_kept[plant_id] = last
-        now = taken or datetime.now(timezone.utc)
+        """Hand the weight to the keeper, which decides.
 
-        if last is not None:
-            previous = int(last["grams"])
-            # The pot is off the scale, or something else is on it. Either
-            # way it is not this plant losing water, and writing it would
-            # tell the forecast the plant drank fifteen kilos this morning.
-            if previous > 0 and grams < previous * POT_REMOVED_FRACTION:
-                return None
-            if previous > 0 and grams > previous * IMPLAUSIBLE_RISE_FRACTION:
-                return None
-            since = (now - _parse(last["at"])).total_seconds()
-            if since < scale["keep_every_seconds"]:
-                return None
-
-        # Signed, so a weight nobody remembers taking is accounted for.
-        # Somebody reading the log a year from now should be able to tell a
-        # number they put there from a number that arrived by itself.
-        self._store.record_plant_weight(
-            plant_id, grams, source="scale",
-            at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            note=f"Weighed by {scale.get('display_name') or scale['sensor_id']}",
+        The rules used to live here. They moved to weights.py when a second
+        kind of scale appeared: a Zigbee one would otherwise have needed
+        either a copy of them or none, and the first drifts while the second
+        fills the log with the pot being lifted on and off.
+        """
+        return self._keeper.keep(
+            plant_id, grams,
+            source_name=scale.get("display_name") or scale["sensor_id"],
+            every_seconds=scale["keep_every_seconds"],
+            at_hour=scale.get("keep_at_hour"),
+            taken=taken,
         )
-        self._last_kept[plant_id] = {"grams": grams, "at": now.isoformat()}
-        return grams
 
-    def _latest_weight(self, plant_id: int) -> Optional[Dict[str, Any]]:
-        status = self._store.plant_weight_status(plant_id)
-        return status.get("latest") if status else None
 
 
 def _whole(value: Any) -> Optional[int]:

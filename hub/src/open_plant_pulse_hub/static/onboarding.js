@@ -15,7 +15,7 @@ const ONBOARDING_STEPS = ["find", "pair", "details", "done"];
 
 function renderSettingsTab() {
   const tab = settingsTabFromLocation();
-  ["sensors", "rooms", "lights", "wifi", "firmware"].forEach((name) => {
+  ["sensors", "rooms", "lights", "wifi", "time", "firmware", "zigbee"].forEach((name) => {
     setHidden(document.getElementById("settings-" + name + "-panel"), tab !== name);
     setClass(document.getElementById("settings-tab-" + name), "active", tab === name);
   });
@@ -276,7 +276,15 @@ function renderSettingsSensors() {
    * two sensors reporting every few seconds swapped places under the
    * pointer. This list is "the sensors you have", so it is alphabetical,
    * with the id to break ties so the order never depends on timing. */
-  const listed = [...fleetSensors].sort((a, b) =>
+  /* Zigbee devices are not listed here.
+   *
+   * They are sensor rows like any other -- that is what gives them names,
+   * plants and rooms -- but they are administered on the Zigbee page,
+   * because what you can do with one depends on the gateway being there.
+   * This list is for the devices this project builds and reaches directly. */
+  const listed = [...fleetSensors]
+    .filter((sensor) => !String(sensor.transport || "").startsWith("zigbee"))
+    .sort((a, b) =>
     (a.display_name || a.sensor_id).localeCompare(b.display_name || b.sensor_id)
     || a.sensor_id.localeCompare(b.sensor_id));
   const renderKey = JSON.stringify(

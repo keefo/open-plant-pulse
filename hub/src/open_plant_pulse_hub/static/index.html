@@ -11,6 +11,7 @@
     <a class="brand" href="/">Open Plant Pulse</a>
     <div class="primary-links">
       <a id="fleet-link" class="nav-link" href="/">Plants</a>
+      <a id="rooms-link" class="nav-link" href="/rooms">Rooms</a>
       <a id="settings-link" class="nav-link" href="/settings">Settings</a>
     </div>
   </nav>
@@ -56,6 +57,25 @@
         <button id="arrange-save" type="button">Save order</button>
       </div>
     </div>
+    <!-- Rooms, because air belongs to a room rather than to a plant.
+         One thermometer answers for everything on that windowsill, and
+         reading them side by side is how a room that is too dry or too
+         cold becomes obvious. Cards are built by script from the rooms
+         the hub knows, so adding a room adds a card. -->
+    <section class="rooms-overview" data-page="rooms" aria-labelledby="rooms-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">HOUSEHOLD</p>
+          <h1 id="rooms-title">Rooms</h1>
+          <p>What the air is doing in each room, and what is growing in it.</p>
+        </div>
+      </div>
+      <div id="rooms-grid" class="rooms-grid"></div>
+      <p id="rooms-empty" class="history-chart-empty" hidden>
+        No rooms yet. Rooms are added when a plant or sensor is given one.
+      </p>
+    </section>
+
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
       <div class="section-heading">
         <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
@@ -83,12 +103,59 @@
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
+        <a id="settings-tab-time" class="settings-tab" href="/settings/time" role="tab">Time</a>
         <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
+        <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
       </div>
 
       <div id="settings-sensors-panel" class="settings-panel-group">
         <div id="settings-sensor-list" class="settings-sensor-list"></div>
         <p class="settings-note">A sensor belongs to one hub. To move one to a different hub, forget it here, or power-cycle it five times if this hub is unreachable. Either way it returns to onboarding and must be added again.</p>
+      </div>
+
+
+      <div id="settings-zigbee-panel" class="settings-panel-group" hidden>
+        <!-- Devices first. The gateway's own numbers are diagnostics, and
+             putting them at the top made the page read as a protocol
+             inspector rather than a list of the things in the house. -->
+        <div class="settings-panel">
+          <div class="row-between">
+            <h2>Devices</h2>
+            <span id="zigbee-gateway-brief" class="note mute"></span>
+          </div>
+          <div id="zigbee-devices" class="settings-sensor-list"></div>
+          <div class="zigbee-actions" style="margin-top:12px">
+            <button id="zigbee-permit" type="button">Scan for new devices</button>
+            <span id="zigbee-permit-state" class="note mute"></span>
+            <div id="zigbee-radar" class="zigbee-radar" hidden aria-hidden="true">
+              <div class="zigbee-radar-sweep"></div>
+            </div>
+          </div>
+          <p class="settings-note">Scanning opens the network to devices that have never joined. Put the new sensor into pairing first; nothing visible happens until one answers. Devices already here are unaffected.</p>
+        </div>
+
+        <div class="settings-panel" id="zigbee-advanced">
+          <h2>Gateway and troubleshooting</h2>
+          <dl class="ph-figures" style="margin-top:12px">
+            <div><dt>Gateway</dt><dd id="zigbee-gw-state">--</dd></div>
+            <div><dt>Network</dt><dd id="zigbee-gw-pan">--</dd></div>
+            <div><dt>Channel</dt><dd id="zigbee-gw-channel">--</dd></div>
+            <div><dt>Devices known</dt><dd id="zigbee-gw-count">--</dd></div>
+          </dl>
+          <h3 class="section-subheading">Radio neighbours</h3>
+          <p class="ph-explainer">The stack's own view of what it can hear, which is a different thing from the list above: it shows what each device negotiated and how well the two radios reach each other.</p>
+          <div class="raw-report-scroll" tabindex="0" aria-label="Radio neighbours">
+            <table class="zigbee-table" id="zigbee-neighbours">
+              <thead><tr><th>Device</th><th>Role</th><th>Receiver</th><th>Signal</th><th>Link quality</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="zigbee-neighbours-empty" class="ph-explainer" hidden>Nothing in range.</p>
+          <div class="zigbee-actions" style="margin-top:14px">
+            <button id="zigbee-release" type="button">Release the gateway</button>
+          </div>
+          <p class="ph-explainer">A serial port belongs to one program at a time, so the hub has to let go before the gateway can be flashed or watched from a terminal. Releasing it clears what the hub knows; it comes back on reconnect.</p>
+        </div>
       </div>
 
       <div id="settings-rooms-panel" class="settings-panel-group" hidden>
@@ -147,6 +214,22 @@
           </div>
         </form>
         <div id="light-list" class="settings-sensor-list"></div>
+      </div>
+
+      <div id="settings-time-panel" class="settings-panel-group" hidden>
+        <form id="hub-timezone-form" class="settings-panel">
+          <h2>Time zone</h2>
+          <p>Where this hub keeps time. Readings are stored in UTC whatever this says; what it decides is every hour of the day the hub reasons about &mdash; the hour a scale writes the day&rsquo;s weight, and which day an evening&rsquo;s watering is filed under.</p>
+          <label for="hub-timezone">Zone</label>
+          <select id="hub-timezone">
+            <option value="">Use this computer&rsquo;s zone</option>
+          </select>
+          <div class="inline-control">
+            <button id="save-hub-timezone" type="submit">Save</button>
+            <output id="hub-timezone-message" aria-live="polite"></output>
+          </div>
+          <small id="hub-timezone-now"></small>
+        </form>
       </div>
 
       <div id="settings-wifi-panel" class="settings-panel-group" hidden>
@@ -251,7 +334,11 @@
       </div>
     </section>
 
-    <section class="primary-grid" data-page="plant" data-section="readings" aria-label="Primary plant measurements" hidden>
+    <!-- The sections below need a soil probe, and say so by their
+         sensor kind rather than by each one testing for a sensor.
+         A plant that is weighed but not probed showed four panels of
+         "waiting for a reading" that would wait for ever. -->
+    <section class="primary-grid" data-page="plant" data-section="readings" data-sensor-kind="bthome" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
@@ -313,7 +400,7 @@
       </div>
     </section>
 
-    <section id="plant-assessment" class="plant-assessment" data-page="plant" data-section="assessment" data-level="waiting" aria-live="polite" hidden>
+    <section id="plant-assessment" class="plant-assessment" data-page="plant" data-section="assessment" data-sensor-kind="bthome" data-level="waiting" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">CURRENT HEALTH</p>
         <strong id="plant-status">Waiting</strong>
@@ -321,7 +408,7 @@
       <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
     </section>
 
-    <section id="drainage-assessment" class="drainage-assessment" data-page="plant" data-section="drainage" data-level="learning" aria-live="polite" hidden>
+    <section id="drainage-assessment" class="drainage-assessment" data-page="plant" data-section="drainage" data-sensor-kind="bthome" data-level="learning" aria-live="polite" hidden>
       <div>
         <p class="eyebrow">POT RESPONSE</p>
         <strong id="drainage-status">Learning</strong>
@@ -330,7 +417,7 @@
       <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
     </section>
 
-    <section class="chemistry" data-page="plant" data-section="chemistry" aria-label="Soil chemistry measurements" hidden>
+    <section class="chemistry" data-page="plant" data-section="chemistry" data-sensor-kind="bthome" aria-label="Soil chemistry measurements" hidden>
       <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
       <p id="chemistry-measured" class="chemistry-measured" hidden></p>
       <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
@@ -423,13 +510,51 @@
         <p id="plant-weight-chart-empty" class="history-chart-empty">Weigh the pot twice and its drying shows here.</p>
         <p id="plant-weight-chart-summary" class="range-status"></p>
       </div>
-      <div class="inline-control plant-weight-entry">
-        <label for="plant-weight-input">Weighs</label>
-        <input id="plant-weight-input" type="number" step="0.01" min="0" max="500">
-        <select id="plant-weight-unit" aria-label="Weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
+      <div class="plant-weight-scale" id="plant-weight-scale" hidden>
+        <p class="plant-weight-scale-who">
+          Weighed by <a id="plant-weight-scale-link" href="#"></a>
+        </p>
+        <div class="inline-control">
+          <label for="plant-weight-schedule">Record a weight</label>
+          <select id="plant-weight-schedule">
+            <!-- Each option reads on its own. A closed select shows only the
+                 chosen line, so "30 minutes" under a group heading of
+                 "Every" becomes "30 minutes" with nothing to say whether
+                 that is an interval or a time of day. -->
+            <optgroup label="At a regular interval">
+              <option value="every:1800">Every 30 minutes</option>
+              <option value="every:3600">Every hour</option>
+              <option value="every:10800">Every 3 hours</option>
+              <option value="every:21600">Every 6 hours</option>
+              <option value="every:43200">Every 12 hours</option>
+            </optgroup>
+            <optgroup label="Once a day">
+              <option value="at:0">Once a day at midnight</option>
+              <option value="at:6">Once a day at 06:00</option>
+              <option value="at:8">Once a day at 08:00</option>
+              <option value="at:10">Once a day at 10:00</option>
+              <option value="at:12">Once a day at noon</option>
+              <option value="at:18">Once a day at 18:00</option>
+              <option value="at:21">Once a day at 21:00</option>
+            </optgroup>
+          </select>
+          <output id="plant-weight-schedule-message" aria-live="polite"></output>
+        </div>
+        <p class="plant-weight-scale-note">
+          A time of day makes one day comparable with the next. An interval
+          draws the drying curve in more detail.
+        </p>
+        <div class="inline-control plant-weight-scale-actions">
+          <button id="plant-weight-now" type="button">Record a weight now</button>
+          <output id="plant-weight-now-message" aria-live="polite"></output>
+        </div>
+        <button id="plant-weight-by-hand" type="button" class="link-button">
+          Weigh by hand anyway
+        </button>
+      </div>
+      <div class="inline-control plant-weight-entry" id="plant-weight-entry">
+        <label for="plant-weight-input">Weighs (g)</label>
+        <input id="plant-weight-input" type="number" step="1" min="0" max="500000">
         <input id="plant-weight-date" type="date" aria-label="Date weighed">
         <label class="weight-watered-check" for="plant-weight-watered">
           <input id="plant-weight-watered" type="checkbox">
@@ -439,19 +564,11 @@
         <output id="plant-weight-message" aria-live="polite"></output>
       </div>
       <div class="inline-control plant-weight-anchors">
-        <label for="plant-weight-full">Full at</label>
-        <input id="plant-weight-full" type="number" step="0.01" min="0" placeholder="17.40">
-        <select id="plant-weight-full-unit" aria-label="Full weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
+        <label for="plant-weight-full">Full at (g)</label>
+        <input id="plant-weight-full" type="number" step="1" min="0" max="500000" placeholder="17400">
         <button id="plant-weight-set-full" type="button">Set</button>
-        <label for="plant-weight-thirsty">Thirsty at</label>
-        <input id="plant-weight-thirsty" type="number" step="0.01" min="0" placeholder="16.20">
-        <select id="plant-weight-thirsty-unit" aria-label="Thirsty weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
+        <label for="plant-weight-thirsty">Thirsty at (g)</label>
+        <input id="plant-weight-thirsty" type="number" step="1" min="0" max="500000" placeholder="16200">
         <button id="plant-weight-set-thirsty" type="button">Set</button>
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
@@ -662,6 +779,149 @@
         added under <b>Add a sensor</b>.</p>
     </section>
 
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-device-page" aria-labelledby="zigbee-device-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow" id="zigbee-device-kind">ZIGBEE DEVICE</p>
+          <h2 id="zigbee-device-title">Device</h2>
+        </div>
+        <div class="sensor-identity">
+          <div class="sensor-identity-actions">
+            <a class="secondary-action" id="zigbee-device-back" href="/settings/zigbee">Back</a>
+          </div>
+          <code id="zigbee-device-id"></code>
+        </div>
+      </div>
+      <p id="zigbee-device-health" class="ph-explainer"></p>
+      <div class="zigbee-reading" id="zigbee-reading" hidden>
+        <p class="zigbee-reading-number">
+          <span id="zigbee-scale-grams">--</span><span class="zigbee-reading-unit">g</span>
+        </p>
+        <p class="zigbee-reading-state" id="zigbee-scale-settling"></p>
+      </div>
+      <dl class="ph-figures">
+        <div><dt>Reporting every</dt><dd id="zigbee-scale-rate">--</dd></div>
+        <div><dt>Battery</dt><dd><span id="zigbee-scale-batt" class="battery" data-level="unknown" role="img" aria-label="Battery not reported"><span class="battery-glyph" aria-hidden="true"><span class="battery-fill"></span></span><span class="battery-percent">&mdash;</span></span></dd></div>
+        <div><dt>Signal</dt><dd id="zigbee-scale-signal">--</dd></div>
+        <div><dt>Last heard</dt><dd id="zigbee-scale-heard">--</dd></div>
+        <div><dt>Firmware</dt><dd id="zigbee-scale-firmware">--</dd></div>
+        <div id="zigbee-own-page-figure" hidden><dt>Debug page</dt><dd><a id="zigbee-own-page" class="sensor-plant-link" href="/">--</a></dd></div>
+      </dl>
+      <p id="zigbee-device-fault" class="ph-caution" hidden></p>
+
+      <!-- One picker, for whatever this kind of device is about. A scale
+           attaches to a plant, a room thermometer to a room; the device
+           says which, so this markup does not have to. -->
+      <div class="sensor-attach" id="zigbee-subject" hidden>
+        <label for="zigbee-subject-choice" id="zigbee-subject-label">This device is not assigned yet</label>
+        <div class="sensor-attach-row">
+          <select id="zigbee-subject-choice" aria-label="What this device is about"></select>
+          <button id="zigbee-subject-save" type="button">Assign</button>
+        </div>
+      </div>
+
+      <div class="sensor-attach" id="zigbee-rename">
+        <label for="zigbee-name">Name</label>
+        <div class="sensor-attach-row">
+          <input id="zigbee-name" maxlength="60" placeholder="What to call this device">
+          <button id="zigbee-name-save" type="button">Save</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Weight history, for a scale. Drawn from the device's own reports
+         rather than from the weights kept against a plant: the kept ones
+         are one every few hours by design, and the question this chart is
+         asked -- how fast is it drifting, has it settled -- needs every
+         report there is. -->
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-weight-history"
+             aria-labelledby="zigbee-weight-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WEIGHT</p><h2 id="zigbee-weight-title">What it has weighed</h2></div>
+        <div class="history-range-selector" role="group" aria-label="Weight chart range">
+          <button type="button" data-weight-range="1" aria-pressed="false">1 hour</button>
+          <button type="button" data-weight-range="6" aria-pressed="true">6 hours</button>
+          <button type="button" data-weight-range="24" aria-pressed="false">24 hours</button>
+          <button type="button" data-weight-range="168" aria-pressed="false">7 days</button>
+        </div>
+      </div>
+      <svg id="zigbee-weight-chart" class="history-chart" viewBox="0 0 720 220"
+           role="img" aria-label="Weight over time" hidden></svg>
+      <p id="zigbee-weight-empty" class="history-chart-empty">
+        No reports kept yet. Every report this device sends is kept for a week,
+        so a curve appears as soon as it has spoken twice.
+      </p>
+      <p id="zigbee-weight-summary" class="range-status"></p>
+    </section>
+
+    <!-- Battery history belongs to the device, not to the kind of device:
+         every battery drains, and a thermometer's chart is the same chart.
+         So this sits outside the per-kind sections below and is drawn for
+         anything that reports a charge. -->
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-battery-history"
+             aria-labelledby="zigbee-battery-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">BATTERY</p><h2 id="zigbee-battery-title">Charge over time</h2></div>
+        <div class="history-range-selector" role="group" aria-label="Battery chart range">
+          <button type="button" data-battery-range="7" aria-pressed="false">7 days</button>
+          <button type="button" data-battery-range="30" aria-pressed="true">30 days</button>
+          <button type="button" data-battery-range="90" aria-pressed="false">3 months</button>
+          <button type="button" data-battery-range="365" aria-pressed="false">1 year</button>
+          <button type="button" data-battery-range="3660" aria-pressed="false">All</button>
+        </div>
+      </div>
+      <svg id="zigbee-battery-chart" class="history-chart" viewBox="0 0 720 220"
+           role="img" aria-label="Battery charge over time" hidden></svg>
+      <p id="zigbee-battery-empty" class="history-chart-empty">
+        No charge recorded yet. The hub keeps one reading an hour, so a curve
+        appears within a few hours.
+      </p>
+      <p id="zigbee-battery-summary" class="range-status"></p>
+    </section>
+
+    <!-- Controls are per kind, the same way the sensor pages pick a panel by
+         data-sensor-kind. A second kind of Zigbee device adds a section here
+         and changes nothing else. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="scale" id="zigbee-scale-controls" aria-labelledby="zigbee-scale-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SCALE</p><h2 id="zigbee-scale-title">Weighing</h2></div>
+      </div>
+      <form id="zigbee-scale-form" class="sensor-settings-form">
+        <label>Weigh every
+          <select id="zigbee-scale-interval">
+            <option value="0">Continuously (10 a second)</option>
+            <option value="1">1 second</option>
+            <option value="3">3 seconds</option>
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="300">5 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+            <option value="14400">4 hours</option>
+            <option value="43200">12 hours</option>
+          </select>
+          <small>The scale powers its amplifier down between readings, and its
+            Zigbee reports follow this same rate.</small>
+        </label>
+        <output id="zigbee-scale-interval-state" aria-live="polite"></output>
+      </form>
+      <div class="sensor-identity-actions">
+        <button type="button" id="zigbee-scale-tare" class="secondary-action">Tare</button>
+        <button type="button" id="zigbee-scale-wifi" class="secondary-action">Wi-Fi</button>
+      </div>
+      <p class="ph-explainer" id="zigbee-scale-wifi-state"></p>
+    </section>
+
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="unknown" id="zigbee-unknown-controls" aria-labelledby="zigbee-unknown-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">DEVICE</p><h2 id="zigbee-unknown-title">No controls yet</h2></div>
+      </div>
+      <p class="ph-explainer">The hub does not know what kind of device this is, so it has nothing to offer beyond what the list shows. It fills in once the device reports.</p>
+    </section>
+
     <section class="sensor-settings" data-page="sensor-config" id="sensor-identity-panel" aria-labelledby="sensor-identity-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow" id="sensor-kind-label">SENSOR</p><h2 id="sensor-identity-title">This sensor</h2></div>
@@ -745,6 +1005,9 @@
         <label>Weigh every
           <select id="scale-interval">
             <option value="0">Continuously (10 a second)</option>
+            <option value="1">1 second</option>
+            <option value="3">3 seconds</option>
+            <option value="5">5 seconds</option>
             <option value="10">10 seconds</option>
             <option value="30">30 seconds</option>
             <option value="60">1 minute</option>

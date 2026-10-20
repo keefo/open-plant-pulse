@@ -516,7 +516,8 @@ class OnboardingWebTests(unittest.TestCase):
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enrolled_sensor(self.store, self.sensor_id)
         self.server = create_server(self.store, "127.0.0.1", 0)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"
@@ -698,7 +699,8 @@ class InterfaceTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
         self.server = create_server(self.store, "127.0.0.1", 0)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"

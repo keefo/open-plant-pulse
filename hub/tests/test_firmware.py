@@ -248,12 +248,14 @@ class HttpTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.library = FirmwareLibrary(self.store, Path(self.directory.name) / "firmware")
         self.server = create_server(self.store, "127.0.0.1", 0, None, self.library)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"
         self.files = create_firmware_server(self.library, "127.0.0.1", 0)
-        self.files_thread = Thread(target=self.files.serve_forever, daemon=True)
+        self.files_thread = Thread(target=self.files.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.files_thread.start()
         file_host, file_port = firmware_server_address(self.files)
         self.files_url = f"http://{file_host}:{file_port}"
@@ -367,7 +369,8 @@ class InterfaceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
         self.server = create_server(self.store, "127.0.0.1", 0)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"

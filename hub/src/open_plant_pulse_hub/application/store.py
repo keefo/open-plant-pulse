@@ -1,8 +1,9 @@
 from collections import deque
 from dataclasses import asdict, replace, replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import math
 from math import ceil
 from pathlib import Path
@@ -10,9 +11,12 @@ import sqlite3
 from statistics import median
 from threading import Condition
 from uuid import uuid4
+from zoneinfo import ZoneInfo, available_timezones
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from open_plant_pulse_hub.domain import ReportPacket2, SensorReading
+
+LOG = logging.getLogger(__name__)
 from open_plant_pulse_hub.domain.care_events import CareEvent, CareEventDetector
 from open_plant_pulse_hub.domain.plant_profiles import load_plant_profiles
 from open_plant_pulse_hub.domain.soil_chemistry import (
@@ -203,6 +207,10 @@ PLANT_SECTIONS = (
 )
 
 WEIGHT_KINDS = ("reading", "watered", "thirsty", "dry")
+# How long a Zigbee device's own reports are kept. Long enough to answer a
+# question about last week, short enough that nobody has to think about it:
+# a device reporting every half hour leaves under four hundred rows.
+ZIGBEE_REPORT_DAYS = 7
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
 MIN_WEIGHT_SPAN = timedelta(hours=12)
@@ -238,6 +246,21 @@ def _empty_calendar_day(day: str, moisture: Optional[float] = None) -> Dict[str,
     }
 
 
+def _machine_zone_name() -> str:
+    """What this computer calls its own zone, for showing rather than using.
+
+    There is no portable way to ask the system for its IANA name, so the
+    abbreviation it offers is the honest answer when a name is not to be had.
+    """
+    local = datetime.now().astimezone()
+    return str(local.tzname() or local.strftime("UTC%z") or "UTC")
+
+
+def hub_timezone_names() -> List[str]:
+    """Every zone that can be chosen, for a menu to be built from."""
+    return sorted(available_timezones())
+
+
 def _timestamp(moment: datetime) -> str:
     # The form every stored time takes, so that text comparison orders them.
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -263,6 +286,8 @@ class ReadingStore:
         default_profile = catalog["profiles"][catalog["default_profile"]]
         self._default_refill_below = float(default_profile["watering"]["refill_below"])
         self._sensor_refill_below: Dict[str, float] = {}
+        # Resolved once rather than per care event; cleared when it changes.
+        self._zone_cache: Any = None
         if database_path and database_path != ":memory:":
             Path(database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._database = sqlite3.connect(database_path or ":memory:", check_same_thread=False)
@@ -733,7 +758,8 @@ class ReadingStore:
                        scale_address, scale_keep_every_seconds,
                        scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
                        scale_interval_seconds, scale_firmware, scale_build, scale_seq,
-                       scale_battery_volts, scale_battery_percent
+                       scale_battery_volts, scale_battery_percent,
+                       scale_keep_at_hour, zigbee_host
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -771,7 +797,8 @@ class ReadingStore:
                        scale_address, scale_keep_every_seconds,
                        scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
                        scale_interval_seconds, scale_firmware, scale_build, scale_seq,
-                       scale_battery_volts, scale_battery_percent
+                       scale_battery_volts, scale_battery_percent,
+                       scale_keep_at_hour, zigbee_host
                 FROM sensors WHERE sensor_id = ?
                 """,
                 (sensor_id,),
@@ -783,16 +810,67 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT reporting_interval_minutes, plant_section_order,
-                       care_log_hidden_kinds
+                       care_log_hidden_kinds, timezone
                 FROM hub_settings WHERE singleton_id = 1
                 """
             ).fetchone()
         assert row is not None
+        chosen = row[3]
         return {
             "reporting_interval_minutes": int(row[0]),
             "plant_section_order": self._section_order(row[1]),
             "care_log_hidden_kinds": self._hidden_kinds(row[2]),
+            # What was chosen, which may be nothing, and what that works out
+            # to. A page showing only the first cannot say what "6 am" means
+            # on a hub nobody has configured.
+            "timezone": chosen,
+            "timezone_effective": chosen or _machine_zone_name(),
         }
+
+    def set_hub_timezone(self, name: Optional[str]) -> Dict[str, Any]:
+        """Choose the zone every hour-of-the-day decision is made in.
+
+        None hands it back to the machine, which is the right answer for a
+        hub on the kitchen computer and the only one before anybody chooses.
+        """
+        chosen = (name or "").strip() or None
+        if chosen is not None:
+            try:
+                ZoneInfo(chosen)
+            except Exception as error:
+                raise ValueError(f"unknown time zone: {chosen}") from error
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET timezone = ? WHERE singleton_id = 1", (chosen,)
+            )
+            self._zone_cache = None
+        return self.hub_settings()
+
+    def hub_zone(self) -> Any:
+        """The tzinfo every wall-clock decision in the hub is made against."""
+        with self._condition:
+            cached = self._zone_cache
+            if cached is not None:
+                return cached
+            row = self._database.execute(
+                "SELECT timezone FROM hub_settings WHERE singleton_id = 1"
+            ).fetchone()
+        name = row[0] if row else None
+        zone: Any
+        if name:
+            try:
+                zone = ZoneInfo(name)
+            except Exception:
+                # A zone that was valid when it was saved and is not now --
+                # a renamed one, a trimmed tzdata -- should not stop the hub
+                # keeping time. It falls back and says so in the log.
+                LOG.warning("unknown time zone %r; using this machine's", name)
+                zone = datetime.now().astimezone().tzinfo
+        else:
+            zone = datetime.now().astimezone().tzinfo
+        with self._condition:
+            self._zone_cache = zone
+        return zone
 
     @staticmethod
     def _section_order(stored: Optional[str]) -> List[str]:
@@ -885,6 +963,28 @@ class ReadingStore:
                     """
                 )
             ]
+
+    def rooms_overview(self) -> List[Dict[str, Any]]:
+        """Every room with what is in it and what the air is doing.
+
+        A room at a time rather than a plant at a time. Air belongs to the
+        room, so a page of rooms is the natural place to read it: one
+        thermometer answers for everything on that windowsill, and
+        comparing rooms is how you notice that one of them is the problem.
+        """
+        rooms = self.rooms()
+        with self._condition:
+            plants = dict(self._database.execute(
+                """
+                SELECT room_id, COUNT(*) FROM plants
+                WHERE room_id IS NOT NULL AND COALESCE(archived, 0) = 0
+                GROUP BY room_id
+                """
+            ).fetchall())
+        for room in rooms:
+            room["plant_count"] = int(plants.get(room["room_id"], 0))
+            room["air"] = self.room_air(room["room_id"])
+        return rooms
 
     def _validate_room(self, name: str, aspect: str, light: str, notes: Optional[str]) -> str:
         name = name.strip()
@@ -1418,14 +1518,15 @@ class ReadingStore:
             self._database.execute(
                 """
                 INSERT INTO firmware_images (
-                    digest, version, project, idf_version, size_bytes, built_at, uploaded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    digest, version, project, chip, idf_version, size_bytes, built_at, uploaded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(digest) DO NOTHING
                 """,
                 (
                     image["digest"],
                     image["version"],
                     image["project"],
+                    image.get("chip", "esp32c3"),
                     image["idf_version"],
                     int(image["size_bytes"]),
                     image.get("built_at"),
@@ -1440,7 +1541,7 @@ class ReadingStore:
         with self._condition:
             rows = self._database.execute(
                 """
-                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at
+                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at, chip
                 FROM firmware_images
                 ORDER BY uploaded_at DESC, version DESC
                 """
@@ -1451,7 +1552,7 @@ class ReadingStore:
         with self._condition:
             row = self._database.execute(
                 """
-                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at
+                SELECT digest, version, project, idf_version, size_bytes, built_at, uploaded_at, chip
                 FROM firmware_images WHERE digest = ?
                 """,
                 (digest,),
@@ -1580,6 +1681,8 @@ class ReadingStore:
             "size_bytes": row[4],
             "built_at": row[5],
             "uploaded_at": row[6],
+            # Appended to the select, so it is last whatever comes before.
+            "chip": row[7] if len(row) > 7 else "esp32c3",
         }
 
     def hub_wifi_settings(self) -> Dict[str, Any]:
@@ -1756,6 +1859,100 @@ class ReadingStore:
         result = self.sensor(sensor_id)
         assert result is not None
         return result
+
+    # ---- what Zigbee devices said, kept rather than judged and dropped ----
+
+    def record_zigbee_report(
+        self,
+        eui: str,
+        values: Dict[str, Any],
+        kind: Optional[str] = None,
+        lqi: Optional[int] = None,
+        rssi: Optional[int] = None,
+        at: Optional[str] = None,
+    ) -> str:
+        """Keep a report exactly as the device sent it.
+
+        No judgement here: whether the numbers mean anything is somebody
+        else's question, asked later and possibly more than once. The point
+        of writing it down is to be able to ask again.
+        """
+        when = at or _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                INSERT INTO zigbee_reports (eui, at, kind, values_json, lqi, rssi)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (eui, when, kind, json.dumps(values, sort_keys=True, default=str),
+                 lqi, rssi),
+            )
+        return when
+
+    def zigbee_reports(
+        self,
+        eui: Optional[str] = None,
+        since: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Reports newest first, for one device or for every one of them."""
+        where: List[str] = []
+        parameters: List[Any] = []
+        if eui is not None:
+            where.append("eui = ?")
+            parameters.append(eui)
+        if since is not None:
+            where.append("at >= ?")
+            parameters.append(since)
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        parameters.append(max(1, int(limit)))
+        with self._condition:
+            rows = self._database.execute(
+                "SELECT report_id, eui, at, kind, values_json, lqi, rssi "
+                f"FROM zigbee_reports{clause} ORDER BY at DESC, report_id DESC LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+        reports: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                values = json.loads(row[4])
+            except (TypeError, ValueError):
+                # A row nobody can read is still a row that a device sent at
+                # a time, and the time is worth having.
+                values = {}
+            reports.append({
+                "report_id": row[0], "eui": row[1], "at": row[2], "kind": row[3],
+                "values": values, "lqi": row[5], "rssi": row[6],
+            })
+        return reports
+
+    def latest_zigbee_report(
+        self, eui: str, within_seconds: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """The newest report from this device, optionally only a fresh one.
+
+        `within_seconds` is what makes this usable on a schedule: at six in
+        the morning the question is not "has it just spoken" but "is what it
+        last said still true", and half an hour old usually is.
+        """
+        since = None
+        if within_seconds is not None:
+            since = _timestamp(
+                datetime.now(timezone.utc) - timedelta(seconds=max(0, int(within_seconds)))
+            )
+        found = self.zigbee_reports(eui=eui, since=since, limit=1)
+        return found[0] if found else None
+
+    def prune_zigbee_reports(self, keep_days: int = ZIGBEE_REPORT_DAYS) -> int:
+        """Drop reports older than the retention window; returns how many."""
+        cutoff = _timestamp(
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(keep_days)))
+        )
+        with self._condition, self._database:
+            cursor = self._database.execute(
+                "DELETE FROM zigbee_reports WHERE at < ?", (cutoff,)
+            )
+            return int(cursor.rowcount or 0)
 
     def delete_sensor(self, sensor_id: str) -> None:
         with self._condition, self._database:
@@ -2720,28 +2917,149 @@ class ReadingStore:
             for row in rows
         ]
 
-    def watering_calendar(self, sensor_id: str, start_at: str, end_at: str) -> List[Dict[str, Any]]:
+    def plant_wetness_from_weight(self, plant_id: int, start_at: str,
+                                  end_at: str) -> Dict[str, float]:
+        """How wet each day was, worked out from what the pot weighed.
+
+        A probe measures the soil directly; a scale measures the same thing
+        from the other side, because nearly all of what a pot gains and
+        loses is water. Most plants here are weighed by hand and have no
+        probe, so without this their year is blank where a watched plant's
+        is shaded -- and the information to shade it was already recorded.
+
+        The scale is the pot's own: nought is the lightest it has been seen
+        (or an explicit dry mark) and a hundred is its watered weight. That
+        makes a plant comparable with itself over a year, which is what the
+        calendar is for. It does not make two plants comparable with each
+        other, and neither does a probe.
+        """
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT at, grams, kind, observed FROM plant_weights
+                WHERE plant_id = ?
+                ORDER BY at DESC
+                """,
+                (plant_id,),
+            ).fetchall()
+        if not rows:
+            return {}
+
+        weighings = [row for row in rows if row[3]]
+        watered = next((row for row in rows if row[2] == "watered"), None)
+        dry = next((row for row in rows if row[2] == "dry"), None)
+        if dry is None and weighings:
+            dry = min(weighings, key=lambda row: row[1])
+        if watered is None or dry is None or watered[1] <= dry[1]:
+            return {}
+        span = watered[1] - dry[1]
+
+        # The last weighing of each day, which is the state the day ended in
+        # -- the same thing the probe's column reports.
+        grams_by_day: Dict[str, float] = {}
+        for at, grams, _kind, observed in sorted(weighings, key=lambda row: row[0]):
+            day = self._local_day(at)
+            if not start_at[:10] <= day < end_at[:10]:
+                continue
+            grams_by_day[day] = float(grams)
+
+        filled = self._fill_drying_days(grams_by_day)
+        return {
+            day: round(min(100.0, max(0.0, (grams - dry[1]) / span * 100)), 2)
+            for day, grams in sorted(filled.items())
+        }
+
+    # A pot that is not watered only loses water, and it loses it steadily
+    # enough that the day between two weighings is not a mystery. Beyond
+    # a fortnight it is: a plant weighed in March and again in June was
+    # not drying in a straight line for ninety days.
+    DRYING_GAP_LIMIT_DAYS = 14
+
+    def _fill_drying_days(self, grams_by_day: Dict[str, float]) -> Dict[str, float]:
+        """Fill the days between weighings, where filling them is honest.
+
+        Only downhill, and only across short gaps. A pot that is heavier
+        than it was has been watered, and nothing here knows when during
+        the gap that happened -- drawing a gentle rise across those days
+        would show a watering that never occurred, spread over a week.
+        """
+        days = sorted(grams_by_day)
+        if len(days) < 2:
+            return dict(grams_by_day)
+        filled = dict(grams_by_day)
+        for earlier, later in zip(days, days[1:]):
+            start = date.fromisoformat(earlier)
+            end = date.fromisoformat(later)
+            step_count = (end - start).days
+            if step_count < 2 or step_count > self.DRYING_GAP_LIMIT_DAYS:
+                continue
+            first, last = grams_by_day[earlier], grams_by_day[later]
+            if last >= first:          # watered somewhere in here
+                continue
+            for step in range(1, step_count):
+                middle = start + timedelta(days=step)
+                filled[middle.isoformat()] = first + (last - first) * step / step_count
+        return filled
+
+    def plant_wetness_source(self, plant_id: int) -> Optional[str]:
+        """Whether a plant's wetness comes from a probe or from weight.
+
+        The two are different evidence and the page should not pass one
+        off as the other: a probe reads the soil, a scale infers it from
+        what the pot weighs.
+        """
+        with self._condition:
+            probed = self._database.execute(
+                "SELECT 1 FROM sensor_readings r JOIN sensors s"
+                " ON s.sensor_id = r.sensor_id"
+                " WHERE s.plant_id = ? AND r.moisture_percent IS NOT NULL LIMIT 1",
+                (plant_id,),
+            ).fetchone()
+        if probed:
+            return "probe"
+        return "weight" if self.plant_weight_status(plant_id).get("watered") else None
+
+    def watering_calendar(self, plant_id: int, start_at: str, end_at: str) -> List[Dict[str, Any]]:
+        """A year of a plant's care, whether or not anything measures it.
+
+        This took a sensor id and derived the plant from it, so a plant
+        with no probe had no care history -- though watering and feeding
+        are recorded by hand and stored against the plant, not the
+        sensor. Nine of the ten plants here have no sensor, and all nine
+        had an empty calendar.
+
+        The soil shading behind each day still needs a probe, so a plant
+        without one gets the squares and not the shading. That is the
+        right amount of missing: what was measured is absent, what was
+        recorded is not.
+        """
         start = datetime.fromisoformat(start_at.replace("Z", "+00:00"))
         end = datetime.fromisoformat(end_at.replace("Z", "+00:00"))
         with self._condition:
+            sensor_row = self._database.execute(
+                "SELECT sensor_id FROM sensors WHERE plant_id = ? "
+                "AND COALESCE(archived, 0) = 0 ORDER BY sensor_id LIMIT 1",
+                (plant_id,),
+            ).fetchone()
+            sensor_id = sensor_row[0] if sensor_row else None
             event_rows = self._database.execute(
                 """
                 SELECT kind, detected_at
                 FROM care_events
-                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                WHERE plant_id IS ?
                   AND kind IN ('watering', 'watering_due')
                   AND detected_at < ?
                 ORDER BY detected_at
                 """,
-                (sensor_id, end_at),
+                (plant_id, end_at),
             ).fetchall()
             fertilizing_rows = self._database.execute(
                 """
                 SELECT detected_at FROM care_events
-                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                WHERE plant_id IS ?
                   AND kind = 'fertilizing' AND detected_at < ?
                 """,
-                (sensor_id, end_at),
+                (plant_id, end_at),
             ).fetchall()
             moisture_rows = self._database.execute(
                 """
@@ -2785,6 +3103,17 @@ class ReadingStore:
 
         minimum_moisture_by_day = {row[0]: float(row[1]) for row in moisture_rows}
         final_moisture_by_day = {row[0]: float(row[2]) for row in moisture_rows}
+        # A probe if there is one, the pot's weight if not. Never both
+        # at once: two scales of wetness shaded into one row of squares
+        # would be a chart that changes meaning halfway along.
+        from_weight: Dict[str, float] = {}
+        self._last_wetness_source = "probe" if final_moisture_by_day else None
+        if not final_moisture_by_day:
+            from_weight = self.plant_wetness_from_weight(plant_id, start_at, end_at)
+            final_moisture_by_day = dict(from_weight)
+            minimum_moisture_by_day = dict(from_weight)
+            if from_weight:
+                self._last_wetness_source = "weight"
         latest_at = datetime.fromisoformat(latest_row[0].replace("Z", "+00:00")) if latest_row[0] else start
         activity: Dict[str, Dict[str, Any]] = {
             day: {
@@ -2847,17 +3176,23 @@ class ReadingStore:
 
         return [activity[day] for day in sorted(activity)]
 
-    def watering_interval_summary(self, sensor_id: str) -> Dict[str, Any]:
+    def watering_interval_summary(self, plant_id: int) -> Dict[str, Any]:
+        """How often this plant actually gets watered.
+
+        Keyed on the plant for the same reason the calendar is: a
+        watering is something somebody did, and it is recorded whether
+        or not a probe was watching.
+        """
         with self._condition:
             rows = self._database.execute(
                 """
                 SELECT DISTINCT substr(detected_at, 1, 10)
                 FROM care_events
-                WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
+                WHERE plant_id IS ?
                   AND kind = 'watering'
                 ORDER BY detected_at
                 """,
-                (sensor_id,),
+                (plant_id,),
             ).fetchall()
         watering_days = [datetime.fromisoformat(row[0]).date() for row in rows]
         intervals = [
@@ -2956,19 +3291,21 @@ class ReadingStore:
         deadline = now - MISSED_WATERING_GRACE
         return sum(1 for (due_at,) in rows if self._observation_datetime(due_at, now) < deadline)
 
-    @staticmethod
-    def _local_day(detected_at: str) -> str:
+    def _local_day(self, detected_at: str) -> str:
         """The day a person would call it.
 
         Everything here is stored in UTC, but a feeding at eight in the evening
         is that evening's, not the small hours of the next day's, so the day a
-        care event belongs to is read off the hub's own clock.
+        care event belongs to is read off the hub's chosen zone -- the same one
+        a scale's daily weighing hour is read off, so that a hub set to
+        Vancouver does not file the evening's watering under tomorrow while
+        also weighing at the right time.
         """
         try:
             at = datetime.fromisoformat(detected_at.replace("Z", "+00:00"))
         except ValueError:
             at = datetime.now(timezone.utc)
-        return at.astimezone().date().isoformat()
+        return at.astimezone(self.hub_zone()).date().isoformat()
 
     def record_manual_care(
         self, sensor_id: str, kind: str, at: Optional[str] = None, note: Optional[str] = None
@@ -3096,7 +3433,7 @@ class ReadingStore:
             raise ValueError("unknown plant")
         grams = int(round(float(grams)))
         if not 1 <= grams <= 500_000:
-            raise ValueError("a pot weighs between 1 gram and 500 kilograms")
+            raise ValueError("a pot weighs between 1 and 500000 grams")
         at = self._validate_weighing_time(at)
         with self._condition, self._database:
             self._database.execute(
@@ -3188,6 +3525,90 @@ class ReadingStore:
                 "DELETE FROM plant_weights WHERE weight_id = ?", (weight_id,)
             )
         return self.plant_weight_status(plant_id)
+
+    def remember_zigbee_host(self, sensor_id: str, host: str) -> None:
+        """Keep the name a device answers to, so a restart does not lose it."""
+        if not host:
+            return
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE sensors SET zigbee_host = ? WHERE sensor_id = ?",
+                (host, sensor_id),
+            )
+
+    def record_battery(self, sensor_id: str, percent: Optional[int],
+                       volts: Optional[float], at: Optional[datetime] = None) -> None:
+        """Note a battery's charge, at most once an hour per sensor.
+
+        Nothing is recorded when there is no charge to record: a device
+        with no way to measure its cell reports -1, and a row saying
+        "unknown" every hour is a chart of our own ignorance.
+        """
+        if percent is None or percent < 0:
+            return
+        moment = at or datetime.now(timezone.utc)
+        hour = moment.strftime("%Y-%m-%dT%H:00:00Z")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                INSERT INTO battery_history (sensor_id, hour, percent, volts)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (sensor_id, hour) DO UPDATE
+                    SET percent = excluded.percent, volts = excluded.volts
+                """,
+                (sensor_id, hour, int(percent),
+                 None if volts is None else float(volts)),
+            )
+
+    def battery_history(self, sensor_id: str, since: Optional[datetime] = None,
+                        limit: int = 4000) -> List[Dict[str, Any]]:
+        """A sensor's charge over time, oldest first.
+
+        The limit is a guard rather than a feature: an hourly row for ten
+        years is under ninety thousand, and no chart wants them all at once.
+        """
+        query = "SELECT hour, percent, volts FROM battery_history WHERE sensor_id = ?"
+        parameters: List[Any] = [sensor_id]
+        if since is not None:
+            query += " AND hour >= ?"
+            parameters.append(since.strftime("%Y-%m-%dT%H:00:00Z"))
+        query += " ORDER BY hour LIMIT ?"
+        parameters.append(int(limit))
+        with self._condition:
+            rows = self._database.execute(query, tuple(parameters)).fetchall()
+        return [{"at": row[0], "percent": row[1], "volts": row[2]} for row in rows]
+
+    def plant_scale(self, plant_id: int) -> Optional[Dict[str, Any]]:
+        """The scale that weighs this plant by itself, if one is attached.
+
+        What the plant page needs to know before offering a form: a weight
+        that arrives on its own and a weight somebody types are the same
+        number from two sources, and the page should not ask for the second
+        as though the first were not happening.
+        """
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT sensor_id, display_name, transport, identity_value,
+                       scale_keep_every_seconds, scale_keep_at_hour
+                FROM sensors
+                WHERE plant_id = ? AND enrollment_status = 'enrolled'
+                  AND transport IN ('http-scale', 'zigbee-scale')
+                ORDER BY sensor_id
+                LIMIT 1
+                """,
+                (plant_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "sensor_id": row[0],
+            "display_name": row[1] or row[0],
+            "transport": row[2],
+            "eui": row[3] if str(row[2]).startswith("zigbee") else None,
+            "keep_every_seconds": row[4],
+            "keep_at_hour": row[5],
+        }
 
     def plant_weight_status(self, plant_id: int) -> Dict[str, Any]:
         """What the weighings say about the water in the pot.
@@ -4894,6 +5315,10 @@ class ReadingStore:
             "soil_ph_reference_ec": row[41],
             "scale_address": row[42],
             "scale_keep_every_seconds": row[43],
+            # Appended to the end of the select so the indices above did not
+            # all have to move; its position in the list is not its meaning.
+            "scale_keep_at_hour": row[55],
+            "zigbee_host": row[56] if len(row) > 56 else None,
             "scale": None if row[42] is None else {
                 "grams": row[44],
                 "status": row[45],
@@ -5030,6 +5455,138 @@ class ReadingStore:
         assert sensor is not None
         return sensor
 
+    def seen_zigbee_device(self, eui: str, kind: str) -> Dict[str, Any]:
+        """Record a Zigbee device, or note that a known one spoke again.
+
+        A device that joins the radio has announced itself and nothing more,
+        so it arrives unclaimed: visible, inert, and waiting for somebody to
+        say yes. That is the same state a sensor heard over Bluetooth starts
+        in, and it is the reason this is a sensor row rather than an entry in
+        a list of its own -- naming it, attaching it to a plant, putting it
+        in a room and archiving it all already work for sensors.
+        """
+        eui = eui.strip().lower()
+        if not eui:
+            raise ValueError("a zigbee device needs an EUI-64")
+        sensor_id = f"zigbee-{eui}"
+        now = _timestamp(datetime.now(timezone.utc))
+        with self._condition, self._database:
+            existing = self._database.execute(
+                "SELECT sensor_id FROM sensors WHERE identity_kind = 'eui64' AND identity_value = ?",
+                (eui,),
+            ).fetchone()
+            if existing is not None:
+                self._database.execute(
+                    "UPDATE sensors SET last_seen_at = ? WHERE sensor_id = ?",
+                    (now, existing[0]),
+                )
+                sensor_id = existing[0]
+            else:
+                self._database.execute(
+                    """
+                    INSERT INTO sensors (
+                        sensor_id, identity_kind, identity_value, enrollment_status,
+                        display_name, transport, contract_version,
+                        first_seen_at, last_seen_at, onboarding_state
+                    ) VALUES (?, 'eui64', ?, 'unclaimed', ?, ?, 0, ?, ?, 'onboarding')
+                    """,
+                    (sensor_id, eui, None, f"zigbee-{kind}", now, now),
+                )
+        sensor = self.sensor(sensor_id)
+        assert sensor is not None
+        return sensor
+
+    def set_scale_schedule(self, sensor_id: str, every_seconds: Optional[int],
+                           at_hour: Optional[int]) -> Dict[str, Any]:
+        """When this scale's weight is worth writing down.
+
+        One or the other: an interval gives a dense drying curve, an hour
+        gives one weight a day taken at the same time, which is what makes a
+        week of them comparable. Setting the hour clears the interval's hold
+        rather than running both, because two schedules writing to one log
+        is a log nobody can read.
+        """
+        if at_hour is not None and not 0 <= int(at_hour) <= 23:
+            raise ValueError("an hour is 0 to 23")
+        if every_seconds is not None and int(every_seconds) < 60:
+            raise ValueError("an interval of less than a minute would bury the log")
+        with self._condition, self._database:
+            if self._database.execute(
+                "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone() is None:
+                raise ValueError("no such sensor")
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET scale_keep_at_hour = ?,
+                    scale_keep_every_seconds = COALESCE(?, scale_keep_every_seconds)
+                WHERE sensor_id = ?
+                """,
+                (None if at_hour is None else int(at_hour),
+                 None if every_seconds is None else int(every_seconds),
+                 sensor_id),
+            )
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
+
+    def enroll_zigbee_device(self, eui: str, name: Optional[str] = None) -> Dict[str, Any]:
+        """Let a Zigbee device in, without inventing a plant to go with it.
+
+        manage_sensor is the usual way to adopt a sensor, and it creates a
+        plant, because for a soil probe the sensor and the plant arrive
+        together. A Zigbee device is like a scale: it is a thing that
+        measures, and what it measures is a separate sentence somebody says
+        afterwards -- a plant for a scale, a room for a thermometer. So this
+        enrols the row and leaves both alone.
+        """
+        sensor = self.seen_zigbee_device(eui, "unknown")
+        sensor_id = sensor["sensor_id"]
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                SET enrollment_status = 'enrolled', archived = 0,
+                    onboarding_state = 'onboarded',
+                    display_name = COALESCE(?, display_name)
+                WHERE sensor_id = ?
+                """,
+                ((name or "").strip() or None, sensor_id),
+            )
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
+
+    def set_sensor_room(self, sensor_id: str, room_id: Optional[int]) -> Dict[str, Any]:
+        """Put a sensor in a room, for devices that are about a room.
+
+        A soil probe gets its room from the plant it is in. A thermometer
+        has no plant: the room is the whole of what it is about, so it is
+        set directly.
+        """
+        with self._condition, self._database:
+            if self._database.execute(
+                "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone() is None:
+                raise ValueError("no such sensor")
+            if room_id is not None and self._database.execute(
+                "SELECT 1 FROM rooms WHERE room_id = ?", (room_id,)
+            ).fetchone() is None:
+                raise ValueError("no such room")
+            self._database.execute(
+                "UPDATE sensors SET room_id = ? WHERE sensor_id = ?", (room_id, sensor_id)
+            )
+        result = self.sensor(sensor_id)
+        assert result is not None
+        return result
+
+    def zigbee_sensors(self) -> List[Dict[str, Any]]:
+        """Every Zigbee device the hub has met, claimed or not."""
+        return [
+            sensor for sensor in self.sensors()
+            if str(sensor.get("transport", "")).startswith("zigbee")
+        ]
+
     def _is_scale(self, sensor_id: str) -> bool:
         with self._condition:
             row = self._database.execute(
@@ -5043,14 +5600,15 @@ class ReadingStore:
             rows = self._database.execute(
                 """
                 SELECT sensor_id, scale_address, plant_id, scale_keep_every_seconds,
-                       scale_seq, display_name
+                       scale_seq, display_name, scale_keep_at_hour
                 FROM sensors
                 WHERE scale_address IS NOT NULL AND COALESCE(archived, 0) = 0
                 """
             ).fetchall()
         return [
             {"sensor_id": row[0], "address": row[1], "plant_id": row[2],
-             "keep_every_seconds": row[3], "seq": row[4], "display_name": row[5]}
+             "keep_every_seconds": row[3], "seq": row[4], "display_name": row[5],
+             "keep_at_hour": row[6]}
             for row in rows
         ]
 

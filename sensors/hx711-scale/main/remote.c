@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "esp_timer.h"
+#include "esp_ota_ops.h"
 #include "remote.h"
 
 #define LOG_LINES 40
@@ -132,4 +133,14 @@ int remote_format_status(char *buf, size_t len)
         else n += snprintf(buf + n, len - n, "\"grams\":null}");
     }
     return n < (int)len ? n : (int)len - 1;
+}
+
+void remote_mark_firmware_good(void)
+{
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY) {
+        esp_ota_mark_app_valid_cancel_rollback();
+        remote_log(">>> New firmware is running and marked good");
+    }
 }

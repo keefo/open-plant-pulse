@@ -140,6 +140,13 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_fail_logged = false;
         s_sta_state = "connected";
         set_ap(false);
+#if CONFIG_SCALE_ZIGBEE
+        // Only now: Wi-Fi has an address, so the way back in is open
+        // before the Zigbee stack starts competing for the radio.
+        // Starting twice is harmless; zigbee_start guards itself.
+        void zigbee_start(void);
+        zigbee_start();
+#endif
         remote_log(">>> Joined Wi-Fi \"%s\": open http://%s or http://%s.local", s_sta_ssid, s_sta_ip, s_host);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         remote_log("A device joined the " AP_SSID " network");
@@ -288,7 +295,21 @@ static esp_err_t get_status(httpd_req_t *req)
     add(",\"host\":\"%s\",", s_host);
     add("\"wifi\":{\"ap\":\"" AP_SSID "\",\"ap_on\":%s,\"state\":\"%s\",\"ssid\":", s_ap_on ? "true" : "false", s_sta_state);
     add_str(s_sta_ssid);
-    add(",\"ip\":\"%s\"},\"logs\":[", s_sta_ip);
+    add(",\"ip\":\"%s\"},", s_sta_ip);
+#if CONFIG_SCALE_ZIGBEE
+    add("\"zigbee\":");
+    s_n += zigbee_format_status(s_json + s_n, sizeof s_json - s_n);
+    add(",");
+#endif
+    // The last few starts, from NVS. The whole point of recording them
+    // is that somebody can read them after the reset that destroyed
+    // the live evidence, so they belong in the status rather than
+    // only in a log line that scrolled past at boot.
+    add("\"boots\":[");
+    int boot_log_format(char *buf, size_t len);
+    s_n += boot_log_format(s_json + s_n, sizeof s_json - s_n);
+    add("],");
+    add("\"logs\":[");
 
     uint32_t first = remote_log_oldest();
     if (since > first) first = since;
@@ -437,24 +458,41 @@ static esp_err_t post_ota(httpd_req_t *req)
     return ESP_OK;
 }
 
-void remote_start(void)
+// ---------- the Wi-Fi switch ----------
+// Off means the radio and the web server are stopped, not that the driver is
+// torn down: stopping is one call to undo, and unwinding netifs and event
+// handlers to reclaim a little heap is where this sort of thing goes wrong.
+static bool s_wifi_on = true;
+static bool s_wifi_inited;
+static httpd_handle_t s_srv;
+
+static bool wifi_pref_load(void)
 {
-    load_name();
-    wifi_start();
-
-    // Let the processor slow down and sleep whenever nothing is running. Wi-Fi wakes it for router beacons.
-    esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 40, .light_sleep_enable = true };
-    if (esp_pm_configure(&pm) != ESP_OK) remote_log("!!! Power saving could not be turned on");
-
-    if (mdns_init() == ESP_OK) {
-        mdns_hostname_set(s_host);
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    nvs_handle_t h;
+    uint8_t on = 1;
+    if (nvs_open("scale", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, "wifi", &on);
+        nvs_close(h);
     }
+    return on != 0;
+}
 
+static void wifi_pref_save(bool on)
+{
+    nvs_handle_t h;
+    if (nvs_open("scale", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "wifi", on ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void web_server_start(void)
+{
+    if (s_srv) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
-    httpd_handle_t srv;
-    if (httpd_start(&srv, &cfg) != ESP_OK) {
+    if (httpd_start(&s_srv, &cfg) != ESP_OK) {
+        s_srv = NULL;
         remote_log("!!! Web server failed to start");
         return;
     }
@@ -468,14 +506,89 @@ void remote_start(void)
         { .uri = "/api/ota",     .method = HTTP_POST, .handler = post_ota },
     };
     for (size_t i = 0; i < sizeof uris / sizeof uris[0]; i++)
-        httpd_register_uri_handler(srv, &uris[i]);
+        httpd_register_uri_handler(s_srv, &uris[i]);
+}
 
-    // A new firmware counts as good once its web page is up, so it can be replaced over Wi-Fi.
-    // If it crashes before getting here, the bootloader goes back to the previous one.
-    esp_ota_img_states_t state;
-    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
-        state == ESP_OTA_IMG_PENDING_VERIFY) {
-        esp_ota_mark_app_valid_cancel_rollback();
-        remote_log(">>> New firmware is running and marked good");
+static void web_server_stop(void)
+{
+    if (!s_srv) return;
+    httpd_stop(s_srv);
+    s_srv = NULL;
+}
+
+bool remote_wifi_enabled(void)
+{
+    return s_wifi_on;
+}
+
+const char *remote_hostname(void)
+{
+    return s_host;
+}
+
+void remote_set_wifi(bool on)
+{
+    if (on == s_wifi_on) {
+        remote_log(">>> Wi-Fi is already %s", on ? "on" : "off");
+        return;
     }
+    s_wifi_on = on;
+    wifi_pref_save(on);
+    if (on) {
+        if (!s_wifi_inited) {
+            wifi_start();
+            s_wifi_inited = true;
+        } else if (esp_wifi_start() != ESP_OK) {
+            remote_log("!!! Wi-Fi would not start");
+            return;
+        }
+        web_server_start();
+        remote_log(">>> Wi-Fi on");
+    } else {
+        web_server_stop();
+        esp_wifi_stop();
+        s_sta_state = "off";
+        s_sta_ip[0] = 0;
+        remote_log(">>> Wi-Fi off. Running on Zigbee alone, which is how it should sit; send \"w 1\" when you need it back.");
+    }
+}
+
+void remote_start(void)
+{
+    load_name();
+    s_wifi_on = wifi_pref_load();
+
+    // Let the processor slow down and sleep whenever nothing is running. Wi-Fi wakes it for router beacons.
+    // Light sleep is left off when Zigbee is on: a Zigbee end device that is not a sleepy one has to keep
+    // its receiver listening, and sleeping underneath it loses frames and upsets the stack.
+    esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 40,
+                           .light_sleep_enable = !CONFIG_SCALE_ZIGBEE };
+    if (esp_pm_configure(&pm) != ESP_OK) remote_log("!!! Power saving could not be turned on");
+
+    if (s_wifi_on) {
+        wifi_start();
+        s_wifi_inited = true;
+        if (mdns_init() == ESP_OK) {
+            mdns_hostname_set(s_host);
+            mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+        }
+        web_server_start();
+    } else {
+        remote_log(">>> Wi-Fi off by saved preference, which is the normal way to run. Send \"w 1\" over Zigbee for updates or debugging.");
+    }
+
+    // The firmware counts as good once a link to it is up, so it can be replaced
+    // remotely. With Wi-Fi off that link is Zigbee, so this cannot wait for the
+    // web server the way it used to.
+    remote_mark_firmware_good();
+
+#if CONFIG_SCALE_ZIGBEE
+    // With Wi-Fi on, the Zigbee side waits for an address so the two are not
+    // fighting over the radio during association. With Wi-Fi off, no address is
+    // coming, so it starts here.
+    if (!s_wifi_on) {
+        void zigbee_start(void);
+        zigbee_start();
+    }
+#endif
 }

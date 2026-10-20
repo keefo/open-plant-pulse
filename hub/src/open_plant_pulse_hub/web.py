@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from open_plant_pulse_hub.application import ReadingStore
+from open_plant_pulse_hub.application.store import hub_timezone_names
 from open_plant_pulse_hub.application.scales import (
     read_scale,
     set_sampling_interval,
@@ -19,7 +20,8 @@ from open_plant_pulse_hub.domain.plant_profiles import public_plant_profiles
 STATIC_DIR = Path(__file__).with_name("static")
 # Top-level paths the browser application owns. Each one, and anything beneath it,
 # is served the same shell so a reload or a pasted link lands on the right view.
-APPLICATION_PAGES = ("/sensors", "/plants", "/settings", "/onboarding")
+APPLICATION_PAGES = ("/sensors", "/plants", "/rooms", "/settings", "/onboarding",
+                     "/zigbee")
 # A firmware image for this sensor is about 1.3 MB; the ceiling is a slot's worth
 # with room to spare, so an accidental upload of something enormous is refused
 # before it is read rather than after.
@@ -77,8 +79,17 @@ def create_server(
     allow_network: bool = False,
     lights: Optional[Any] = None,
     photos: Optional[Any] = None,
+    zigbee: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Updating a device whose Wi-Fi is normally off is a sequence, not
+    # an upload, and the last step -- turning the radio back off -- is
+    # the one a person forgets. It needs both the radio and the image
+    # library, so it is built here where both are known.
+    updater = None
+    if zigbee is not None and firmware is not None:
+        from .application.zigbee import FirmwareUpdater
+        updater = FirmwareUpdater(zigbee, firmware)
 
     class DashboardHandler(BaseHTTPRequestHandler):
         def parse_request(self) -> bool:
@@ -112,12 +123,81 @@ def create_server(
                 self._send_json(public_plant_profiles())
             elif path == "/api/settings":
                 self._send_json(store.hub_settings())
+            elif path == "/api/settings/timezones":
+                # The menu's contents, from the tzdata this machine has
+                # rather than a list baked into the page that goes stale.
+                settings = store.hub_settings()
+                self._send_json({
+                    "timezone": settings["timezone"],
+                    "timezone_effective": settings["timezone_effective"],
+                    "items": hub_timezone_names(),
+                })
             elif path == "/api/settings/wifi":
                 self._send_json(store.hub_wifi_settings())
             elif path == "/api/rooms":
                 self._send_json({"items": store.rooms()})
+            elif path == "/api/rooms/overview":
+                self._send_json({"items": store.rooms_overview()})
             elif path == "/api/plants":
                 self._send_json({"items": store.plants()})
+            elif path.startswith("/api/zigbee/") and path.endswith("/update"):
+                eui = unquote(path[len("/api/zigbee/") : -len("/update")])
+                if updater is None:
+                    self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
+                                    "No Zigbee gateway or firmware library")
+                    return
+                self._send_json(updater.state(eui) or {"eui": eui, "step": "idle"})
+            elif path.startswith("/api/zigbee/") and path.endswith("/reports"):
+                # What the device actually said, as it said it. Kept for a
+                # week, so a question asked after the fact has something to
+                # read rather than only what happens to be arriving now.
+                eui = unquote(path[len("/api/zigbee/") : -len("/reports")])
+                query = parse_qs(request.query)
+                try:
+                    hours = max(1, min(int(query.get("hours", ["168"])[0]), 24 * 31))
+                    limit = max(1, min(int(query.get("limit", ["200"])[0]), 2000))
+                except ValueError:
+                    self.send_error(HTTPStatus.BAD_REQUEST, "hours and limit must be numbers")
+                    return
+                since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
+                self._send_json({
+                    "eui": eui,
+                    "hours": hours,
+                    "items": store.zigbee_reports(eui=eui, since=since, limit=limit),
+                })
+            elif path.startswith("/api/zigbee/") and path.endswith("/battery"):
+                # Its own call, not part of the device list: history is
+                # hundreds of points and the list is polled every second.
+                eui = unquote(path[len("/api/zigbee/") : -len("/battery")])
+                days = parse_qs(request.query).get("days", ["30"])[0]
+                try:
+                    span = max(1, min(int(days), 3660))
+                except ValueError:
+                    self.send_error(HTTPStatus.BAD_REQUEST, "days must be a number")
+                    return
+                row = next((s for s in store.zigbee_sensors()
+                            if str(s.get("identity_value", "")) == eui), None)
+                if row is None:
+                    self.send_error(HTTPStatus.NOT_FOUND, "No such Zigbee device")
+                    return
+                since = datetime.now(timezone.utc) - timedelta(days=span)
+                self._send_json({
+                    "eui": eui,
+                    "days": span,
+                    "points": store.battery_history(row["sensor_id"], since),
+                })
+            elif path == "/api/zigbee":
+                # One call for the whole panel. Whether the gateway is there
+                # and what it knows are separate questions: an unplugged
+                # gateway and a quiet network look identical from a device
+                # list alone.
+                self._send_json(
+                    {
+                        "gateway": zigbee.gateway() if zigbee else {"connected": False},
+                        "devices": zigbee.devices() if zigbee else [],
+                    }
+                )
             elif path.startswith("/api/photos/"):
                 self._send_photo(path[len("/api/photos/") :])
             elif path.startswith("/api/plants/") and path.endswith("/photos"):
@@ -187,7 +267,8 @@ def create_server(
             if (
                 path
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
-                        "/api/settings/sections", "/api/settings/care-log")
+                        "/api/settings/sections", "/api/settings/care-log",
+                        "/api/settings/timezone")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
@@ -302,6 +383,11 @@ def create_server(
                         str(payload.get("sensor_id", "")),
                         str(payload.get("profile_id", "")),
                     )
+                elif path == "/api/settings/timezone":
+                    chosen = payload.get("timezone")
+                    if chosen is not None and not isinstance(chosen, str):
+                        raise ValueError("timezone must be a name, or nothing")
+                    result = store.set_hub_timezone(chosen)
                 elif path == "/api/settings":
                     result = store.set_reporting_interval(
                         int(payload.get("reporting_interval_minutes", 0))
@@ -463,7 +549,135 @@ def create_server(
                 payload = (
                     {} if path == "/api/firmware" or raw_upload else self._read_json()
                 )
-                if path.startswith("/api/sensors/") and path.endswith("/archive"):
+                if path == "/api/zigbee/release" or path == "/api/zigbee/reconnect":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    # Letting go is deliberate and sticky. The hub otherwise
+                    # reopens the port within seconds, which would make
+                    # flashing the gateway or watching the link impossible
+                    # without stopping the hub altogether.
+                    if path.endswith("/release"):
+                        zigbee.release()
+                    else:
+                        zigbee.reconnect()
+                    result = {"released": path.endswith("/release")}
+                elif path == "/api/zigbee/permit":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    seconds = int(payload.get("seconds", 180))
+                    zigbee.permit_join(seconds)
+                    result = {"seconds": seconds}
+                elif path == "/api/zigbee/attach":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    if not eui:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "eui is required")
+                        return
+                    target = payload.get("target")
+                    # Whether this is a plant or a room is the device kind's
+                    # business, not the caller's.
+                    zigbee.attach(eui, int(target) if target else None)
+                    result = {"eui": eui, "target": target}
+                elif path.startswith("/api/zigbee/") and path.endswith("/update"):
+                    eui = unquote(path[len("/api/zigbee/") : -len("/update")])
+                    if updater is None:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
+                                        "No Zigbee gateway or firmware library")
+                        return
+                    digest = str(payload.get("digest", ""))
+                    if not digest:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "digest is required")
+                        return
+                    try:
+                        result = updater.start(eui, digest)
+                    except ValueError as error:
+                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                        return
+                elif path.startswith("/api/plants/") and path.endswith("/weigh-now"):
+                    plant_id = self._plant_id(
+                        path[len("/api/plants/") : -len("/weigh-now")])
+                    scale = store.plant_scale(plant_id)
+                    if not scale:
+                        self.send_error(HTTPStatus.BAD_REQUEST,
+                                        "No scale is attached to that plant")
+                        return
+                    if not zigbee or not scale.get("eui"):
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
+                                        "That scale cannot be asked for a reading")
+                        return
+                    try:
+                        result = zigbee.weigh_now(scale["eui"], plant_id)
+                    except ValueError as error:
+                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                        return
+                elif path == "/api/scale-schedule":
+                    # Not under /api/zigbee: an HTTP scale keeps a schedule
+                    # the same way, and the page should not have to know
+                    # which radio the weight came in on.
+                    sensor_id = str(payload.get("sensor_id", ""))
+                    every = payload.get("every_seconds")
+                    hour = payload.get("at_hour")
+                    if not sensor_id:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "sensor_id is required")
+                        return
+                    try:
+                        result = store.set_scale_schedule(
+                            sensor_id,
+                            int(every) if every is not None else None,
+                            int(hour) if hour is not None else None,
+                        )
+                    except ValueError as error:
+                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                        return
+                elif path == "/api/zigbee/rename":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    name = str(payload.get("name", "")).strip()
+                    if not eui or not name:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "eui and name are required")
+                        return
+                    zigbee.rename(eui, name)
+                    result = {"eui": eui, "name": name}
+                elif path in ("/api/zigbee/remove", "/api/zigbee/accept",
+                              "/api/zigbee/ignore"):
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    if not eui:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "eui is required")
+                        return
+                    action = path.rsplit("/", 1)[-1]
+                    # Accept and ignore decide whether a device that joined
+                    # the radio becomes a sensor here. Remove gets rid of one
+                    # either way: it asks the device to leave so a powered one
+                    # does not rejoin, and drops it locally regardless, since
+                    # the user should not have to know whether it can hear.
+                    getattr(zigbee, action)(eui)
+                    result = {"eui": eui, "action": action}
+                elif path == "/api/zigbee/command":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    command = str(payload.get("command", ""))
+                    if not eui or not command:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "eui and command are required")
+                        return
+                    # Addressed by EUI-64 and nothing else. There is no
+                    # "current device" to fall back on, by design.
+                    result = {
+                        "id": zigbee.command(eui, command.encode()),
+                        "eui": eui,
+                        "command": command,
+                    }
+                elif path.startswith("/api/sensors/") and path.endswith("/archive"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/archive")])
                     archived = payload.get("archived")
                     if not isinstance(archived, bool):
@@ -517,7 +731,7 @@ def create_server(
                 elif path.startswith("/api/plants/") and path.endswith("/weight"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/weight")])
                     # Grams, which is what a scale measures and what is kept.
-                    # Whether somebody typed kilograms is the browser's affair.
+                    # Grams on the wire, which is also the only unit the page offers.
                     grams = payload.get("grams")
                     if grams in (None, ""):
                         raise ValueError("grams is required")
@@ -812,6 +1026,7 @@ def create_server(
                 hidden_kinds=store.hub_settings()["care_log_hidden_kinds"],
             )
             plant["weight"] = store.plant_weight_status(plant_id)
+            plant["scale"] = store.plant_scale(plant_id)
             # The air of the room it is in, whoever is measuring it.
             plant["room_air"] = store.room_air(plant["room_id"])
             plant["forecast"] = store.watering_forecast(plant_id)
@@ -855,11 +1070,13 @@ def create_server(
         def _send_watering_calendar(self, query_string: str) -> None:
             try:
                 query = parse_qs(query_string)
-                sensor_id = query.get("sensor_id", [""])[0]
+                # A plant, not a sensor. Care is recorded against the
+                # plant, and most plants here have no probe at all.
+                plant_id = int(query.get("plant_id", ["0"])[0] or 0)
                 start_at = self._query_timestamp(query.get("start", [""])[0])
                 end_at = self._query_timestamp(query.get("end", [""])[0])
-                if not sensor_id or end_at <= start_at:
-                    raise ValueError("sensor_id and an increasing date range are required")
+                if not plant_id or end_at <= start_at:
+                    raise ValueError("plant_id and an increasing date range are required")
                 start = datetime.fromisoformat(start_at.replace("Z", "+00:00"))
                 end = datetime.fromisoformat(end_at.replace("Z", "+00:00"))
                 if end - start > timedelta(days=371):
@@ -869,8 +1086,9 @@ def create_server(
                 return
             self._send_json(
                 {
-                    "items": store.watering_calendar(sensor_id, start_at, end_at),
-                    "watering_interval": store.watering_interval_summary(sensor_id),
+                    "items": store.watering_calendar(plant_id, start_at, end_at),
+                    "watering_interval": store.watering_interval_summary(plant_id),
+                    "wetness_source": store.plant_wetness_source(plant_id),
                 }
             )
 

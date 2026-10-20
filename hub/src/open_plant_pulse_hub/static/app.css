@@ -112,6 +112,12 @@ body {
    with it -- the forms went back to browser buttons for a few minutes. */
 button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; font: inherit; cursor: pointer; }
 .settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+/* The five-column neighbours table held this whole page at 399px on every
+   phone width: a table will not shrink below its columns, and as a grid item
+   of this panel its min-content became the panel's floor. It scrolls inside
+   .raw-report-scroll now, the way the raw report log already does. A
+   `min-width: 0` on the panel's children changed nothing measurable once the
+   table was boxed, so it is deliberately not here. */
 /* One treatment for a form control, wherever the form is.
  *
  * The settings forms were left on the browser's own inputs while the plant
@@ -129,7 +135,10 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; c
 .settings-panel small, .settings-panel output { color: var(--muted); }
 .inline-control { display: flex; align-items: center; gap: 10px; }
 .inline-control input { width: 100px; }
-.inline-control input { padding: 9px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+/* Both controls, not just the one that happened to be here first. A select
+   added beside an input inherited nothing and kept the browser's own look. */
+.inline-control input,
+.inline-control select { padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .inline-control button { color: white; background: var(--leaf); border-color: var(--leaf); }
 .empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--line); color: var(--muted); text-align: center; background: white; }
 dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0; box-shadow: 0 20px 80px #17211b55; }
@@ -154,7 +163,7 @@ h2 { font-size: 24px; }
 /* The gauge carries its own layout. It was scoped to the connection block
    in the sensor-as-plant topbar, so when the battery moved to the sensor's
    own page it lost its shape and drew as bare text. */
-.battery { --battery-level: var(--leaf); display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.battery { --battery-level: var(--leaf); display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .battery[data-level="low"] { --battery-level: var(--sun); }
 .battery[data-level="critical"] { --battery-level: var(--coral); }
 .battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: 3px; }
@@ -167,8 +176,18 @@ h2 { font-size: 24px; }
    cuts the bolt shape would clip a shadow drawn on the bolt itself. */
 .battery-bolt { position: absolute; top: -1px; left: 50%; width: 7px; height: 10px; transform: translateX(-50%); filter: drop-shadow(0.75px 0 0 currentColor) drop-shadow(-0.75px 0 0 currentColor) drop-shadow(0 0.75px 0 currentColor) drop-shadow(0 -0.75px 0 currentColor); }
 .battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--panel); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
+/* The voltage is one thing, so it breaks before the separator or not at
+   all. In a narrow figure card it was wrapping between the number and its
+   unit, leaving a line ending "4.05" and the next beginning "V". */
+.battery-voltage { white-space: nowrap; }
 .battery-voltage::before { content: "\00b7"; margin-right: 5px; }
 main { padding: 32px 0 60px; display: grid; gap: 28px; }
+/* Every page is a grid item of <main>, and a grid item's default
+   `min-width: auto` lets its min-content width beat the track: one row inside
+   that will not wrap is enough to drag the whole page off the right edge of a
+   phone. Saying it once here rather than per page, because this has now been
+   fixed twice in two sections and would be fixed a third time otherwise. */
+main > * { min-width: 0; }
 /* Standing beside the pot's response, the two conclusions the hub draws read
    as a pair: same rule above and below, same tinted ground, and this one
    keeps the larger type because it is the answer to the bigger question. */
@@ -293,6 +312,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 /* The reserve below thirsty is painted by a gradient defined per chart, so it
    carries no fill here; only the floor it runs down to is drawn. */
 .history-chart .trend-dry { stroke: #a33a2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Filled where the scale called the reading settled, hollow where it did
+   not. A scale that never settles is the thing being looked for, so those
+   points are shown rather than dropped. */
+.history-chart .weight-point.settled { fill: #2a754a; }
+.history-chart .weight-point.unsettled { fill: #ffffff; stroke: #b46e18; stroke-width: 1.2; }
 .history-chart .trend-dry-label { fill: #8a2f23; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 #plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
@@ -442,6 +466,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
 .sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
+.sensor-settings-form output { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .sensor-settings-form input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
 .settings-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
@@ -525,8 +550,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .secondary-action { padding: 10px 17px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; text-align: center; white-space: nowrap; }
 .secondary-action:hover { border-color: var(--leaf); color: var(--leaf); }
 .secondary-action:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
-.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; gap: 6px; border-bottom: 1px solid var(--line); }
-.settings-tab { padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; }
+/* The bar scrolls on its own rather than widening the page: on a phone seven
+   tabs do not fit, and a flex row that cannot shrink pushes every panel below
+   it off the right edge of the screen. */
+.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
+.settings-tab { flex: 0 0 auto; padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .settings-tab:hover { background: #e5f1e8; }
 .settings-tab.active { color: white; background: var(--leaf); }
 .settings-panel-group { display: grid; gap: 14px; }
@@ -537,7 +565,10 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .settings-sensor-heading strong { font-size: 20px; }
 .settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
 .settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.settings-sensor-actions { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+/* flex-shrink: 0 keeps the buttons their own size; wrap and min-width: 0 are
+   what let the row admit it is out of room and break onto a second line,
+   instead of its 346px min-content widening the page around it. */
+.settings-sensor-actions { flex-shrink: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .settings-sensor-actions .danger { padding: 10px 17px; font-weight: 700; }
 @media (max-width: 720px) {
   .settings-sensor { align-items: stretch; flex-direction: column; gap: 12px; }
@@ -579,6 +610,25 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .plant-weight-anchors { flex-wrap: wrap; margin-bottom: 16px; }
 .plant-weight-anchors label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .plant-weight-anchors output { color: var(--muted); font-size: 13px; }
+
+/* A plant whose weight arrives by itself. The manual form stays on the
+   page rather than vanishing: somebody will still lift the pot onto a
+   kitchen scale now and then, and a form that disappears cannot be argued
+   with. It is dimmed and inert until asked for. */
+.plant-weight-scale { margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.plant-weight-scale-who { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
+.plant-weight-scale-who a { color: var(--leaf); font-weight: 700; }
+.plant-weight-scale .inline-control { margin-bottom: 8px; }
+.plant-weight-scale label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.plant-weight-scale output { color: var(--muted); font-size: 13px; }
+.plant-weight-scale-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.plant-weight-scale-actions { margin-bottom: 10px; }
+.plant-weight-scale-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
+.plant-weight-scale-actions output { color: var(--muted); font-size: 13px; }
+.plant-weight-entry.is-automatic { opacity: 0.45; }
+.plant-weight-entry.is-automatic input,
+.plant-weight-entry.is-automatic select,
+.plant-weight-entry.is-automatic button { pointer-events: none; }
 
 .plant-weight-entry { flex-wrap: wrap; margin-bottom: 16px; }
 .plant-weight-entry label { color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -792,7 +842,12 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .sensor-attach { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
 .sensor-attach label { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .sensor-attach-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.sensor-attach-row select { flex: 1 1 220px; min-width: 0; }
+/* The input is listed as well as the select. This block held only a select
+   and a button until a name field was added to it, and nothing in the
+   cascade reached the new control: the rules that style inputs elsewhere
+   are scoped to ancestors this block does not have. */
+.sensor-attach-row select,
+.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .sensor-attach-row button { flex: 0 0 auto; }
 
 /* The battery sits in a figure box on the sensor page, so it is sized to
@@ -810,3 +865,151 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .point-readout-bubble { fill: var(--ink); opacity: .92; }
 .point-readout-value { fill: white; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .point-readout-when { fill: #cfd8d1; font-size: 10px; }
+
+
+/* The scan for new devices.
+ *
+ * There is nothing to show while the network is open and nobody is pairing,
+ * and a button that goes quiet reads as a button that did nothing. The sweep
+ * says the hub is still listening. */
+.zigbee-radar {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin: 14px 0 4px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background:
+    radial-gradient(circle, transparent 0 32%, color-mix(in srgb, currentColor 10%, transparent) 32% 33%, transparent 33%),
+    radial-gradient(circle, transparent 0 65%, color-mix(in srgb, currentColor 10%, transparent) 65% 66%, transparent 66%);
+  overflow: hidden;
+}
+
+.zigbee-radar::before,
+.zigbee-radar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 12%, transparent));
+  background-size: 100% 1px, 1px 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.zigbee-radar::after {
+  background-size: 1px 100%;
+}
+
+.zigbee-radar-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--accent, #1f7a4d) 55%, transparent) 0deg,
+    transparent 55deg,
+    transparent 360deg
+  );
+  animation: zigbee-sweep 2.4s linear infinite;
+}
+
+@keyframes zigbee-sweep {
+  to { transform: rotate(360deg); }
+}
+
+/* Honoured rather than ignored: a sweeping wedge is exactly the kind of
+   motion that people turn this setting off for. */
+@media (prefers-reduced-motion: reduce) {
+  .zigbee-radar-sweep { animation: none; opacity: 0.5; }
+}
+
+
+/* Buttons in the Zigbee panel.
+ *
+ * These were written with class="row", borrowed from the scale firmware's
+ * own page, where that class exists. It does not exist here, so they had no
+ * layout at all: no flex, no gap, no wrapping. */
+.zigbee-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.zigbee-actions .spacer { margin-left: auto; }
+.zigbee-row { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.zigbee-row .zigbee-actions { margin-left: auto; }
+.zigbee-waiting { border-left: 3px solid var(--leaf); padding-left: 10px; }
+.zigbee-device-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+
+
+/* The Zigbee scale's page echoes the scale's own, so the same device does
+   not feel like two machines depending on which address you opened. */
+.row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.zigbee-display { text-align: center; padding: 26px 14px 20px; }
+.zigbee-big { font-size: clamp(56px, 16vw, 110px); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.zigbee-big .unit { font-size: .3em; color: var(--muted); font-weight: 400; margin-left: .12em; }
+.zigbee-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 8px; }
+.zigbee-stats div { display: flex; flex-direction: column; color: var(--muted); font-size: 13px; }
+.zigbee-stats b { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+.zigbee-pill { font-size: 12px; padding: 2px 10px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; margin-left: 6px; }
+
+/* A select in a flex row stretches to fill it, which made the sampling rate
+   look like an empty bar rather than a control. */
+.zigbee-actions select { flex: 0 0 auto; width: auto; min-width: 170px; }
+
+
+/* Links that act as buttons.
+ *
+ * .nav-button was used in markup with no rule behind it, so the Control
+ * link rendered as plain underlined text. Matched to the button element's
+ * own styling above, because the two sit side by side in a row. */
+.nav-button {
+  display: inline-block;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: white;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+.nav-button:hover { border-color: var(--leaf); }
+
+/* A page of panels needs the same spacing a settings group gets; without it
+   the panels sit flush against each other with only their borders between. */
+.zigbee-stack { display: grid; gap: 14px; }
+
+/* The neighbour table. Rows of key facts read better as a table than as
+   lines of text, which is what they were. */
+.zigbee-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.zigbee-table th { text-align: left; padding: 6px 10px 6px 0; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.zigbee-table td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.zigbee-table td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.section-subheading { margin: 18px 0 0; font-size: 13px; font-weight: 700; }
+
+/* The weight is why the page exists, so it gets a card of its own rather
+   than a cell among the housekeeping figures. Built from the same border,
+   radius and background as those figures so it belongs to the same page. */
+.zigbee-reading { padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; text-align: center; }
+.zigbee-reading-label { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.zigbee-reading-number { margin: 0; font-size: clamp(48px, 10vw, 80px); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.zigbee-reading-unit { margin-left: .1em; font-size: .3em; color: var(--muted); font-weight: 400; }
+.zigbee-reading-state { margin: 8px 0 0; line-height: 1.4; min-height: 1.4em; color: var(--muted); font-size: 13px; }
+
+/* Its own class, not the household's.
+   Borrowing .fleet-overview put a second element with that class earlier in
+   the document, and a test that reaches for the household's sort row with
+   querySelector(".fleet-overview") found this page instead. Two sections
+   that happen to look alike are still two different things. */
+.rooms-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
+.rooms-overview h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
+.rooms-overview .section-heading p:last-child { margin: 0; color: var(--muted); }
+
+/* Rooms, side by side. A room is a smaller thing than a plant page, so the
+   cards are narrower and the chart inside one is a glance rather than a
+   study -- the detail lives on the plant that cares about it. */
+/* One room per row. Rooms are read down the page rather than compared
+   across it, and a full width card gives the air chart room to be
+   worth looking at. Each card is still sized by its own content, so a
+   room with no sensor stays short. */
+.rooms-grid { display: grid; grid-template-columns: 1fr; align-items: start; gap: 16px; }
+.room-card { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.room-card-heading h2 { margin: 0 0 2px; font-size: 20px; }
+.room-card-heading { margin-bottom: 12px; }
+.room-figures { margin: 0 0 10px; }

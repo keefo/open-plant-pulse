@@ -18,6 +18,9 @@ from tempfile import TemporaryDirectory
 
 from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.application.store import vapour_pressure_deficit
+from open_plant_pulse_hub.application.weights import WeightKeeper, due
+from open_plant_pulse_hub.application.zigbee import ZigbeeService
+from open_plant_pulse_hub.application.zigbee.network import Reading
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.web import create_server, server_address
 
@@ -624,7 +627,8 @@ class PlantApiTests(unittest.TestCase):
             self.store, "127.0.0.1", 0,
             photos=PhotoLibrary(self.store, self.photo_directory),
         )
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"
@@ -1528,6 +1532,72 @@ class PlantApiTests(unittest.TestCase):
         }
         self.assertEqual(missing, set())
 
+    def test_every_class_the_markup_styles_with_exists(self) -> None:
+        """A class with no rule behind it silently does nothing.
+
+        class="row" was borrowed from the scale firmware's own page, where
+        it is defined; here it is not, so three rows of buttons had no
+        layout at all. .nav-button went the same way and rendered a button
+        as plain underlined text. Neither failed, neither logged, and both
+        needed somebody to look at the page to notice.
+
+        Hook classes carry no styling on purpose, so they are named here
+        rather than discovered.
+        """
+        import re
+
+        static = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        css = (static / "app.css").read_text()
+        defined = set(re.findall(r"\.(-?[_a-zA-Z][\w-]*)", css))
+
+        # Classes that exist only for scripts to find, and for state the page
+        # sets without styling it.
+        hooks = {
+            # State and tone the page sets without a rule of its own.
+            "mute", "note", "bad", "ok", "active", "danger", "hidden",
+            "primary", "switch", "spacer",
+            # Handles the scripts find elements by. Verified: each appears in
+            # a closest() or querySelector() call rather than for styling.
+            "zigbee-command", "zigbee-manage", "zigbee-claim",
+            "forget-sensor", "arrange-sections", "delete-room", "edit-room",
+            "lighting-toggle", "scale-high", "scale-low",
+        }
+
+        # Classes already in the markup with no rule behind them when this
+        # test was written. They are listed so the test guards against new
+        # ones rather than being switched off by the old; each is either a
+        # leftover from a removed rule or styling that never arrived, and
+        # shortening this list is its own piece of work.
+        known_gaps = {
+            "battery-percent", "calendar-spacer", "configuration-delivery",
+            "section-subheading", "settings-sensor-name",
+            # An SVG rect whose fill is an inline url(#gradient) attribute,
+            # so it is styled, just not by a rule. Its sibling trend-refill
+            # does have one, which is why only this one shows up.
+            "trend-reserve",
+        }
+
+        used = set()
+        for match in re.finditer(r'class="([^"]*)"', (static / "index.html").read_text()):
+            used.update(word for word in match.group(1).split() if "{" not in word)
+        for script in static.glob("*.js"):
+            text = script.read_text()
+            for match in re.finditer(r'className = "([^"]*)"', text):
+                used.update(match.group(1).split())
+            for match in re.finditer(r'className = `([^`]*)`', text):
+                used.update(w for w in match.group(1).split() if "$" not in w)
+            # SVG elements take their class through setAttribute or through
+            # an attributes object, never through className. A battery chart
+            # drawn with class names that existed nowhere passed this test
+            # because neither form was being read.
+            for match in re.finditer(r'setAttribute\(\s*"class"\s*,\s*"([^"]*)"', text):
+                used.update(match.group(1).split())
+            for match in re.finditer(r'\bclass:\s*"([^"]*)"', text):
+                used.update(match.group(1).split())
+
+        missing = sorted(name for name in used - defined - hooks - known_gaps)
+        self.assertEqual(missing, [], f"styled with classes that have no rule: {missing}")
+
     def test_a_sensor_is_configured_on_its_own_page_not_its_plant_s(self) -> None:
         """Administering a device and caring for a plant are different jobs.
 
@@ -1590,23 +1660,42 @@ class PlantApiTests(unittest.TestCase):
         self.assertIn('id="plant-weight-thirsty"', page)
         self.assertIn("observed: false", script)
 
-    def test_a_pot_can_be_weighed_in_either_unit(self) -> None:
+    def test_a_pot_is_weighed_in_grams_and_nothing_else(self) -> None:
+        """One unit, said once per box, with nothing to choose.
+
+        Every weight box used to carry a kg/g selector, remembered per
+        browser, converting the typed number when it changed. The scale
+        reports grams, the database stores grams and every anchor on the
+        page is a whole number of them, so the choice bought nothing and
+        cost three selects, two placeholders per field and a stored
+        preference that could disagree with the box beside it.
+        """
         page = self.call_text("/")
         script = self.call_text("/app.js")
 
-        # A 17 kg pot in grams is five digits to get wrong; a seedling in
-        # kilograms is 0.42 of one. The scale's owner chooses.
-        # Every box says which unit it is read in, including the anchors: a
-        # number typed into an unlabelled box is a guess about what was meant.
-        for selector in ("plant-weight-unit", "plant-weight-full-unit", "plant-weight-thirsty-unit"):
-            self.assertIn(f'id="{selector}"', page)
-        self.assertEqual(page.count('<option value="g">g</option>'), 3)
-        self.assertIn("Math.round(typed * 1000)", script)
-        # Grams on the wire whichever was typed.
+        for gone in ("plant-weight-unit", "plant-weight-full-unit",
+                     "plant-weight-thirsty-unit"):
+            self.assertNotIn(f'id="{gone}"', page)
+        self.assertNotIn('<option value="kg">kg</option>', page)
+        # The unit is in the label instead, where it cannot be changed.
+        for label in ("Weighs (g)", "Full at (g)", "Thirsty at (g)"):
+            self.assertIn(label, page)
+        # Whole grams, and a range that suits them.
+        self.assertIn('id="plant-weight-input" type="number" step="1" min="0"'
+                      ' max="500000"', page)
+        # No converting left to do.
+        self.assertNotIn("Math.round(typed * 1000)", script)
+        self.assertNotIn("WEIGHT_UNIT_FIELDS", script)
+        self.assertNotIn("function weightUnit(", script)
+        self.assertNotIn("function gramsFrom(", script)
+        # Grams on the wire, as before.
         self.assertIn("JSON.stringify({ grams, kind, at })", script)
-        # And each choice outlives the page, per browser.
-        self.assertIn("WEIGHT_UNIT_FIELDS", script)
-        self.assertIn("open-plant-pulse.weight-unit.full", script)
+        # The remembered choices are cleared rather than left in every
+        # browser for ever, since nothing reads them now.
+        self.assertIn("forgetWeightUnits", script)
+        # Swept by prefix rather than by naming each box, because naming
+        # them missed one that an even earlier box had left behind.
+        self.assertIn('startsWith("open-plant-pulse.weight-unit")', script)
 
     def test_the_page_carries_only_what_a_plant_without_a_sensor_has(self) -> None:
         page = self.call_text("/")
@@ -1656,3 +1745,328 @@ class PlantApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScaleScheduleTests(unittest.TestCase):
+    """When a scale's weight is worth writing down."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.plant_id = self.store.create_plant("white bird")["plant_id"]
+
+    @staticmethod
+    def _wall(hour: int, minute: int = 0, day: int = 16) -> datetime:
+        """A moment written the way a clock on the wall writes it."""
+        return datetime(2026, 10, day, hour, minute).astimezone()
+
+    def test_interval_and_hour_are_alternatives(self) -> None:
+        now = self._wall(9)
+        # An interval counts seconds since the last kept weight.
+        self.assertTrue(due(now - timedelta(minutes=30), now, 1800, None))
+        self.assertFalse(due(now - timedelta(minutes=5), now, 1800, None))
+        # An hour means one a day, from that hour onwards.
+        self.assertTrue(due(self._wall(9, day=15), now, None, 8))
+        self.assertFalse(due(self._wall(8, 30), now, None, 8))
+        self.assertFalse(due(self._wall(9, day=15), now, None, 18))
+        # An hour wins: a scale keeps one schedule, not two.
+        self.assertFalse(due(self._wall(8, 30), now, 60, 8))
+
+    def test_the_hour_is_the_one_on_the_wall_not_in_greenwich(self) -> None:
+        """Six in the morning means six here.
+
+        Reading the hour off a UTC clock made a hub in Vancouver open the
+        window at eleven the night before, and the day's weight landed in
+        the small hours instead of at breakfast.
+        """
+        # The same instant, handed over in two different time zones, is the
+        # same instant: whatever `due` reads the hour from, it must not be
+        # the offset it happened to be given.
+        moment = datetime(2026, 10, 16, 16, 0, tzinfo=timezone.utc)
+        elsewhere = moment.astimezone(timezone(timedelta(hours=5, minutes=30)))
+        yesterday = moment - timedelta(days=1)
+        for hour in range(0, 24):
+            self.assertEqual(
+                due(yesterday, moment, None, hour),
+                due(yesterday, elsewhere, None, hour),
+                f"hour {hour} decided differently for the same instant",
+            )
+
+        # And it is the local wall clock that decides. On a machine running
+        # in UTC there is nothing to tell apart, so there is nothing to test.
+        offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+        if offset == timedelta(0):
+            self.skipTest("this machine keeps UTC, so local and UTC agree")
+        local_hour = self._wall(9).hour
+        self.assertTrue(due(self._wall(9, day=15), self._wall(9), None, local_hour))
+        # An hour that has not arrived locally yet keeps the window shut,
+        # however the UTC clock reads.
+        later = (local_hour + 2) % 24
+        if later > local_hour:
+            self.assertFalse(due(self._wall(9, day=15), self._wall(9), None, later))
+
+    def test_the_hub_keeps_time_where_it_is_told_to(self) -> None:
+        """One setting, and everything that needs an hour of the day asks it.
+
+        Reading the machine's zone would have been enough for a hub on the
+        kitchen computer and wrong for one on a server that keeps UTC, which
+        is what servers do.
+        """
+        settings = self.store.hub_settings()
+        self.assertIsNone(settings["timezone"], "nothing is chosen to begin with")
+        self.assertTrue(settings["timezone_effective"], "but something is in force")
+
+        saved = self.store.set_hub_timezone("Asia/Tokyo")
+        self.assertEqual(saved["timezone"], "Asia/Tokyo")
+        self.assertEqual(saved["timezone_effective"], "Asia/Tokyo")
+
+        # Nine in the morning in Tokyo is midnight UTC, so the hour the hub
+        # reasons about has to come from the setting and not the clock.
+        tokyo_morning = datetime(2026, 10, 16, 0, 30, tzinfo=timezone.utc)
+        yesterday = tokyo_morning - timedelta(days=1)
+        zone = self.store.hub_zone()
+        self.assertTrue(due(yesterday, tokyo_morning, None, 6, zone=zone))
+        # Six in the evening Tokyo time has not come round yet at 09:30.
+        self.assertFalse(due(yesterday, tokyo_morning, None, 18, zone=zone))
+
+        # And the day a care event is filed under moves with it: 00:30 UTC
+        # is already the 16th in Tokyo and still the 15th in Vancouver.
+        self.assertEqual(self.store._local_day("2026-10-16T00:30:00Z"), "2026-10-16")
+        self.store.set_hub_timezone("America/Vancouver")
+        self.assertEqual(self.store._local_day("2026-10-16T00:30:00Z"), "2026-10-15")
+
+        # Handing it back is allowed, and nonsense is not.
+        self.assertIsNone(self.store.set_hub_timezone(None)["timezone"])
+        self.assertIsNone(self.store.set_hub_timezone("   ")["timezone"])
+        with self.assertRaises(ValueError):
+            self.store.set_hub_timezone("Mars/Olympus_Mons")
+
+    def test_a_weight_that_is_the_pot_being_lifted_is_refused(self) -> None:
+        keeper = WeightKeeper(self.store)
+        self.assertEqual(keeper.keep(self.plant_id, 15800, "scale"), 15800)
+        # Pot off the scale, and something else on it.
+        self.assertIsNone(keeper.keep(self.plant_id, 120, "scale"))
+        self.assertIsNone(keeper.keep(self.plant_id, 40000, "scale"))
+        latest = self.store.plant_weight_status(self.plant_id)["latest"]
+        self.assertEqual(latest["grams"], 15800)
+
+    def test_the_schedule_round_trips(self) -> None:
+        sensor_id = self.store.seen_zigbee_device("acebe6fffe0d7f18", "scale")["sensor_id"]
+        # Read back the way the Zigbee service reads it, which is what
+        # actually decides whether the schedule is honoured.
+        self.store.set_scale_schedule(sensor_id, None, 8)
+        self.assertEqual(self.store.zigbee_sensors()[0]["scale_keep_at_hour"], 8)
+        # Choosing an interval clears the hour rather than running both.
+        self.store.set_scale_schedule(sensor_id, 3600, None)
+        row = self.store.zigbee_sensors()[0]
+        self.assertIsNone(row["scale_keep_at_hour"])
+        self.assertEqual(row["scale_keep_every_seconds"], 3600)
+
+    def test_an_impossible_schedule_is_refused(self) -> None:
+        sensor_id = self.store.seen_zigbee_device("acebe6fffe0d7f18", "scale")["sensor_id"]
+        with self.assertRaises(ValueError):
+            self.store.set_scale_schedule(sensor_id, None, 99)
+        with self.assertRaises(ValueError):
+            self.store.set_scale_schedule(sensor_id, 5, None)
+        with self.assertRaises(ValueError):
+            self.store.set_scale_schedule("no-such-sensor", None, 8)
+
+    def test_the_plant_knows_which_scale_weighs_it(self) -> None:
+        self.assertIsNone(self.store.plant_scale(self.plant_id))
+        sensor_id = self.store.seen_zigbee_device("acebe6fffe0d7f18", "scale")["sensor_id"]
+        # An unclaimed device is not yet this plant's scale.
+        self.assertIsNone(self.store.plant_scale(self.plant_id))
+        self.store.enroll_zigbee_device("acebe6fffe0d7f18", "White bird scale")
+        self.store.attach_sensor(sensor_id, self.plant_id)
+        scale = self.store.plant_scale(self.plant_id)
+        self.assertIsNotNone(scale)
+        self.assertEqual(scale["eui"], "acebe6fffe0d7f18")
+        self.assertEqual(scale["display_name"], "White bird scale")
+
+
+class ZigbeeWeightFilingTests(unittest.TestCase):
+    """A Zigbee scale's reading reaches the plant it is attached to."""
+
+    class _Network:
+        def devices(self): return []
+        def notes(self, eui): return {}
+        def on_reading(self, handler): pass
+        def on_joined(self, handler): pass
+        def on_delivery(self, handler): pass
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.plant_id = self.store.create_plant("white bird")["plant_id"]
+        self.service = ZigbeeService(self.store, self._Network())
+        self.eui = "acebe6fffe0d7f18"
+        self.store.seen_zigbee_device(self.eui, "scale")
+
+    def _reading(self, grams: float) -> Reading:
+        return Reading(eui=self.eui, kind="scale",
+                       values={"grams": grams, "ok": True, "stable": True,
+                               "saturated": False})
+
+    def _latest(self):
+        return self.store.plant_weight_status(self.plant_id).get("latest")
+
+    def test_nothing_is_filed_until_the_device_is_claimed_and_attached(self) -> None:
+        # A reading from a device nobody has claimed may not even be theirs.
+        self.service._file(self._reading(15800))
+        self.assertIsNone(self._latest())
+        self.service.accept(self.eui)
+        # Claimed, but pointed at nothing yet.
+        self.service._file(self._reading(15800))
+        self.assertIsNone(self._latest())
+
+    def test_an_attached_scale_writes_the_plant_a_weight(self) -> None:
+        self.service.accept(self.eui)
+        self.service.attach(self.eui, self.plant_id)
+        self.service._file(self._reading(15800))
+        latest = self._latest()
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["grams"], 15800)
+
+    def test_the_same_judgement_applies_as_over_http(self) -> None:
+        self.service.accept(self.eui)
+        self.service.attach(self.eui, self.plant_id)
+        self.service._file(self._reading(15800))
+        # The pot lifted off, and something else put on.
+        self.service._file(self._reading(120))
+        self.service._file(self._reading(40000))
+        self.assertEqual(self._latest()["grams"], 15800)
+
+    def test_a_known_device_keeps_its_kind_across_a_restart(self) -> None:
+        """Health counters are lost on restart; the device is not."""
+        self.service.accept(self.eui)
+        fresh = ZigbeeService(self.store, self._Network())   # nothing in memory
+        fresh.attach(self.eui, self.plant_id)                # used to raise
+        fresh._file(self._reading(15800))
+        self.assertEqual(self._latest()["grams"], 15800)
+
+    def test_every_report_is_kept_whether_or_not_anybody_wanted_it(self) -> None:
+        """A report judged and dropped is a question that cannot be re-asked.
+
+        Keeping only the last one, in memory, meant a weight wanted at six in
+        the morning had to wait for the device to speak at six in the
+        morning, and a hub restarted at midnight knew nothing until it did.
+        """
+        # Unclaimed, so nothing is filed against a plant -- and the report is
+        # kept anyway, because an unclaimed device is exactly the one
+        # somebody is still working out.
+        self.service._reading(self._reading(15800))
+        kept = self.store.zigbee_reports(eui=self.eui)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0]["values"]["grams"], 15800)
+        self.assertEqual(kept[0]["kind"], "scale")
+        self.assertIsNone(self._latest(), "unclaimed devices still write no weight")
+
+        # Its own values under its own names, so the next device model does
+        # not need a schema change.
+        self.service._reading(Reading(eui=self.eui, kind="scale",
+                                      values={"grams": 15790, "batt": 3.1}))
+        newest = self.store.zigbee_reports(eui=self.eui, limit=1)[0]
+        self.assertEqual(newest["values"]["batt"], 3.1)
+
+        # Newest first, and one device's reports are its own.
+        self.store.record_zigbee_report("other-device", {"grams": 1})
+        mine = self.store.zigbee_reports(eui=self.eui)
+        self.assertEqual(len(mine), 2)
+        self.assertEqual(mine[0]["values"]["grams"], 15790)
+
+    def test_a_scheduled_weight_can_use_what_the_device_last_said(self) -> None:
+        """At six in the morning the question is not "has it just spoken"."""
+        old = "2026-10-01T00:00:00Z"
+        self.store.record_zigbee_report(self.eui, {"grams": 15999}, at=old)
+        # Stale: a reading from last week is not this morning's weight.
+        self.assertIsNone(self.store.latest_zigbee_report(self.eui, within_seconds=3600))
+        # Without a freshness limit it is simply the newest there is.
+        self.assertEqual(
+            self.store.latest_zigbee_report(self.eui)["values"]["grams"], 15999)
+
+        self.service._reading(self._reading(15800))
+        fresh = self.store.latest_zigbee_report(self.eui, within_seconds=3600)
+        self.assertIsNotNone(fresh)
+        self.assertEqual(fresh["values"]["grams"], 15800)
+
+    def test_reports_are_kept_for_a_week_and_no_longer(self) -> None:
+        inside = (datetime.now(timezone.utc) - timedelta(days=6)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        outside = (datetime.now(timezone.utc) - timedelta(days=8)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_zigbee_report(self.eui, {"grams": 1}, at=inside)
+        self.store.record_zigbee_report(self.eui, {"grams": 2}, at=outside)
+        self.assertEqual(len(self.store.zigbee_reports(eui=self.eui)), 2)
+
+        dropped = self.store.prune_zigbee_reports()
+
+        self.assertEqual(dropped, 1)
+        left = self.store.zigbee_reports(eui=self.eui)
+        self.assertEqual([r["values"]["grams"] for r in left], [1])
+
+
+class ZigbeeLatenessTests(unittest.TestCase):
+    """How long is too long depends on what the device said it would do."""
+
+    # Mirrors zigbeeSilentAfter() in app.js. Kept here because the rule is
+    # the thing worth pinning down, and getting it wrong is invisible: the
+    # page simply says a dead sensor is fine, or a healthy one is missing.
+    @staticmethod
+    def silent_after(interval_s):
+        expected = interval_s if interval_s and interval_s > 0 else 30
+        return max(90, expected * 3)
+
+    def test_a_fast_sensor_is_late_within_minutes(self) -> None:
+        # Ten seconds apart: five minutes of silence is thirty missed reports.
+        self.assertGreater(304, self.silent_after(10))
+        # Twenty-five seconds is two missed reports, which happens.
+        self.assertLess(25, self.silent_after(10))
+
+    def test_a_slow_sensor_is_not_late_after_five_minutes(self) -> None:
+        # Twice a day. Five minutes says nothing at all about its health,
+        # and a flat fifteen minute rule called this one dead every time.
+        self.assertLess(304, self.silent_after(43200))
+        self.assertGreater(172800, self.silent_after(43200))
+
+    def test_continuous_sampling_is_judged_by_the_floor(self) -> None:
+        # Reports as fast as the link allows and states its interval as 0,
+        # which must not be read as "due immediately".
+        self.assertEqual(self.silent_after(0), 90)
+        self.assertGreater(304, self.silent_after(0))
+
+
+class ProbeOnlySectionTests(unittest.TestCase):
+    """Sections that only a soil probe can fill say so in the markup."""
+
+    def test_the_soil_sections_declare_the_sensor_they_need(self) -> None:
+        """A plant that is weighed but not probed had four dead panels.
+
+        Soil moisture, the health conclusion drawn from it, the drainage
+        response and the chemistry all come from a probe. On the eight
+        plants here with no probe they each sat saying "waiting for a
+        reading" about a reading that was never coming.
+
+        Declared on the section rather than tested for in script, which is
+        how the sensor pages already decide what to draw.
+        """
+        static = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "index.html").read_text()
+        for section in ("readings", "assessment", "drainage", "chemistry"):
+            marker = f'data-section="{section}" data-sensor-kind="bthome"'
+            self.assertIn(marker, static,
+                          f"{section} should need a probe to be shown")
+
+    def test_what_stands_without_a_probe_is_left_alone(self) -> None:
+        """Weight, care, photos and the room's air need no probe.
+
+        The air section is the room's sensor, not this plant's, and the
+        rest are things a person records. Hiding those too would empty the
+        page of every plant nobody has wired up.
+        """
+        static = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "index.html").read_text()
+        import re
+        for section in ("weight", "calendar", "photos", "care-log", "air",
+                        "journey", "lighting"):
+            match = re.search(rf'data-section="{section}"[^>]*>', static)
+            self.assertIsNotNone(match, f"{section} is missing")
+            self.assertNotIn("data-sensor-kind", match.group(0),
+                             f"{section} should not need a sensor")
