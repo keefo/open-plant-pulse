@@ -19,6 +19,11 @@
 // announces itself and whenever a frame arrives from it.
 void devices_seen(uint16_t short_addr, const ezb_extaddr_t *eui);
 
+/* Reload the table saved by an earlier run. Called once at startup:
+   without it a gateway restart silently discards every reading from
+   a device that does not happen to announce itself again. */
+void devices_load(void);
+
 // Records a device known only by its short address, resolving the EUI-64 from
 // the stack. Returns false if the stack cannot resolve it.
 bool devices_seen_short(uint16_t short_addr);

@@ -4,6 +4,7 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "nvs.h"
 
 static const char *TAG = "devices";
 
@@ -16,6 +17,59 @@ typedef struct {
 } device_t;
 
 static device_t s_devices[DEVICES_MAX];
+
+/* The table outlives a restart.
+ *
+ * It lived only in RAM, and losing it is worse than it sounds: a frame
+ * from a short address this gateway cannot place is dropped, so after a
+ * gateway restart a perfectly healthy scale reports every five minutes
+ * into nothing. It still gets its acknowledgement from the stack, so it
+ * believes all is well and its own self-heal never fires. Three evenings
+ * of silence were this, and nothing in either device looked wrong.
+ *
+ * A saved short address can go stale -- they are reassigned on every
+ * rejoin -- but a device announcing itself overwrites the entry, and a
+ * stale guess that gets corrected beats no guess that gets discarded. */
+#define DEVICES_NVS_NAMESPACE "zbgw"
+#define DEVICES_NVS_KEY "devices"
+
+typedef struct {
+    ezb_extaddr_t eui;
+    uint16_t short_addr;
+} saved_device_t;
+
+static void devices_save(void)
+{
+    saved_device_t saved[DEVICES_MAX];
+    size_t n = 0;
+    for (size_t i = 0; i < DEVICES_MAX; i++) {
+        if (!s_devices[i].used) continue;
+        saved[n].eui = s_devices[i].eui;
+        saved[n].short_addr = s_devices[i].short_addr;
+        n++;
+    }
+    nvs_handle_t h;
+    if (nvs_open(DEVICES_NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
+    if (n) nvs_set_blob(h, DEVICES_NVS_KEY, saved, n * sizeof saved[0]);
+    else nvs_erase_key(h, DEVICES_NVS_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+void devices_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(DEVICES_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    saved_device_t saved[DEVICES_MAX];
+    size_t size = sizeof saved;
+    if (nvs_get_blob(h, DEVICES_NVS_KEY, saved, &size) == ESP_OK) {
+        for (size_t i = 0; i < size / sizeof saved[0]; i++)
+            devices_seen(saved[i].short_addr, &saved[i].eui);
+        ESP_LOGI(TAG, "remembered %u device(s) from an earlier run",
+                 (unsigned)(size / sizeof saved[0]));
+    }
+    nvs_close(h);
+}
 
 // EUI-64 bytes are stored little-endian; printed big-endian, the way the
 // address appears on a label and in every other tool.
@@ -60,12 +114,14 @@ void devices_seen(uint16_t short_addr, const ezb_extaddr_t *eui)
         memcpy(slot->eui_text, text, sizeof text);
         slot->short_addr = short_addr;
         ESP_LOGI(TAG, "%s is 0x%04x", text, (unsigned)short_addr);
+        devices_save();
     } else if (slot->short_addr != short_addr) {
         // Expected, not an anomaly: this is the reassignment that makes short
         // addresses useless as an identity.
         ESP_LOGI(TAG, "%s moved from 0x%04x to 0x%04x", text,
                  (unsigned)slot->short_addr, (unsigned)short_addr);
         slot->short_addr = short_addr;
+        devices_save();
     }
     slot->last_seen_us = esp_timer_get_time();
 }

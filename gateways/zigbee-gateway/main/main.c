@@ -20,6 +20,7 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_zigbee.h"
 #include "cJSON.h"
@@ -105,7 +106,13 @@ static bool on_data(const ezb_apsde_data_ind_t *ind)
         // rather than reporting something nobody can address a reply to.
         devices_seen_short(from);
         if (!devices_eui_for(from, eui)) {
+            // Said out loud, not only to a console nobody is reading.
+            // Dropping these quietly is how a healthy scale reported
+            // into nothing for twelve hours while both ends looked
+            // fine: it got its acknowledgement, so it never retried.
             ESP_LOGW(TAG, "frame from 0x%04x, whose EUI-64 is unknown", (unsigned)from);
+            printf("{\"t\":\"unplaced\",\"short\":\"0x%04x\",\"bytes\":%u}\n",
+                   (unsigned)from, (unsigned)ind->asdu_length);
             return false;
         }
     }
@@ -278,10 +285,18 @@ static void emit_devices(void)
     int64_t now = esp_timer_get_time();
     int64_t permit_left = s_permit_until_us - now;
     if (permit_left < 0) permit_left = 0;
+    /* Uptime and why it last started, in the reply the hub already
+     * polls for. A coordinator that restarts loses the children it was
+     * relaying for, so its restarts are worth noticing -- and until it
+     * said how long it had been up, nothing could tell a gateway that
+     * had been running for a week from one that rebooted a minute ago.
+     */
     printf("{\"t\":\"devices\",\"pan\":\"0x%04x\",\"channel\":%u,"
-           "\"permit_s\":%ld,\"list\":[",
+           "\"permit_s\":%ld,\"uptime_s\":%lld,\"reset\":%u,\"list\":[",
            (unsigned)ezb_nwk_get_panid(), (unsigned)ezb_nwk_get_current_channel(),
-           (long)(permit_left / 1000000));
+           (long)(permit_left / 1000000),
+           (long long)(esp_timer_get_time() / 1000000),
+           (unsigned)esp_reset_reason());
     for (size_t i = 0; devices_at(i, eui, &short_addr, &seen_us); i++)
         printf("%s{\"eui\":\"%s\",\"short\":\"0x%04x\",\"last_seen_s\":%ld}",
                i ? "," : "", eui, (unsigned)short_addr,
@@ -468,6 +483,9 @@ static void zigbee_task(void *argument)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
+    // Before the radio starts, so a device reporting immediately can
+    // still be placed.
+    devices_load();
     xTaskCreate(zigbee_task, "zigbee", 8192, NULL, 5, NULL);
     xTaskCreate(console_task, "console", 4096, NULL, 4, NULL);
 }

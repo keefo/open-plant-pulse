@@ -44,7 +44,17 @@ class Port:
         oflag &= ~termios.OPOST
         lflag &= ~(termios.ECHO | termios.ECHOE | termios.ECHONL |
                    termios.ICANON | termios.ISIG | termios.IEXTEN)
-        cflag &= ~(termios.PARENB | termios.CSTOPB | termios.CSIZE | termios.CRTSCTS)
+        # HUPCL cleared, which is the difference between a gateway that
+        # runs for weeks and one that reboots whenever the hub does.
+        #
+        # "Hang up on last close" drops DTR and RTS when the last
+        # process lets go of the port, and on these boards those lines
+        # drive EN and BOOT through the auto-reset circuit. So every
+        # hub restart reset the coordinator, which lost its device
+        # table with it and then silently discarded every reading from
+        # a scale it could no longer place.
+        cflag &= ~(termios.PARENB | termios.CSTOPB | termios.CSIZE |
+                   termios.CRTSCTS | termios.HUPCL)
         cflag |= termios.CS8 | termios.CREAD | termios.CLOCAL
         cc = list(cc)
         cc[termios.VMIN] = 0

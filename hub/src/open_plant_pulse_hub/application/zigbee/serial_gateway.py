@@ -59,6 +59,9 @@ class SerialGateway:
         # What devices have said about themselves, by EUI-64.
         self._notes: Dict[str, Dict[str, str]] = {}
         self._note_handlers: List[Any] = []
+        self._restart_handlers: List[Any] = []
+        self._uptime_s: Optional[int] = None
+        self._reset_reason: Optional[str] = None
         self._on_reading: List[Callable[[Reading], None]] = []
         self._on_joined: List[Callable[[Device], None]] = []
         self._on_delivery: List[Callable[[Delivery], None]] = []
@@ -104,6 +107,15 @@ class SerialGateway:
         # descriptor being open. An unplugged board leaves a device node that
         # opens happily and then returns nothing forever.
         return self._line is not None and (time.time() - self._last_heard) < SILENCE_SECONDS
+
+    @property
+    def uptime_s(self) -> Optional[int]:
+        """How long the gateway says it has been running."""
+        return self._uptime_s
+
+    @property
+    def reset_reason(self) -> Optional[str]:
+        return self._reset_reason
 
     @property
     def pan(self) -> Optional[str]:
@@ -331,9 +343,47 @@ class SerialGateway:
         device = self._note_device(eui, message.get("short"))
         self._fan_out(self._on_joined, device)
 
+    # What the gateway's reset reason number means, as the ESP-IDF
+    # enumeration orders them.
+    RESET_REASONS = {
+        0: "unknown", 1: "power on", 2: "external", 3: "software",
+        4: "panic", 5: "interrupt watchdog", 6: "task watchdog",
+        7: "other watchdog", 8: "deep sleep", 9: "brownout",
+        10: "sdio", 11: "usb", 12: "jtag",
+    }
+
+    def _note_uptime(self, message: Dict[str, object]) -> None:
+        """Spot a gateway that has restarted since we last looked.
+
+        Its uptime going backwards is the only honest signal: the serial
+        port looks identical either side of a reset, which is exactly how
+        this went unnoticed while it was happening several times a day.
+        """
+        uptime = _int_or_none(message.get("uptime_s"))
+        if uptime is None:
+            return
+        previous = self._uptime_s
+        self._uptime_s = uptime
+        self._reset_reason = self.RESET_REASONS.get(
+            _int_or_none(message.get("reset")) or 0, "unknown")
+        if previous is None or uptime >= previous:
+            return
+        LOG.warning("the gateway restarted (%s) after %s s up",
+                    self._reset_reason, previous)
+        for handler in self._restart_handlers:
+            try:
+                handler(self._reset_reason, previous)
+            except Exception:
+                LOG.exception("a gateway restart handler failed")
+
+    def on_restart(self, handler: Any) -> None:
+        """Called when the gateway is seen to have restarted."""
+        self._restart_handlers.append(handler)
+
     def _handle_devices(self, message: Dict[str, object]) -> None:
         self._pan = _text_or_none(message.get("pan"))
         self._channel = _int_or_none(message.get("channel"))
+        self._note_uptime(message)
         if "permit_s" in message:
             self._permit_s = _int_or_none(message.get("permit_s")) or 0
             self._permit_at = time.time()
