@@ -47,7 +47,7 @@ class ConfigField:
 
     name: str
     label: str
-    kind: str  # "ipv4", "mac" or "integer"
+    kind: str  # "ipv4", "mac", "integer" or "zigbee-plug"
     required: bool = False
     default: Any = None
     minimum: Optional[int] = None
@@ -68,6 +68,7 @@ class ConfigField:
 
 
 _MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+_EUI = re.compile(r"^[0-9a-f]{16}$")
 
 
 class LightDriver:
@@ -163,6 +164,14 @@ def _check_field(field: ConfigField, value: Any) -> Any:
         if not _MAC.match(text):
             raise ValueError(f"{field.label} must look like aa:bb:cc:dd:ee:ff")
         return text
+    if field.kind == "zigbee-plug":
+        # An EUI-64 as the Zigbee pages write one: sixteen hex digits, no
+        # separators. Checked rather than trusted because the form offers
+        # a list but the API takes whatever it is given.
+        text = str(value).strip().lower().replace(":", "")
+        if not _EUI.match(text):
+            raise ValueError(f"{field.label} must be a Zigbee address")
+        return text
     if field.kind == "integer":
         if isinstance(value, bool):
             raise ValueError(f"{field.label} must be a whole number")
@@ -178,6 +187,41 @@ def _check_field(field: ConfigField, value: Any) -> Any:
             raise ValueError(f"{field.label} must be at most {field.maximum}")
         return number
     raise ValueError(f"unsupported setting kind {field.kind}")
+
+
+class TimerLight(LightDriver):
+    """A lamp the hub does not switch, only keeps the hours of.
+
+    Some lamps have a timer of their own -- a chip in the plug, a dial on
+    the fitting -- and nothing to talk to. The hub cannot turn this one
+    on; what it can do is hold the same window the timer is set to, and
+    write the log that a daily light total is worked out from.
+
+    So it obeys instantly and always: there is no device to fail, and a
+    command here is a note of what the lamp is believed to be doing. That
+    belief is only as good as the agreement between the two clocks. Change
+    the dial and not the window and the hub will go on reporting the old
+    hours, confidently and wrongly, because nothing here can notice. The
+    page says as much where the light is set up.
+    """
+
+    kind = "timer"
+    label = "Light on its own timer (hours tracked, not switched)"
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        super().__init__(config)
+        self.power: Optional[bool] = None
+
+    def state(self) -> LightState:
+        # Always reachable: there is nothing to reach. Until the first
+        # switch of the day its power is unknown rather than off, which is
+        # the truth -- the hub has not been told either way.
+        return LightState(True, self.power,
+                          "on its own timer; the hub keeps the hours, not the switch")
+
+    def set_power(self, on: bool) -> PowerResult:
+        self.power = on
+        return PowerResult(CONFIRMED)
 
 
 class FakeLight(LightDriver):

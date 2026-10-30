@@ -43,8 +43,19 @@ LIGHT_QUERY = """
               AND sensors.enrollment_status = 'enrolled'
             ORDER BY sensors.last_seen_at DESC LIMIT 1)
     FROM lights
-    LEFT JOIN plant_lights ON plant_lights.light_id = lights.light_id
-    LEFT JOIN plants ON plants.plant_id = plant_lights.plant_id
+    /* One row per light, not one per plant under it. A light may serve
+       several -- a panel over a bench -- and joining the pairs listed the
+       same lamp once for each, which read as duplicate hardware on the
+       settings page. The plant named here is the headline one, the first
+       living plant it serves; every plant under it is in
+       light_assignments, which is what the scheduler reads. */
+    LEFT JOIN plants ON plants.plant_id = (
+        SELECT pair.plant_id FROM plant_lights AS pair
+        JOIN plants AS candidate ON candidate.plant_id = pair.plant_id
+        WHERE pair.light_id = lights.light_id
+        ORDER BY candidate.archived, pair.plant_id
+        LIMIT 1
+    )
 """
 # Everything a stored reading is rebuilt from, in the order _deserialize_row
 # expects.
@@ -200,17 +211,37 @@ CARE_KINDS = {
     "note": "Notes",
 }
 
+# Every section of a plant's page, in the order the page builds them. A
+# section missing from here cannot be saved in a reordering at all: the
+# order is validated against this tuple, so an unlisted name is refused and
+# the whole arrangement is rejected with it.
+def _minutes_of_day(text: Any) -> Optional[int]:
+    """"HH:MM" as minutes past midnight, or None if it is not a time."""
+    try:
+        hours, _, minutes = str(text).partition(":")
+        value = int(hours) * 60 + int(minutes)
+    except (TypeError, ValueError):
+        return None
+    return value if 0 <= value <= 1440 else None
+
+
 PLANT_SECTIONS = (
-    "readings", "air", "assessment", "drainage", "chemistry", "calendar",
-    "lighting", "weight", "forecast", "water-use", "journey", "photos",
-    "care-log",
+    "readings", "air", "soil", "assessment", "chemistry", "light",
+    "calendar", "weight", "journey", "photos", "care-log",
 )
 
 WEIGHT_KINDS = ("reading", "watered", "thirsty", "dry")
 # How long a Zigbee device's own reports are kept. Long enough to answer a
 # question about last week, short enough that nobody has to think about it:
 # a device reporting every half hour leaves under four hundred rows.
-ZIGBEE_REPORT_DAYS = 7
+# Kept for ever unless somebody says otherwise. The reports are a few
+# dozen bytes each and are the only record of what a device actually
+# said; a week's window quietly threw away the history worth charting.
+ZIGBEE_REPORT_DAYS: Optional[int] = None
+# How small a change is worth a frame. The words are the hub's; what
+# each means in degrees or per cent is the driver's business, because
+# only it knows what the numbers on the wire are measuring.
+ZIGBEE_SENSITIVITIES = ("fine", "normal", "coarse")
 # Below this a daily rate is guesswork: two weighings an hour apart say more
 # about the scale than about the plant.
 MIN_WEIGHT_SPAN = timedelta(hours=12)
@@ -261,9 +292,37 @@ def hub_timezone_names() -> List[str]:
     return sorted(available_timezones())
 
 
+# A sentinel for a timestamp that could not be read, so a bad row is
+# skipped rather than silently counted as the current moment.
+_UNPARSED = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 def _timestamp(moment: datetime) -> str:
     # The form every stored time takes, so that text comparison orders them.
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _bound(value: str, *, after: bool = False) -> str:
+    """An ISO timestamp as the exact shape the rows are stored in.
+
+    Comparing timestamps as text is only sound while they all have the
+    same precision. They do not: observed_at is written to the second,
+    received_at carries microseconds, and a browser sends milliseconds,
+    so "10:00:00Z" and "10:00:00.000Z" are the same instant and compare
+    the other way round -- '.' sorts before 'Z', so the row would fall
+    outside its own range. Every bound is therefore reshaped to the
+    second before it is compared.
+
+    A range is inclusive at both ends, so an upper bound carrying a
+    fraction is rounded up: 10:00:00.500 must still admit 10:00:00.
+    """
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return value
+    moment = moment.astimezone(timezone.utc)
+    if after and moment.microsecond:
+        moment = moment.replace(microsecond=0) + timedelta(seconds=1)
+    return _timestamp(moment)
+
 
 
 def _charging_column(charging: Optional[bool]) -> Optional[int]:
@@ -759,7 +818,10 @@ class ReadingStore:
                        scale_grams, scale_status, scale_stable, scale_read_at, scale_error,
                        scale_interval_seconds, scale_firmware, scale_build, scale_seq,
                        scale_battery_volts, scale_battery_percent,
-                       scale_keep_at_hour, zigbee_host
+                       scale_keep_at_hour, zigbee_host,
+                       (SELECT plants.display_name FROM plants
+                        WHERE plants.plant_id = sensors.plant_id) AS plant_name,
+                       zigbee_report_max_seconds, zigbee_report_sensitivity
                 FROM sensors
             """
             parameters: Tuple[Any, ...] = ()
@@ -810,7 +872,7 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT reporting_interval_minutes, plant_section_order,
-                       care_log_hidden_kinds, timezone
+                       care_log_hidden_kinds, timezone, zigbee_report_keep_days
                 FROM hub_settings WHERE singleton_id = 1
                 """
             ).fetchone()
@@ -825,7 +887,73 @@ class ReadingStore:
             # on a hub nobody has configured.
             "timezone": chosen,
             "timezone_effective": chosen or _machine_zone_name(),
+            # None means keep every report there has ever been.
+            "zigbee_report_keep_days": int(row[4]) if row[4] is not None else None,
         }
+
+    def set_zigbee_reporting(self, sensor_id: str, max_seconds: Optional[int],
+                             sensitivity: Optional[str]) -> Dict[str, Any]:
+        """How often this device should speak, and how small a change counts.
+
+        Per device rather than per hub, because a bedroom nobody is
+        watching and a propagator under a lamp want different answers
+        from identical hardware.
+
+        Null for either means the hub's default for that kind of
+        device, which is what every device starts on.
+        """
+        if max_seconds is not None:
+            max_seconds = int(max_seconds)
+            if not 60 <= max_seconds <= 43200:
+                raise ValueError("report at least once every 12 hours, and at most once a minute")
+        if sensitivity is not None and sensitivity not in ZIGBEE_SENSITIVITIES:
+            raise ValueError(f"sensitivity must be one of {', '.join(ZIGBEE_SENSITIVITIES)}")
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE sensors
+                   SET zigbee_report_max_seconds = ?, zigbee_report_sensitivity = ?
+                 WHERE sensor_id = ?
+                """,
+                (max_seconds, sensitivity, sensor_id),
+            )
+        sensor = self.sensor(sensor_id)
+        if sensor is None:
+            raise LookupError("sensor not found")
+        return sensor
+
+    def set_zigbee_report_keep_days(self, days: Optional[int]) -> Dict[str, Any]:
+        """How long to keep raw Zigbee reports, or None to keep them all.
+
+        Setting a window prunes immediately rather than at some later
+        moment: somebody who has just asked for less history expects to
+        get it, and finding the old rows still there an hour later
+        reads as the setting having failed.
+        """
+        if days is not None:
+            days = int(days)
+            if days < 1:
+                raise ValueError("keep at least a day, or nothing at all")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET zigbee_report_keep_days = ? WHERE singleton_id = 1",
+                (days,),
+            )
+        self.prune_zigbee_reports(days)
+        return self.hub_settings()
+
+    def zigbee_report_summary(self) -> Dict[str, Any]:
+        """How many reports are kept and how far back they go.
+
+        Shown next to the setting, because "keep everything" is only a
+        comfortable choice for somebody who can see what everything
+        amounts to.
+        """
+        with self._condition:
+            row = self._database.execute(
+                "SELECT COUNT(*), MIN(at) FROM zigbee_reports"
+            ).fetchone()
+        return {"reports": int(row[0] or 0), "oldest_at": row[1]}
 
     def set_hub_timezone(self, name: Optional[str]) -> Dict[str, Any]:
         """Choose the zone every hour-of-the-day decision is made in.
@@ -942,7 +1070,12 @@ class ReadingStore:
         return self.hub_settings()
 
     def rooms(self) -> List[Dict[str, Any]]:
-        """Every room, with how many sensors are in it."""
+        """Every room, with what is in it.
+
+        Sensors and plants both, because both keep a room from being
+        deleted, and a page offering to delete one should be able to
+        say what is in the way.
+        """
         with self._condition:
             return [
                 {
@@ -952,13 +1085,17 @@ class ReadingStore:
                     "light": row[3],
                     "notes": row[4],
                     "sensor_count": row[5],
+                    "plant_count": row[6],
                 }
                 for row in self._database.execute(
                     """
                     SELECT rooms.room_id, rooms.name, rooms.aspect, rooms.light, rooms.notes,
                            (SELECT COUNT(*) FROM sensors
                             WHERE sensors.room_id = rooms.room_id
-                              AND sensors.enrollment_status = 'enrolled')
+                              AND sensors.enrollment_status = 'enrolled'),
+                           (SELECT COUNT(*) FROM plants
+                            WHERE plants.room_id = rooms.room_id
+                              AND COALESCE(plants.archived, 0) = 0)
                     FROM rooms ORDER BY rooms.name
                     """
                 )
@@ -973,18 +1110,51 @@ class ReadingStore:
         comparing rooms is how you notice that one of them is the problem.
         """
         rooms = self.rooms()
-        with self._condition:
-            plants = dict(self._database.execute(
-                """
-                SELECT room_id, COUNT(*) FROM plants
-                WHERE room_id IS NOT NULL AND COALESCE(archived, 0) = 0
-                GROUP BY room_id
-                """
-            ).fetchall())
         for room in rooms:
-            room["plant_count"] = int(plants.get(room["room_id"], 0))
+            room["air_sources"] = self.room_air_sources(room["room_id"])
             room["air"] = self.room_air(room["room_id"])
         return rooms
+
+    def room_detail(self, room_id: int) -> Optional[Dict[str, Any]]:
+        """One room, with the sensors and plants that are in it.
+
+        The room's own page answers "what is in here?", which the list
+        of rooms could only answer with a number. Both come from the
+        same two tables the delete check reads, so what the page shows
+        is what stands in the way of deleting it.
+        """
+        room = next((r for r in self.rooms() if r["room_id"] == room_id), None)
+        if room is None:
+            return None
+        with self._condition:
+            room["sensors"] = [
+                {"sensor_id": row[0], "display_name": row[1],
+                 "transport": row[2], "last_seen_at": row[3]}
+                for row in self._database.execute(
+                    """
+                    SELECT sensor_id, display_name, transport, last_seen_at
+                    FROM sensors
+                    WHERE room_id = ? AND enrollment_status = 'enrolled'
+                    ORDER BY display_name
+                    """,
+                    (room_id,),
+                )
+            ]
+            room["plants"] = [
+                {"plant_id": row[0], "display_name": row[1], "profile_id": row[2]}
+                for row in self._database.execute(
+                    """
+                    SELECT plant_id, display_name, profile_id
+                    FROM plants
+                    WHERE room_id = ? AND COALESCE(archived, 0) = 0
+                    ORDER BY display_name
+                    """,
+                    (room_id,),
+                )
+            ]
+        room["air"] = self.room_air(room_id)
+        room["air_sources"] = self.room_air_sources(room_id)
+        return room
 
     def _validate_room(self, name: str, aspect: str, light: str, notes: Optional[str]) -> str:
         name = name.strip()
@@ -1041,25 +1211,54 @@ class ReadingStore:
         return next(room for room in self.rooms() if room["room_id"] == room_id)
 
     def delete_room(self, room_id: int) -> None:
-        """Remove a room. A room still holding sensors is kept."""
+        """Remove a room. A room still holding sensors or plants is kept.
+
+        Both are counted, because both carry a foreign key to the room.
+        Only sensors were checked once, so deleting a room with a plant
+        in it raised IntegrityError out of the request thread: the
+        connection died mid-reply and the page said "Failed to fetch"
+        with nothing to explain it.
+        """
         with self._condition, self._database:
-            occupied = self._database.execute(
+            in_the_way = []
+            sensors = self._database.execute(
                 """
                 SELECT COUNT(*) FROM sensors
                 WHERE room_id = ? AND enrollment_status = 'enrolled'
                 """,
                 (room_id,),
             ).fetchone()[0]
-            if occupied:
-                raise ValueError("move the sensors out of this room first")
+            if sensors:
+                in_the_way.append(f"{sensors} sensor" + ("s" if sensors > 1 else ""))
+            plants = self._database.execute(
+                """
+                SELECT COUNT(*) FROM plants
+                WHERE room_id = ? AND COALESCE(archived, 0) = 0
+                """,
+                (room_id,),
+            ).fetchone()[0]
+            if plants:
+                in_the_way.append(f"{plants} plant" + ("s" if plants > 1 else ""))
+            if in_the_way:
+                # Named, so the page can say what to move rather than
+                # only that something is in the way.
+                raise ValueError(
+                    f"This room still holds {' and '.join(in_the_way)}. Move "
+                    + ("it" if sensors + plants == 1 else "them")
+                    + " out first.")
+            # Nothing the page shows is in this room. What is left
+            # holding its id is archived or unenrolled -- counted
+            # nowhere, shown nowhere, but still a foreign key -- so it
+            # is released rather than refused on its behalf.
+            self._database.execute(
+                "UPDATE plants SET room_id = NULL WHERE room_id = ?", (room_id,))
+            self._database.execute(
+                "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,))
             deleted = self._database.execute(
                 "DELETE FROM rooms WHERE room_id = ?", (room_id,)
             ).rowcount
             if deleted == 0:
                 raise ValueError("room_id is unknown")
-            self._database.execute(
-                "UPDATE sensors SET room_id = NULL WHERE room_id = ?", (room_id,)
-            )
 
     # --- grow lights ------------------------------------------------------
     # A light's settings belong to its driver; the store keeps them as JSON and
@@ -1144,55 +1343,35 @@ class ReadingStore:
         return {**lighting, "sensor_id": sensor_id}
 
     def plant_lighting_of(self, plant_id: int) -> Dict[str, Any]:
-        """The lights a plant uses and when they are lit.
+        """Which lamps a plant stands under.
 
         Lights have always belonged to the plant rather than to the sensor
         watching it, which is why a plant with no sensor has them too.
 
-        A plant that has never been given a schedule is shown the default one,
-        marked unsaved; it takes effect only once saved.
+        When they are lit is not here: a lamp is one switch, so its hours
+        belong to the lamp. A plant that asked for its own window would be
+        asking a panel shared with three others to keep four.
         """
         with self._condition:
             if self.plant(plant_id) is None:
                 raise ValueError("unknown plant")
-            light_ids = [
-                row[0]
-                for row in self._database.execute(
-                    "SELECT light_id FROM plant_lights WHERE plant_id = ? ORDER BY light_id",
-                    (plant_id,),
-                )
-            ]
-            row = self._database.execute(
-                """
-                SELECT enabled, on_time, off_time FROM plant_light_schedules
-                WHERE plant_id = ?
-                """,
+            chosen = self._database.execute(
+                "SELECT light_id FROM plant_lights"
+                " WHERE plant_id = ? ORDER BY light_id",
                 (plant_id,),
-            ).fetchone()
-        schedule = (
-            {"enabled": bool(row[0]), "on": row[1], "off": row[2]}
-            if row is not None
-            else dict(DEFAULT_SCHEDULE)
-        )
+            ).fetchall()
         return {
             "plant_id": plant_id,
-            "light_ids": light_ids,
-            "schedule": schedule,
-            "schedule_saved": row is not None,
+            "light_ids": [row[0] for row in chosen],
         }
 
-    def set_plant_lighting(
-        self, sensor_id: str, light_ids: List[str], schedule: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def set_plant_lighting(self, sensor_id: str, light_ids: List[str]) -> Dict[str, Any]:
         with self._condition:
             plant_id = self._plant_of_sensor(sensor_id)
-        lighting = self.set_plant_lighting_of(plant_id, light_ids, schedule)
+        lighting = self.set_plant_lighting_of(plant_id, light_ids)
         return {**lighting, "sensor_id": sensor_id}
 
-    def set_plant_lighting_of(
-        self, plant_id: int, light_ids: List[str], schedule: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        schedule = validate_schedule(schedule)
+    def set_plant_lighting_of(self, plant_id: int, light_ids: List[str]) -> Dict[str, Any]:
         if not isinstance(light_ids, list) or not all(isinstance(i, str) for i in light_ids):
             raise ValueError("light_ids must be a list of light IDs")
         light_ids = list(dict.fromkeys(light_ids))
@@ -1212,55 +1391,96 @@ class ReadingStore:
                 ).fetchone()
                 if owner is None:
                     raise ValueError(f"light {light_id} not found")
-                if owner[1] is not None and owner[1] != plant_id:
-                    raise ValueError(f"{owner[0]} already lights {owner[2]}")
+                # A light may serve several plants: one panel over a bench
+                # is the ordinary case, and each plant under it has its own
+                # PPFD recorded on the pair.
             self._database.execute("DELETE FROM plant_lights WHERE plant_id = ?", (plant_id,))
             self._database.executemany(
                 "INSERT INTO plant_lights (light_id, plant_id) VALUES (?, ?)",
                 [(light_id, plant_id) for light_id in light_ids],
             )
+        return self.plant_lighting_of(plant_id)
+
+    def light_assignments(self) -> Dict[str, Dict[str, Any]]:
+        """For each light: the plants under it, and the hours it keeps.
+
+        The schedule is the lamp's own. A light can serve several plants --
+        one panel over a bench -- and a switch cannot keep two sets of
+        hours, so there is only ever one answer to ask for.
+        """
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT plant_lights.light_id, plants.plant_id, plants.archived,
+                       plants.display_name
+                FROM plant_lights
+                JOIN plants ON plants.plant_id = plant_lights.plant_id
+                ORDER BY plant_lights.light_id, plants.archived, plants.plant_id
+                """
+            ).fetchall()
+            schedules = {
+                row[0]: {"enabled": bool(row[1]), "on": row[2], "off": row[3]}
+                for row in self._database.execute(
+                    "SELECT light_id, enabled, on_time, off_time FROM light_schedules"
+                )
+            }
+        assignments: Dict[str, Dict[str, Any]] = {}
+        for light_id, plant_id, archived, display_name in rows:
+            entry = assignments.setdefault(
+                light_id,
+                {"plants": [], "plant_id": plant_id, "archived": True,
+                 "schedule": schedules.get(light_id)},
+            )
+            entry["plants"].append({"plant_id": plant_id, "archived": bool(archived),
+                                    "display_name": display_name})
+            if not archived:
+                # The light is live while any plant it serves is, and the
+                # headline plant is the first living one.
+                if entry["archived"]:
+                    entry["plant_id"] = plant_id
+                entry["archived"] = False
+        return assignments
+
+    def light_schedule(self, light_id: str) -> Dict[str, Any]:
+        """When a lamp is lit. Never saved means the suggested window."""
+        with self._condition:
+            row = self._database.execute(
+                "SELECT enabled, on_time, off_time FROM light_schedules WHERE light_id = ?",
+                (light_id,),
+            ).fetchone()
+        return {
+            "schedule": (
+                {"enabled": bool(row[0]), "on": row[1], "off": row[2]}
+                if row is not None
+                else dict(DEFAULT_SCHEDULE)
+            ),
+            "schedule_saved": row is not None,
+        }
+
+    def set_light_schedule(self, light_id: str, schedule: Dict[str, Any]) -> Dict[str, Any]:
+        schedule = validate_schedule(schedule)
+        with self._condition, self._database:
+            if self._database.execute(
+                "SELECT 1 FROM lights WHERE light_id = ?", (light_id,)
+            ).fetchone() is None:
+                raise ValueError("light not found")
             self._database.execute(
                 """
-                INSERT INTO plant_light_schedules (plant_id, enabled, on_time, off_time, updated_at)
+                INSERT INTO light_schedules (light_id, enabled, on_time, off_time, updated_at)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (plant_id) DO UPDATE SET
+                ON CONFLICT (light_id) DO UPDATE SET
                     enabled = excluded.enabled, on_time = excluded.on_time,
                     off_time = excluded.off_time, updated_at = excluded.updated_at
                 """,
                 (
-                    plant_id,
+                    light_id,
                     int(schedule["enabled"]),
                     schedule["on"],
                     schedule["off"],
                     _timestamp(datetime.now(timezone.utc)),
                 ),
             )
-        return self.plant_lighting_of(plant_id)
-
-    def light_assignments(self) -> Dict[str, Dict[str, Any]]:
-        """For each light that belongs to a plant: that plant and its schedule."""
-        with self._condition:
-            return {
-                row[0]: {
-                    "plant_id": row[1],
-                    "archived": bool(row[2]),
-                    "schedule": (
-                        {"enabled": bool(row[3]), "on": row[4], "off": row[5]}
-                        if row[3] is not None
-                        else None
-                    ),
-                }
-                for row in self._database.execute(
-                    """
-                    SELECT plant_lights.light_id, plants.plant_id, plants.archived,
-                           schedules.enabled, schedules.on_time, schedules.off_time
-                    FROM plant_lights
-                    JOIN plants ON plants.plant_id = plant_lights.plant_id
-                    LEFT JOIN plant_light_schedules AS schedules
-                        ON schedules.plant_id = plants.plant_id
-                    """
-                )
-            }
+        return self.light_schedule(light_id)
 
     def record_light_event(
         self, light_id: str, source: str, wanted: bool, outcome: str, detail: Optional[str]
@@ -1761,6 +1981,24 @@ class ReadingStore:
         assert result is not None
         return result
 
+    def remember_zigbee_address(self, sensor_id: str, address: str) -> Dict[str, Any]:
+        """Where a Zigbee device says its own web page answers.
+
+        Separate from record_sensor_wifi_result, which is the record of
+        a join this hub asked for and insists on a state to go with it.
+        This is a device volunteering where it can be found, which is
+        not a join and has no outcome to report.
+        """
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE sensors SET wifi_address = ? WHERE sensor_id = ?",
+                (address, sensor_id),
+            )
+        sensor = self.sensor(sensor_id)
+        if sensor is None:
+            raise LookupError("sensor not found")
+        return sensor
+
     def record_sensor_wifi_result(
         self,
         sensor_id: str,
@@ -1943,8 +2181,17 @@ class ReadingStore:
         found = self.zigbee_reports(eui=eui, since=since, limit=1)
         return found[0] if found else None
 
-    def prune_zigbee_reports(self, keep_days: int = ZIGBEE_REPORT_DAYS) -> int:
-        """Drop reports older than the retention window; returns how many."""
+    def prune_zigbee_reports(self, keep_days: Optional[int] = -1) -> int:
+        """Drop reports older than the retention window; returns how many.
+
+        Nothing is dropped unless a window has been chosen: a default
+        that deletes is a default that loses data somebody wanted, and
+        this is the only record of what a device actually said.
+        """
+        if keep_days == -1:
+            keep_days = self.hub_settings()["zigbee_report_keep_days"]
+        if keep_days is None:
+            return 0
         cutoff = _timestamp(
             datetime.now(timezone.utc) - timedelta(days=max(1, int(keep_days)))
         )
@@ -2608,8 +2855,8 @@ class ReadingStore:
                 FROM care_events
                 WHERE plant_id IS (SELECT plant_id FROM sensors WHERE sensor_id = ?)
                   AND kind = 'watering'
-                  AND julianday(detected_at) >= julianday(?)
-                  AND julianday(detected_at) <= julianday(?)
+                  AND detected_at >= ?
+                  AND detected_at <= ?
                 LIMIT 1
                 """,
                 (
@@ -2772,7 +3019,7 @@ class ReadingStore:
         time it was taken.
         """
         safe_limit = max(2, min(max_points, 1000))
-        parameters = (sensor_id, start_at, end_at)
+        parameters = (sensor_id, _bound(start_at), _bound(end_at, after=True))
         with self._condition:
             total = int(
                 self._database.execute(
@@ -2780,8 +3027,8 @@ class ReadingStore:
                     SELECT COUNT(*)
                     FROM sensor_readings
                     WHERE sensor_id = ?
-                      AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
-                      AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
+                      AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') >= ?
+                      AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') <= ?
                     """,
                     parameters,
                 ).fetchone()[0]
@@ -2796,9 +3043,9 @@ class ReadingStore:
                     SELECT {columns}
                     FROM sensor_readings
                     WHERE sensor_id = ?
-                      AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
-                      AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
-                    ORDER BY julianday(COALESCE(observed_at, received_at)), reading_id
+                      AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') >= ?
+                      AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') <= ?
+                    ORDER BY COALESCE(observed_at, received_at), reading_id
                     """,
                     parameters,
                 ).fetchall()
@@ -2809,12 +3056,12 @@ class ReadingStore:
                     WITH ranged AS (
                         SELECT {columns},
                                ROW_NUMBER() OVER (
-                                   ORDER BY julianday(COALESCE(observed_at, received_at)), reading_id
+                                   ORDER BY COALESCE(observed_at, received_at), reading_id
                                ) AS sample_number
                         FROM sensor_readings
                         WHERE sensor_id = ?
-                          AND julianday(COALESCE(observed_at, received_at)) >= julianday(?)
-                          AND julianday(COALESCE(observed_at, received_at)) <= julianday(?)
+                          AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') >= ?
+                          AND COALESCE(observed_at, substr(received_at, 1, 19) || 'Z') <= ?
                     )
                     SELECT {columns}
                     FROM ranged
@@ -3135,20 +3382,26 @@ class ReadingStore:
             item = activity.setdefault(day, _empty_calendar_day(day))
             item["fertilizing_count"] += 1
         events = [
-            (kind, datetime.fromisoformat(detected_at.replace("Z", "+00:00")))
+            (kind, datetime.fromisoformat(detected_at.replace("Z", "+00:00")), detected_at)
             for kind, detected_at in event_rows
         ]
-        for kind, detected_at in events:
+        for kind, detected_at, stored_at in events:
             if kind == "watering" and start <= detected_at < end:
-                day = detected_at.date().isoformat()
+                # The day somebody would say they watered it, as feeding
+                # already is. Filed on the UTC day instead, an evening
+                # watering west of Greenwich landed on tomorrow's square --
+                # and a feeding done at the same moment landed on today's,
+                # so the pair came apart on the page.
+                day = self._local_day(stored_at)
                 item = activity.setdefault(day, _empty_calendar_day(day))
                 item["watering_count"] += 1
 
-        for index, (kind, due_at) in enumerate(events):
+        for index, (kind, due_at, _stored_at) in enumerate(events):
             if kind != "watering_due":
                 continue
             watered_at = next(
-                (detected_at for next_kind, detected_at in events[index + 1:] if next_kind == "watering"),
+                (detected_at for next_kind, detected_at, _ in events[index + 1:]
+                 if next_kind == "watering"),
                 None,
             )
             overdue_at = due_at + timedelta(hours=24)
@@ -3403,6 +3656,37 @@ class ReadingStore:
             raise ValueError("care cannot have been given in the future")
         return _timestamp(when)
 
+    # What counts as a sudden gain. Proportional, because a gain that
+    # matters on a 500 g pot is noise on a 20 kg one, with a floor so a
+    # small pot's scale drift is not read as a watering.
+    REFILL_FRACTION = 0.08
+    REFILL_FLOOR_GRAMS = 40
+
+    def _is_a_refill(self, plant_id: int, grams: int, at: str) -> bool:
+        """Whether this weighing is heavier than the last by enough to be water.
+
+        A plant only ever loses weight between weighings; it cannot
+        drink backwards. So a jump is somebody with a watering can, and
+        the only question is how big a jump is beyond doubt. Repotting
+        and adding a top dressing also add weight, which is why the
+        weighing's own kind is left alone when it was given one -- this
+        only fills in what would otherwise be recorded as an ordinary
+        reading.
+        """
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT grams FROM plant_weights
+                WHERE plant_id = ? AND observed = 1 AND at < ?
+                ORDER BY at DESC, weight_id DESC LIMIT 1
+                """,
+                (plant_id, at),
+            ).fetchone()
+        if row is None:
+            return False
+        gained = grams - row[0]
+        return gained >= max(self.REFILL_FLOOR_GRAMS, row[0] * self.REFILL_FRACTION)
+
     def record_plant_weight(
         self,
         plant_id: int,
@@ -3435,6 +3719,9 @@ class ReadingStore:
         if not 1 <= grams <= 500_000:
             raise ValueError("a pot weighs between 1 and 500000 grams")
         at = self._validate_weighing_time(at)
+        if (kind == "reading" and observed and source == "manual"
+                and self._is_a_refill(plant_id, grams, at)):
+            kind = "watered"
         with self._condition, self._database:
             self._database.execute(
                 """
@@ -3536,6 +3823,167 @@ class ReadingStore:
                 (host, sensor_id),
             )
 
+    def record_gateway_restart(self, reason: Optional[str],
+                               ran_for_s: Optional[int]) -> None:
+        """Note that the gateway started, and how long the last run lasted."""
+        with self._condition, self._database:
+            self._database.execute(
+                "INSERT INTO gateway_restarts (at, reason, ran_for_s) VALUES (?, ?, ?)",
+                (_timestamp(datetime.now(timezone.utc)), reason,
+                 None if ran_for_s is None else int(ran_for_s)),
+            )
+            # A rolling window: what matters is whether this is happening,
+            # not every instance since the hub was built.
+            self._database.execute(
+                "DELETE FROM gateway_restarts WHERE restart_id NOT IN "
+                "(SELECT restart_id FROM gateway_restarts ORDER BY at DESC LIMIT 50)"
+            )
+
+    def gateway_restarts(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._condition:
+            rows = self._database.execute(
+                "SELECT at, reason, ran_for_s FROM gateway_restarts"
+                " ORDER BY at DESC LIMIT ?", (int(limit),),
+            ).fetchall()
+        return [{"at": r[0], "reason": r[1], "ran_for_s": r[2]} for r in rows]
+
+    def plant_light_days(self, plant_id: int, days: int = 400) -> List[Dict[str, Any]]:
+        """The light a plant gets in a day: its PPFD over the hours it is lit.
+
+            DLI = ppfd * hours * 3600 / 1e6
+
+        The hours come from the lamp's daily schedule, or -- for a plant
+        with no lamp the hub switches -- from the hours typed on its
+        configuration page. That is the whole calculation.
+
+        KEEP THIS SIMPLE. It was once worked out by replaying every
+        switching event the hub had recorded: carrying a lamp's state
+        across midnight, merging overlapping runs from several lamps,
+        and tracking "unsure" hours for commands that went unconfirmed.
+        All of it defensible, and the result was a plant under a lamp
+        that had been lit all day reporting 0.3 mol/m2/day, because the
+        lamp's Wi-Fi had dropped a few times and the hub would not
+        claim light it had not confirmed. The figure it produced was
+        about the network, not the plant.
+
+        A schedule says when the lamp is on. If it is not on when it
+        should be, that is worth saying somewhere -- the light's own
+        page says it, in words -- but it is not worth turning this
+        number into a measurement of the hub's confidence. Resist
+        adding event replay, confidence weighting or partial-day
+        arithmetic back in: each one is reasonable on its own and
+        together they produced a number nobody could explain.
+        """
+        zone = self.hub_zone()
+        with self._condition:
+            row = self._database.execute(
+                "SELECT ppfd_umol_m2s, light_hours_per_day FROM plants WHERE plant_id = ?",
+                (plant_id,),
+            ).fetchone()
+        if not row or not row[0]:
+            return []
+        ppfd, typed_hours = float(row[0]), row[1]
+        hours = self._scheduled_hours(plant_id)
+        if hours is None:
+            hours = float(typed_hours) if typed_hours else None
+        if not hours:
+            return []
+        # One entry, for the last day that has finished. The page shows
+        # a whole day's light and today is not one yet; with the hours
+        # coming from a schedule rather than a recording, every finished
+        # day is the same day anyway.
+        yesterday = (datetime.now(timezone.utc).astimezone(zone).date()
+                     - timedelta(days=1)).isoformat()
+        return [{
+            "date": yesterday,
+            "dli": round(ppfd * hours * 3600 / 1_000_000, 2),
+            "lit_hours": round(hours, 1),
+            "complete": True,
+        }]
+
+    def _scheduled_hours(self, plant_id: int) -> Optional[float]:
+        """Hours a day this plant's lamps are scheduled on, or None.
+
+        Merged rather than added: two lamps sharing a window light the
+        plant once, and the PPFD measured at its leaves already has
+        both of them in it.
+        """
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT light_schedules.on_time, light_schedules.off_time
+                FROM plant_lights
+                JOIN light_schedules ON light_schedules.light_id = plant_lights.light_id
+                WHERE plant_lights.plant_id = ? AND light_schedules.enabled = 1
+                """,
+                (plant_id,),
+            ).fetchall()
+        windows: List[Tuple[int, int]] = []
+        for on_at, off_at in rows:
+            start_minute = _minutes_of_day(on_at)
+            end_minute = _minutes_of_day(off_at)
+            if start_minute is None or end_minute is None or start_minute == end_minute:
+                continue
+            if end_minute < start_minute:
+                # A window that runs past midnight is two windows of one day.
+                windows.append((start_minute, 1440))
+                windows.append((0, end_minute))
+            else:
+                windows.append((start_minute, end_minute))
+        if not windows:
+            return None
+        covered = 0
+        reach = 0
+        for start_minute, end_minute in sorted(windows):
+            start_minute = max(start_minute, reach)
+            if end_minute > start_minute:
+                covered += end_minute - start_minute
+                reach = end_minute
+        return covered / 60
+
+    @staticmethod
+    def _merge_runs(
+        runs: List[Tuple[datetime, datetime, bool]]
+    ) -> List[Tuple[datetime, datetime, bool]]:
+        """Overlapping lit stretches, flattened into the time actually lit.
+
+        A stretch is doubtful if any lamp contributing to it was. Doubt is
+        not cancelled by a second lamp that answered: the hub still cannot
+        say what the plant stood in.
+        """
+        merged: List[Tuple[datetime, datetime, bool]] = []
+        for start, end, doubtful in sorted(runs):
+            if end <= start:
+                continue
+            if merged and start <= merged[-1][1]:
+                last_start, last_end, last_doubt = merged[-1]
+                merged[-1] = (last_start, max(last_end, end), last_doubt or doubtful)
+            else:
+                merged.append((start, end, doubtful))
+        return merged
+
+    @staticmethod
+    def _spread_seconds(into: Dict[str, float], start: datetime, end: datetime,
+                        zone: Any) -> None:
+        """Add a lit stretch to each local day it covers.
+
+        A lamp on from 19:00 to 02:00 belongs to two days, in the
+        proportions it actually ran, not wholly to whichever one the hub
+        happened to look at.
+        """
+        if end <= start:
+            return
+        cursor = start
+        while cursor < end:
+            local = cursor.astimezone(zone)
+            midnight = (local.replace(hour=0, minute=0, second=0, microsecond=0)
+                        + timedelta(days=1)).astimezone(timezone.utc)
+            piece_end = min(end, midnight)
+            seconds = (piece_end - cursor).total_seconds()
+            into[local.date().isoformat()] = into.get(
+                local.date().isoformat(), 0.0) + seconds
+            cursor = piece_end
+
     def record_battery(self, sensor_id: str, percent: Optional[int],
                        volts: Optional[float], at: Optional[datetime] = None) -> None:
         """Note a battery's charge, at most once an hour per sensor.
@@ -3632,11 +4080,13 @@ class ReadingStore:
             "watered": None,
             "thirsty": None,
             "dry": None,
+            "dry_stated": False,
+            "lightest": None,
             "used_grams": None,
             "capacity_grams": None,
             "remaining_percent": None,
+            "thirsty_percent": None,
             "held_grams": None,
-            "water_percent": None,
             "daily_grams": None,
             "days_left": None,
         }
@@ -3653,18 +4103,23 @@ class ReadingStore:
         status["latest"] = point(latest) if latest else None
         watered = next((row for row in rows if row[2] == "watered"), None)
         thirsty = next((row for row in rows if row[2] == "thirsty"), None)
-        # What the pot weighs dry is not a decision anybody has to make: the
-        # scale has already said it. A pot cannot have held less water than
-        # the least it has ever weighed, so the lightest weighing stands
-        # unless somebody sets one deliberately. Typed-in anchors are left
-        # out of the running -- a claim about a state the pot is not in is
-        # not a weighing of it.
-        dry = next((row for row in rows if row[2] == "dry"), None)
-        if dry is None and weighings:
-            dry = min(weighings, key=lambda row: row[1])
+        # What the pot weighs dry can be stated, and otherwise the scale has
+        # already said it: a pot cannot have held less water than the least
+        # it has ever weighed, so the lightest weighing stands until
+        # somebody sets one. A typed one wins even when the pot has since
+        # weighed less -- it is a claim about the soil, and the scale
+        # catching it lighter is worth showing rather than silently
+        # overruling. The lightest weighing is kept beside it for that.
+        stated_dry = next((row for row in rows if row[2] == "dry"), None)
+        lightest = min(weighings, key=lambda row: row[1]) if weighings else None
+        dry = stated_dry or lightest
         status["watered"] = point(watered) if watered else None
         status["thirsty"] = point(thirsty) if thirsty else None
         status["dry"] = point(dry) if dry else None
+        # Which of the two the dry figure is, so a page can say "Dry at"
+        # rather than "Driest seen" and mean it.
+        status["dry_stated"] = stated_dry is not None
+        status["lightest"] = point(lightest) if lightest else None
         # How much water the pot holds is the distance between its anchors,
         # which is known as soon as both are, weighed or typed in.
         capacity = None
@@ -3674,9 +4129,21 @@ class ReadingStore:
         # What the pot holds between dry and full is all the water there is to
         # hold. Capacity above is the part of it this plant is allowed to use
         # before somebody waters, which is a smaller and more arbitrary number.
+        # The bottom of the water scale: the lowest weight this pot is
+        # expected to reach.
+        #
+        # Usually the dry weight. But dry is inferred from the lightest
+        # weighing when nobody states one, and a pot never let near dry
+        # has a floor well above the weight its owner waters it at -- a
+        # stated thirsty of 2000 g under a lightest weighing of 2585 g.
+        # Measured from that floor such a pot reads empty whenever it
+        # is at its own lightest, which is most of the time.
+        floor = dry
+        if thirsty and dry and thirsty[1] < dry[1]:
+            floor = thirsty
         held = None
-        if watered and dry and watered[1] > dry[1]:
-            held = watered[1] - dry[1]
+        if watered and floor and watered[1] > floor[1]:
+            held = watered[1] - floor[1]
             status["held_grams"] = held
         if latest is None:
             return status
@@ -3684,34 +4151,64 @@ class ReadingStore:
         latest_grams = latest[1]
         if watered:
             status["used_grams"] = max(0, watered[1] - latest_grams)
-        if capacity:
-            remaining = (latest_grams - thirsty[1]) / capacity * 100
-            status["remaining_percent"] = round(min(100.0, max(0.0, remaining)))
-        # Measured from dry, so it is the fraction of the water the pot can
-        # hold rather than the fraction of a watering interval. Left uncapped
-        # at the bottom would be the honest reading, but a pot lighter than
-        # its dry weight means the anchor is wrong or the pot lost substrate,
-        # and neither is a wetness to report.
+        # "Water left" is measured from dry, the same scale "Water used"
+        # is counted on.
+        #
+        # Against the thirsty weight it read 0 % on a pot still holding
+        # sixteen grams, because the thirsty mark is where somebody
+        # decided to water, not where the water runs out -- and it sat
+        # beside "Water used 97 ml", counted from full, so the pair did
+        # not add up. From dry they do: 97 ml used of the 113 ml this
+        # pot holds, 14 % left, and 0 % means dry.
+        #
+        # Left uncapped at the bottom would be the honest reading, but a
+        # pot lighter than its dry weight means the anchor is wrong or
+        # the pot lost substrate, and neither is a wetness to report.
         if held:
-            water = (latest_grams - dry[1]) / held * 100
-            status["water_percent"] = round(min(100.0, max(0.0, water)))
+            water = (latest_grams - floor[1]) / held * 100
+            status["remaining_percent"] = round(min(100.0, max(0.0, water)))
+            # Where this plant asks for water, on that same scale, so a
+            # page can mark the line instead of guessing at one.
+            if thirsty:
+                mark = (thirsty[1] - floor[1]) / held * 100
+                status["thirsty_percent"] = round(min(100.0, max(0.0, mark)))
 
-        # How fast it is drying, over the weighings since the last watering:
-        # a rate measured across a watering would be a rate of filling.
+        # How fast it is drying, averaged over the gaps between weighings
+        # and skipping any gap where the pot gained weight.
+        #
+        # This was once the oldest weighing against the newest, which is
+        # a drying rate only if nobody watered in between. Four
+        # waterings recorded as plain weighings -- the tick not pressed
+        # -- cancelled eleven days of drying down to sixteen grams, and
+        # the page offered "about 124.8 days of water left" beside a
+        # forecast of five. The forecast was right; this is the same
+        # arithmetic, so there is one answer instead of two.
         since = watered[0] if watered else None
         cycle = [row for row in weighings if since is None or row[0] >= since]
-        if len(cycle) >= 2:
-            newest, oldest = cycle[0], cycle[-1]
-            span = self._observation_datetime(newest[0], now) - self._observation_datetime(
-                oldest[0], now
-            )
-            lost = oldest[1] - newest[1]
-            if span >= MIN_WEIGHT_SPAN and lost > 0:
-                daily = lost / (span.total_seconds() / 86400.0)
-                status["daily_grams"] = round(daily)
-                if thirsty and newest[1] > thirsty[1]:
-                    status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
+        daily = self._drying_rate(cycle, now)
+        if daily:
+            status["daily_grams"] = round(daily)
+            newest = cycle[0]
+            if thirsty and newest[1] > thirsty[1]:
+                status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
         return status
+
+    def _drying_rate(self, weighings: List[Tuple[Any, float]],
+                     now: datetime) -> Optional[float]:
+        """Grams a day lost, from the gaps that were drying.
+
+        A gap where the pot grew heavier is somebody watering it, not
+        the plant drinking backwards, so it is left out rather than
+        subtracted. Without that one refill can hide a fortnight of use.
+        """
+        rates = []
+        for newer, older in zip(weighings, weighings[1:]):
+            span = (self._observation_datetime(newer[0], now)
+                    - self._observation_datetime(older[0], now))
+            lost = older[1] - newer[1]
+            if span >= MIN_WEIGHT_SPAN and lost > 0:
+                rates.append(lost / (span.total_seconds() / 86400.0))
+        return sum(rates) / len(rates) if rates else None
 
     def water_use(
         self, plant_id: int, days: int = 90, with_air: bool = True
@@ -3858,6 +4355,115 @@ class ReadingStore:
             ).fetchone()[0]
         return newest is None or self._observation_datetime(newest, now) <= when
 
+    def room_air_sources(self, room_id: Optional[int]) -> List[Dict[str, Any]]:
+        """Every sensor measuring the air in this room, newest first.
+
+        One entry per sensor, not one per room. Two thermometers in a
+        room are usually two corners of it, and a room with a sensor at
+        the window and another by the door has two honest answers --
+        averaging them produces a third that is true nowhere.
+        """
+        if room_id is None:
+            return []
+        # The newest of each measurement, not the newest row. A Zigbee
+        # thermometer sends temperature and humidity as separate frames
+        # minutes apart, so its most recent row carries one of the two
+        # and the other read as missing -- a sensor reporting perfectly
+        # well, shown with a blank where its temperature should be.
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT s.sensor_id, s.display_name,
+                       (SELECT r.air_temperature_c FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.air_temperature_c IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.observed_at FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.air_temperature_c IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.air_humidity_percent FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.air_humidity_percent IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.observed_at FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.air_humidity_percent IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1)
+                FROM sensors s
+                WHERE s.room_id = ? AND s.enrollment_status = 'enrolled'
+                  AND COALESCE(s.transport, '') NOT IN (
+                      'zigbee-soil', 'zigbee-scale', 'zigbee-plug')
+                """,
+                (room_id,),
+            ).fetchall()
+        sources = []
+        for sensor_id, name, temperature, temp_at, humidity, humidity_at in rows:
+            if temperature is None and humidity is None:
+                continue
+            sources.append({
+                "sensor_id": sensor_id,
+                "sensor_name": name or sensor_id,
+                # The older of the two, so "measured 3 minutes ago" is
+                # not claimed for a pair whose other half is an hour old.
+                "observed_at": min(x for x in (temp_at, humidity_at) if x),
+                "air_temperature_c": round(temperature, 1) if temperature is not None else None,
+                "air_humidity_percent": round(humidity, 1) if humidity is not None else None,
+                "drying_kpa": (round(vapour_pressure_deficit(temperature, humidity), 2)
+                               if temperature is not None and humidity is not None else None),
+            })
+        sources.sort(key=lambda source: source["observed_at"], reverse=True)
+        return sources
+
+    def plant_soil_sources(self, plant_id: Optional[int]) -> List[Dict[str, Any]]:
+        """Every sensor measuring this plant's soil, newest first.
+
+        One pot can have more than one probe in it -- a Bluetooth spike
+        and a Zigbee one, or two at different depths -- and they are
+        measuring the same soil from different places. Each is its own
+        answer, the way two thermometers in a room are.
+        """
+        if plant_id is None:
+            return []
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT s.sensor_id, s.display_name,
+                       (SELECT r.soil_temperature_c FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.soil_temperature_c IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.observed_at FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.soil_temperature_c IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.moisture_percent FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.moisture_percent IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1),
+                       (SELECT r.observed_at FROM sensor_readings r
+                         WHERE r.sensor_id = s.sensor_id
+                           AND r.moisture_percent IS NOT NULL
+                         ORDER BY r.observed_at DESC LIMIT 1)
+                FROM sensors s
+                WHERE s.plant_id = ? AND s.enrollment_status = 'enrolled'
+                """,
+                (plant_id,),
+            ).fetchall()
+        sources = []
+        for sensor_id, name, temperature, temp_at, moisture, moisture_at in rows:
+            if temperature is None and moisture is None:
+                continue
+            sources.append({
+                "sensor_id": sensor_id,
+                "sensor_name": name or sensor_id,
+                "observed_at": min(x for x in (temp_at, moisture_at) if x),
+                "soil_temperature_c": round(temperature, 1) if temperature is not None else None,
+                "moisture_percent": round(moisture, 1) if moisture is not None else None,
+            })
+        sources.sort(key=lambda source: source["observed_at"], reverse=True)
+        return sources
+
     def room_air(self, room_id: Optional[int]) -> Optional[Dict[str, Any]]:
         """The air of a room, from whichever sensor in it last reported it.
 
@@ -3867,38 +4473,15 @@ class ReadingStore:
 
         Nothing is averaged across sensors: two in one room would usually
         mean two corners of it, and the most recent reading is a truer answer
-        than the mean of a warm corner and a cold one.
+        than the mean of a warm corner and a cold one. The newest of the
+        sources rather than a query of its own, so the headline figure and
+        the per-sensor list can never disagree about what was measured.
         """
-        if room_id is None:
-            return None
-        with self._condition:
-            row = self._database.execute(
-                """
-                SELECT sensor_readings.sensor_id, sensors.display_name,
-                       sensor_readings.observed_at, air_temperature_c, air_humidity_percent
-                FROM sensor_readings
-                JOIN sensors ON sensors.sensor_id = sensor_readings.sensor_id
-                WHERE sensors.room_id = ?
-                  AND sensors.enrollment_status = 'enrolled'
-                  AND air_temperature_c IS NOT NULL
-                  AND air_humidity_percent IS NOT NULL
-                ORDER BY sensor_readings.observed_at DESC
-                LIMIT 1
-                """,
-                (room_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "sensor_id": row[0],
-            "sensor_name": row[1] or row[0],
-            "observed_at": row[2],
-            "air_temperature_c": round(row[3], 1),
-            "air_humidity_percent": round(row[4], 1),
-            # How hard that air is pulling water out of things, which is the
-            # number the water use is held against.
-            "drying_kpa": round(vapour_pressure_deficit(row[3], row[4]), 2),
-        }
+        for source in self.room_air_sources(room_id):
+            if (source["air_temperature_c"] is not None
+                    and source["air_humidity_percent"] is not None):
+                return source
+        return None
 
     def _room_drying_hours(
         self, room_id: Optional[int], start: datetime, end: datetime
@@ -4067,8 +4650,19 @@ class ReadingStore:
         if against_air is not None:
             share = against_air
 
+        # Nearly empty and still full are judged against this plant's
+        # own thirsty mark, not a fixed percentage: "water left" is
+        # measured from the pot's dry weight, and the mark falls at a
+        # different point on that scale for every pot -- 17 % for one
+        # watered early, 30 % for another.
+        mark = status["thirsty_percent"]
+        # Bands within the range this plant uses, not fixed points.
+        # "At or below the mark" is too strict to warn on: by then the
+        # pot is not nearly empty, it is empty.
+        nearly_empty = (mark + (100 - mark) * 0.25) if mark is not None else 30
+        still_full = (mark + (100 - mark) * 0.5) if mark is not None else 50
         if share <= 0.67:
-            if left is not None and left <= 30:
+            if left is not None and left <= nearly_empty:
                 return [{
                     "code": "drinking_less_and_low",
                     "title": "Drinking less, and nearly empty",
@@ -4080,7 +4674,7 @@ class ReadingStore:
                     ),
                     "evidence": evidence,
                 }]
-            if left is not None and left >= 50:
+            if left is not None and left >= still_full:
                 return [{
                     "code": "drinking_less_while_full",
                     "title": "Drinking less with water still in the pot",
@@ -4239,6 +4833,7 @@ class ReadingStore:
             "grams_per_day": None,
             "rate_from": None,
             "spans_used": len(spans),
+            "band_spans_used": 0,
             "thirsty_now": False,
         }
         if missing:
@@ -4274,11 +4869,26 @@ class ReadingStore:
 
         now = datetime.now(timezone.utc)
         days = to_go / typical
+
+        # How fast it drinks is read from this cycle, which is the same plant
+        # in the same pot in the same weather. How much that varies cannot be:
+        # a cycle one weighing old has a rate and no spread, and a band drawn
+        # from it would say 2.3 to 2.3 days, which is a certainty nobody has.
+        # So the band is every span in the window -- the fastest and slowest
+        # it has drunk, which is what the chart has always claimed to show --
+        # with this cycle's rate among them, so the estimate is always inside
+        # its own band.
+        window_rates = [
+            span["grams_per_day"] for span in use["intervals"]
+            if span["grams_per_day"] > 0
+        ]
+        band = (window_rates or rates) + [typical]
         forecast.update({
             "days": round(days, 1),
             # Fastest it has drunk brings the day forward; slowest pushes it out.
-            "days_soonest": round(to_go / max(rates), 1),
-            "days_latest": round(to_go / min(rates), 1),
+            "days_soonest": round(to_go / max(band), 1),
+            "days_latest": round(to_go / min(band), 1),
+            "band_spans_used": len(band) - 1,
             "water_on": _timestamp(now + timedelta(days=days)),
         })
         return forecast
@@ -4308,7 +4918,9 @@ class ReadingStore:
                           AND kind = 'fertilizing'),
                        plants.cover_follows_latest,
                        plants.purchase_price_cents,
-                       plants.purchase_place
+                       plants.purchase_place,
+                       plants.ppfd_umol_m2s, plants.light_hours_per_day,
+                       plants.started_at
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -4356,7 +4968,9 @@ class ReadingStore:
                           AND kind = 'fertilizing'),
                        plants.cover_follows_latest,
                        plants.purchase_price_cents,
-                       plants.purchase_place
+                       plants.purchase_place,
+                       plants.ppfd_umol_m2s, plants.light_hours_per_day,
+                       plants.started_at
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -4717,6 +5331,9 @@ class ReadingStore:
         acquired_at: Optional[str] = None,
         purchase_price_cents: Optional[int] = None,
         purchase_place: Optional[str] = None,
+        ppfd_umol_m2s: Optional[float] = None,
+        light_hours_per_day: Optional[float] = None,
+        started_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
@@ -4726,18 +5343,29 @@ class ReadingStore:
         profile_id = self._validate_plant_profile(profile_id)
         variety = self._validate_plant_variety(profile_id, variety)
         acquired_at = self._validate_acquired_at(acquired_at)
+        started_at = self._validate_acquired_at(started_at)
         purchase_price_cents = self._validate_purchase_price_cents(purchase_price_cents)
         purchase_place = self._validate_purchase_place(purchase_place)
+        if ppfd_umol_m2s is not None and not 0 <= ppfd_umol_m2s <= 5000:
+            # Full summer sun is about 2000; past five thousand is a
+            # typing mistake rather than a growing condition.
+            raise ValueError("light reaching a plant must be between 0 and 5000 umol/m2/s")
+        if light_hours_per_day is not None and not 0 <= light_hours_per_day <= 24:
+            # A day has twenty-four hours whatever the lamp is doing.
+            raise ValueError("hours of light a day must be between 0 and 24")
         with self._condition, self._database:
             self._database.execute(
                 """
                 UPDATE plants SET display_name = ?, room_id = ?, expected_watering_days = ?,
                                   profile_id = ?, variety = ?, acquired_at = ?,
-                                  purchase_price_cents = ?, purchase_place = ?
+                                  purchase_price_cents = ?, purchase_place = ?,
+                                  ppfd_umol_m2s = ?, light_hours_per_day = ?,
+                                  started_at = ?
                 WHERE plant_id = ?
                 """,
                 (display_name, room_id, expected_watering_days, profile_id, variety,
-                 acquired_at, purchase_price_cents, purchase_place, plant_id),
+                 acquired_at, purchase_price_cents, purchase_place, ppfd_umol_m2s,
+                 light_hours_per_day, started_at, plant_id),
             )
             # A sensor watching it shows the same name, profile and room, or
             # its pages and the plant's disagree about the same plant.
@@ -4838,6 +5466,15 @@ class ReadingStore:
             # acquired_at these are the receipt: when, where, how much.
             "purchase_price_cents": row[16],
             "purchase_place": row[17],
+            # How much light reaches it where it stands, measured at the
+            # leaf. A property of the spot, not of any one lamp.
+            "ppfd_umol_m2s": row[18],
+            # Hours typed by hand, for a plant lit by something the hub
+            # does not switch. A standing assumption, not an observation.
+            "light_hours_per_day": row[19],
+            # When the plant began, not when it arrived. What its signs
+            # mean depends on how old it is.
+            "started_at": row[20],
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:
@@ -5151,6 +5788,111 @@ class ReadingStore:
             )
         self._database.commit()
 
+    def record_air_reading(self, sensor_id: str,
+                           temperature_c: Optional[float],
+                           humidity_percent: Optional[float],
+                           observed_at: Optional[str] = None) -> bool:
+        """File what a thermometer measured, as a reading like any other.
+
+        A Zigbee thermometer's reports were kept only in the raw Zigbee
+        log, so nothing downstream could see them: the rooms page, the
+        plant pages and every figure held against the air all read
+        sensor_readings, and as far as they were concerned the device
+        did not exist. Writing here rather than teaching each of those
+        about a second place to look -- the transport a measurement
+        arrived over is not something a room should have to know.
+
+        Air only, and said so: there is no soil probe on this device,
+        and a missing soil number must read as absent rather than as
+        zero.
+        """
+        if temperature_c is None and humidity_percent is None:
+            return False
+        now = _timestamp(datetime.now(timezone.utc))
+        reading = SensorReading(
+            sensor_id=sensor_id,
+            report_id=None,
+            observed_at=observed_at or now,
+            soil_temperature_c=None,
+            moisture_percent=None,
+            conductivity_us_cm=None,
+            air_temperature_c=temperature_c,
+            air_humidity_percent=humidity_percent,
+            soil_source_status="unavailable",
+            air_source_status="available",
+        )
+        with self._condition:
+            return self._save_reading(reading, now)
+
+    # How long a soil measurement stands in for the present.
+    #
+    # Comfortably longer than these probes' half-hourly reporting, not
+    # equal to it: at thirty minutes a temperature frame arriving eight
+    # seconds late lost the moisture that came with the previous one,
+    # and the plant page fell back to "Waiting for a reading" while the
+    # device's own page showed both. Soil is the slowest thing here --
+    # an hour-old moisture reading is still a fair statement of now.
+    SOIL_CARRY_SECONDS = 7200
+
+    def _recent_soil(self, sensor_id: str) -> Dict[str, Any]:
+        """The newest soil temperature and moisture, each if recent."""
+        since = _timestamp(datetime.now(timezone.utc)
+                           - timedelta(seconds=self.SOIL_CARRY_SECONDS))
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT (SELECT soil_temperature_c FROM sensor_readings
+                         WHERE sensor_id = ? AND soil_temperature_c IS NOT NULL
+                           AND observed_at >= ?
+                         ORDER BY observed_at DESC LIMIT 1),
+                       (SELECT moisture_percent FROM sensor_readings
+                         WHERE sensor_id = ? AND moisture_percent IS NOT NULL
+                           AND observed_at >= ?
+                         ORDER BY observed_at DESC LIMIT 1)
+                """,
+                (sensor_id, since, sensor_id, since),
+            ).fetchone()
+        return {"soil_temperature_c": row[0], "moisture_percent": row[1]}
+
+    def record_soil_reading(self, sensor_id: str,
+                            soil_temperature_c: Optional[float],
+                            moisture_percent: Optional[float],
+                            observed_at: Optional[str] = None) -> bool:
+        """File what a probe measured in a pot, as a reading like any other.
+
+        The same table the Bluetooth probes write to, so a Zigbee probe
+        needs nothing taught to the plant pages, the journey or the
+        watering figures: a soil reading is a soil reading whatever
+        radio carried it.
+
+        Soil only, and said so. This probe is in a pot and measures no
+        air; a missing air number must read as absent rather than as a
+        room that is nought degrees.
+        """
+        if soil_temperature_c is None and moisture_percent is None:
+            return False
+        if soil_temperature_c is None or moisture_percent is None:
+            recent = self._recent_soil(sensor_id)
+            if soil_temperature_c is None:
+                soil_temperature_c = recent.get("soil_temperature_c")
+            if moisture_percent is None:
+                moisture_percent = recent.get("moisture_percent")
+        now = _timestamp(datetime.now(timezone.utc))
+        reading = SensorReading(
+            sensor_id=sensor_id,
+            report_id=None,
+            observed_at=observed_at or now,
+            soil_temperature_c=soil_temperature_c,
+            moisture_percent=moisture_percent,
+            conductivity_us_cm=None,
+            air_temperature_c=None,
+            air_humidity_percent=None,
+            soil_source_status="available",
+            air_source_status="unavailable",
+        )
+        with self._condition:
+            return self._save_reading(reading, now)
+
     def _save_reading(self, reading: SensorReading, received_at: str) -> bool:
         cursor = self._insert_reading(reading, received_at)
         self._database.commit()
@@ -5319,6 +6061,11 @@ class ReadingStore:
             # all have to move; its position in the list is not its meaning.
             "scale_keep_at_hour": row[55],
             "zigbee_host": row[56] if len(row) > 56 else None,
+            "plant_name": row[57] if len(row) > 57 else None,
+            # How often this device is asked to report. None means the
+            # hub's default for its kind.
+            "zigbee_report_max_seconds": row[58] if len(row) > 58 else None,
+            "zigbee_report_sensitivity": row[59] if len(row) > 59 else None,
             "scale": None if row[42] is None else {
                 "grams": row[44],
                 "status": row[45],
@@ -5476,9 +6223,20 @@ class ReadingStore:
                 (eui,),
             ).fetchone()
             if existing is not None:
+                # A definite answer replaces whatever is there; only
+                # "unknown" never overwrites. Restricted to replacing
+                # "unknown", a device judged wrongly once was stuck with
+                # it for ever -- a soil probe first read as a room
+                # thermometer stayed one after the hub knew better.
                 self._database.execute(
-                    "UPDATE sensors SET last_seen_at = ? WHERE sensor_id = ?",
-                    (now, existing[0]),
+                    """
+                    UPDATE sensors
+                       SET last_seen_at = ?,
+                           transport = CASE
+                               WHEN ? <> 'unknown' THEN ? ELSE transport END
+                     WHERE sensor_id = ?
+                    """,
+                    (now, kind, f"zigbee-{kind}", existing[0]),
                 )
                 sensor_id = existing[0]
             else:

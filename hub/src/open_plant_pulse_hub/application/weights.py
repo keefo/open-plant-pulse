@@ -18,7 +18,7 @@ either every so many seconds, or once a day at a chosen hour.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, timezone, tzinfo
 import logging
 from typing import Any, Dict, Optional
 

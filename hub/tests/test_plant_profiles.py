@@ -13,6 +13,7 @@ class PlantProfileLoaderTests(unittest.TestCase):
         self.assertEqual(
             set(catalog["profiles"]),
             {
+                "begonia",
                 "generic_foliage",
                 "jasmine",
                 "monstera",

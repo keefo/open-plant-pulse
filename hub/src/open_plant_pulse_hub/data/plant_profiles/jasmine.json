@@ -5,40 +5,220 @@
   "name": "Jasmine",
   "scientific_name": "Jasminum spp.",
   "varieties": [
-    {"id": "polyanthum", "name": "Pink jasmine (J. polyanthum)", "note": "The one sold in bud in winter. It needs four to six weeks of cool nights, around 10-13 °C, in autumn to set buds: kept warm all year it makes leaves and no flowers."},
-    {"id": "sambac", "name": "Arabian jasmine (J. sambac)", "note": "Tropical and warmth-loving: it flowers through the heat of summer and wants no cool period. The least cold-tolerant of them; keep it above 13 °C."},
-    {"id": "officinale", "name": "Common jasmine (J. officinale)", "note": "The hardiest, and summer-flowering. Happiest with a cool, drier winter rest, after which it flowers on new growth."},
-    {"id": "grandiflorum", "name": "Spanish jasmine (J. grandiflorum)", "note": "Long flowering and tender, grown for its scent. Treated as J. officinale but kept warmer."},
-    {"id": "nitidum", "name": "Angel-wing jasmine (J. nitidum)", "note": "Shrubbier than the climbers and tender. It flowers on new growth, so prune after a flush rather than before one."}
+    {
+      "id": "polyanthum",
+      "name": "Pink jasmine (J. polyanthum)",
+      "note": "The one sold in bud in winter. It needs four to six weeks of cool nights, around 10-13 \u00b0C, in autumn to set buds: kept warm all year it makes leaves and no flowers."
+    },
+    {
+      "id": "sambac",
+      "name": "Arabian jasmine (J. sambac)",
+      "note": "Tropical and warmth-loving: it flowers through the heat of summer and wants no cool period. The least cold-tolerant of them; keep it above 13 \u00b0C."
+    },
+    {
+      "id": "officinale",
+      "name": "Common jasmine (J. officinale)",
+      "note": "The hardiest, and summer-flowering. Happiest with a cool, drier winter rest, after which it flowers on new growth."
+    },
+    {
+      "id": "grandiflorum",
+      "name": "Spanish jasmine (J. grandiflorum)",
+      "note": "Long flowering and tender, grown for its scent. Treated as J. officinale but kept warmer."
+    },
+    {
+      "id": "nitidum",
+      "name": "Angel-wing jasmine (J. nitidum)",
+      "note": "Shrubbier than the climbers and tender. It flowers on new growth, so prune after a flush rather than before one."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
-    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [16, 26], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [600, 1600], "scale": [0, 3000]}
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        16,
+        26
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        600,
+        1600
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
   },
   "watering": {
     "strategy": "even_moisture",
     "label": "Keep evenly moist while in leaf; a full dry-out costs the buds",
     "refill_below": 40,
-    "post_water_target": [62, 78],
-    "comfortable_cycle": [40, 78],
+    "post_water_target": [
+      62,
+      78
+    ],
+    "comfortable_cycle": [
+      40,
+      78
+    ],
     "concern_below": 25,
     "concern_above": 88
   },
   "drainage": {
     "label": "Moisture-retentive mix that still drains; a flowering vine drinks faster than it looks",
     "preferred_response": "balanced",
-    "acceptable_responses": ["balanced", "retaining"],
+    "acceptable_responses": [
+      "balanced",
+      "retaining"
+    ],
     "maximum_settle_minutes": 25
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [16, 26], "scale": [5, 35]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [50, 70], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        16,
+        26
+      ],
+      "scale": [
+        5,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        50,
+        70
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        15,
+        25
+      ],
+      "scale": [
+        0,
+        40
+      ],
+      "bands": [
+        {
+          "upto": 8,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark. A young plant needs light to build the wood it will flower on.",
+              "Dim. Expect reaching growth; flowering is not the question at this age.",
+              "A little short for its age, so it will take longer to reach flowering size."
+            ],
+            "established": [
+              "Too dark. Few flowers or none, and long reaching growth between leaves.",
+              "Dim. Foliage carries on; buds are unlikely to set.",
+              "A little short. It will flower sparsely rather than freely."
+            ]
+          }
+        },
+        {
+          "upto": 15,
+          "name": "getting by"
+        },
+        {
+          "upto": 25,
+          "name": "healthy"
+        },
+        {
+          "upto": 33,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "established": [
+              "Burning. Leaves yellow and drop, with crisp brown margins.",
+              "Too much. Even a sun-lover bleaches at this level if the pot runs dry.",
+              "Far too much. Leaf loss rather than leaf damage."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 24
+    }
   },
   "chemistry": {
-    "soil_ph": {"label": "pH", "unit": "", "ideal": [6.0, 7.5], "scale": [4.0, 9.0]},
-    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [60, 120], "scale": [0, 200]},
-    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [35, 80], "scale": [0, 140]},
-    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [100, 190], "scale": [0, 240]}
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        6.0,
+        7.5
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        60,
+        120
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        35,
+        80
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        100,
+        190
+      ],
+      "scale": [
+        0,
+        240
+      ]
+    }
   }
 }

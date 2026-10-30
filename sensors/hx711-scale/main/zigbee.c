@@ -134,6 +134,8 @@ static bool s_announce_host;
 static int64_t s_host_sent_us;
 #define HOST_REPEAT_SECONDS 600
 #define UNACKED_BEFORE_REJOIN 6
+// How long a report may go unanswered before it counts as lost.
+#define CONFIRM_WAIT_SECONDS 30
 // How long a device that has a network saved gets to rejoin it before that
 // saved network is written off. Rejoining is the cheap, unattended path and
 // starting over is the expensive one that needs somebody at the hub, so the
@@ -147,16 +149,49 @@ static int64_t s_host_sent_us;
 static int64_t  s_last_report_us;
 static int64_t  s_joined_at_us;
 static int64_t  s_trouble_since_us;
+// A report is out and nothing has come back for it yet.
+static volatile bool s_awaiting_confirm;
+static uint8_t  s_confirms_logged;
+static int64_t  s_sent_at_us;
 static int64_t  s_rejoin_deadline_us;
 static char     s_last_trouble[64];
 
 static void steering_task(void *arg);
 static void start_steering(const char *why);
 
+/* A report that was never confirmed is a report that failed.
+ *
+ * This counted only confirms that arrived *saying* they had failed, so
+ * a coordinator that simply stops listening -- the actual failure, three
+ * times over -- produced no confirms at all and incremented nothing. The
+ * scale reported "0 failures" while transmitting into an empty room for
+ * twelve hours, and its own recovery never fired because by its own
+ * count there was nothing wrong.
+ *
+ * So silence is now counted. A report is outstanding from the moment it
+ * goes out, and if nothing comes back before the next one is due it is
+ * written off exactly as a failed confirm would be.
+ */
+static void note_unacked(void);
+
 /* Whether a reading actually arrived anywhere. */
 static void on_confirm(const ezb_apsde_data_confirm_t *cnf)
 {
-    if (cnf->cluster_id != SCALE_CLUSTER) return;
+    /* Every confirm counts, whatever cluster it names.
+     *
+     * This filtered on the scale cluster, as the indication handler
+     * does -- and a confirm does not necessarily carry the cluster the
+     * way an indication does. If it does not, every confirm was being
+     * discarded here, which is why this device has never once logged
+     * "heard again" and why its unacked count sat at zero through
+     * three days of talking to nobody. The first few are logged so the
+     * next person does not have to infer it. */
+    if (s_confirms_logged < 3) {
+        s_confirms_logged++;
+        remote_log("Zigbee: confirm cluster 0x%04x status %u",
+                   (unsigned)cnf->cluster_id, (unsigned)cnf->status);
+    }
+    s_awaiting_confirm = false;
     if (cnf->status == 0) {
         if (s_unacked)
             remote_log("Zigbee: heard again after %lu unacknowledged",
@@ -164,6 +199,11 @@ static void on_confirm(const ezb_apsde_data_confirm_t *cnf)
         s_unacked = 0;
         return;
     }
+    note_unacked();
+}
+
+static void note_unacked(void)
+{
     if (++s_unacked == UNACKED_BEFORE_REJOIN) {
         // Noticed, and nothing more. Being joined is not the same as being
         // heard -- a coordinator that restarts forgets its children while
@@ -203,6 +243,21 @@ static const char *bdb_status_name(uint8_t s);
 static uint32_t channel_mask(void);
 static uint32_t primary_mask(void);
 static void save_channel(uint8_t channel);
+
+// Which radio has priority, and whether the Zigbee receiver stays on.
+//
+// Called at startup and whenever Wi-Fi is switched. The capability is
+// announced when the device joins, so a change made later tells the
+// local stack but not the coordinator -- which is the right way round:
+// turning Wi-Fi on takes the radio away, and the web page is then the
+// way in instead of Zigbee commands.
+void zigbee_share_radio_with_wifi(bool wifi_on)
+{
+    ezb_nwk_set_rx_on_when_idle(!wifi_on);
+    esp_coex_preference_set(wifi_on ? ESP_COEX_PREFER_WIFI : ESP_COEX_PREFER_BALANCE);
+    remote_log("Zigbee: receiver %s (Wi-Fi %s)",
+               wifi_on ? "off between exchanges" : "on", wifi_on ? "on" : "off");
+}
 
 static void register_endpoint(void)
 {
@@ -460,6 +515,28 @@ static void start_steering(const char *why)
     }
 }
 
+/* Sleep without starving the watchdog.
+ *
+ * A watched task that sleeps longer than the watchdog's timeout is a
+ * panic waiting to happen, and the steering backoff grows to sixty
+ * seconds against a thirty second watchdog. That fired only while the
+ * device was off the network -- which is to say, only while it was
+ * trying to recover -- so the watchdog added to catch a hang was
+ * instead rebooting the scale mid-retry and guaranteeing it never got
+ * back. Sliced, so a long wait still checks in.
+ */
+#define WDT_SLICE_SECONDS 5
+
+static void watched_sleep(uint32_t seconds)
+{
+    while (seconds) {
+        uint32_t slice = seconds < WDT_SLICE_SECONDS ? seconds : WDT_SLICE_SECONDS;
+        vTaskDelay(pdMS_TO_TICKS(slice * 1000));
+        esp_task_wdt_reset();
+        seconds -= slice;
+    }
+}
+
 static void steering_task(void *arg)
 {
     (void)arg;
@@ -475,8 +552,7 @@ static void steering_task(void *arg)
         // A backstop only. The first attempt is made from the signal handler,
         // when BDB says it is ready; this picks it up again if that failed.
         esp_task_wdt_reset();
-        vTaskDelay(pdMS_TO_TICKS(wait_s * 1000));
-        esp_task_wdt_reset();
+        watched_sleep(wait_s);
         if (s_joined) {
             wait_s = STEERING_FIRST_RETRY_SECONDS;   // ready to be quick again
             continue;
@@ -511,8 +587,11 @@ static void steering_task(void *arg)
  * straight through. */
 static void announce_host(void)
 {
-    char text[48];
-    int n = snprintf(text, sizeof text, "host=%s", remote_hostname());
+    char text[64];
+    const char *ip = remote_sta_ip();
+    int n = ip && ip[0]
+        ? snprintf(text, sizeof text, "host=%s ip=%s", remote_hostname(), ip)
+        : snprintf(text, sizeof text, "host=%s", remote_hostname());
     if (n <= 0) return;
     ezb_apsde_data_req_t req = {
         .dst_address = EZB_ADDRESS_SHORT(COORDINATOR_ADDR),
@@ -536,6 +615,19 @@ static void report_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_task_wdt_reset();
+        /* Write off a report nothing answered.
+         *
+         * Generous, because a sleepy device's acknowledgement travels
+         * on its own schedule and a slow one is not a lost one. What is
+         * being caught here is not lateness but a coordinator that has
+         * stopped listening entirely, which shows up as every single
+         * report going unanswered rather than an occasional one. */
+        if (s_awaiting_confirm
+            && esp_timer_get_time() - s_sent_at_us
+               > (int64_t)CONFIRM_WAIT_SECONDS * 1000000) {
+            s_awaiting_confirm = false;
+            note_unacked();
+        }
         if (!s_joined) continue;
         // One rate for the whole scale: Zigbee reports whatever the sampling
         // interval is set to, so the web page and the Zigbee feed agree and
@@ -564,6 +656,8 @@ static void report_task(void *arg)
                 announce_host();
             }
             s_last_report_us = now;
+            s_awaiting_confirm = true;
+            s_sent_at_us = now;
             send_reading(&r, seq);
             esp_zigbee_lock_release();
             sent = seq;
@@ -608,20 +702,21 @@ static void zigbee_task(void *arg)
     // BDB discards beacons below a minimum link quality before the
     // application sees them, which is indistinguishable from hearing none.
     ezb_nwk_set_min_join_lqi(0);
-    // Keep the 802.15.4 receiver off between exchanges. Holding it on costs
-    // Wi-Fi nearly all of the shared radio: the scale still associates and
-    // answers ARP, but ICMP and HTTP never get through.
+    // The 802.15.4 receiver follows Wi-Fi, because they share one radio.
     //
-    // Known gap: with the receiver off, a command sent from the coordinator
-    // is never collected and comes back as a missing acknowledgement (APS
-    // status 0xA7). Overriding the keepalive and fast-poll intervals here was
-    // tried and cost the device its place on the network, so the fix is not
-    // that. Readings out of the scale, Wi-Fi, and over-the-air updates all
-    // work; commands into it over Zigbee do not yet.
-    ezb_nwk_set_rx_on_when_idle(false);
-    // Wi-Fi is the way back in to a scale under a plant, so it gets priority.
-    // Zigbee sends one short frame every half minute and can wait its turn.
-    esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    // Holding the receiver on costs Wi-Fi nearly all of it: the scale still
+    // associates and answers ARP, but ICMP and HTTP never get through. So it
+    // was turned off outright, and that stopped every command reaching the
+    // scale -- a frame from the coordinator is buffered for a device that
+    // says it is not listening, and dropped when it never collects one. The
+    // rate menu sprang back and the Wi-Fi button did nothing, with the radio
+    // reporting each command as delivered.
+    //
+    // Wi-Fi is off nearly all the time on a scale under a plant, and with
+    // nothing to protect there is no reason to be deaf. On when Wi-Fi is
+    // off, off when it is on, decided here at boot and again whenever Wi-Fi
+    // is switched, so whichever radio is in use has what it needs.
+    zigbee_share_radio_with_wifi(remote_wifi_enabled());
     // Look on one channel, not all sixteen. A full sweep keeps the shared radio
     // busy for seconds at a time, which is enough to stop Wi-Fi associating.
     // Channel 0 means "look everywhere": slower, but it does not depend on
@@ -707,6 +802,10 @@ int zigbee_format_status(char *buf, size_t len)
     return snprintf(buf, len,
         "{\"joined\":%s,\"pan\":\"0x%04x\",\"channel\":%u,\"short\":\"0x%04x\","
         "\"joins\":%lu,\"searches\":%lu,\"reports\":%lu,\"report_fails\":%lu,"
+        // The one that matters: reports nobody answered. report_fails
+        // counts only sends the stack refused, which stayed at zero
+        // through every episode of talking to nobody.
+        "\"unacked\":%lu,"
         "\"commands\":%lu,\"last_report_s\":%ld,\"joined_for_s\":%ld,"
         "\"every_s\":%lu,\"floor_s\":%lu,\"nvs_free\":%d,\"trouble\":\"%s\"}",
         s_joined ? "true" : "false",
@@ -715,6 +814,7 @@ int zigbee_format_status(char *buf, size_t len)
         s_joined ? (unsigned)ezb_nwk_get_short_address() : 0u,
         (unsigned long)s_joins, (unsigned long)s_searches,
         (unsigned long)s_reports, (unsigned long)s_report_fails,
+        (unsigned long)s_unacked,
         (unsigned long)s_commands,
         s_last_report_us ? (long)((now - s_last_report_us) / 1000000) : -1,
         s_joined_at_us ? (long)((now - s_joined_at_us) / 1000000) : -1,

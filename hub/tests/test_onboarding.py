@@ -800,7 +800,22 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"No windows", page)
 
     def test_the_rooms_tab_is_reachable_by_its_own_address(self):
-        self.assertIn(b'"/settings/rooms"', self.get("/app.js"))
+        script = self.get("/app.js")
+        self.assertIn(b'const SETTINGS_TABS = ', script)
+        self.assertIn(b'"rooms"', script)
+        self.assertIn(b'href="/settings/rooms"', self.get("/"))
+
+    def test_every_tab_including_sensors_has_an_address(self):
+        """Bare /settings means "where I was", so Sensors needs its own.
+
+        While Sensors was the one tab whose link was /settings, giving
+        that address a memory would have made the Sensors tab the one
+        tab that could not be clicked.
+        """
+        page = self.get("/")
+        for tab in (b"sensors", b"rooms", b"lights", b"wifi", b"time",
+                    b"firmware", b"zigbee"):
+            self.assertIn(b'href="/settings/' + tab + b'"', page)
 
     def test_the_console_switch_does_not_claim_more_than_it_knows(self):
         script = self.get("/onboarding.js")

@@ -5,44 +5,235 @@
   "name": "Pothos",
   "scientific_name": "Epipremnum aureum",
   "varieties": [
-    {"id": "golden", "name": "Golden", "note": "Gold marbling on green. The quickest grower of the pothos and the most forgiving of a dim corner."},
-    {"id": "marble_queen", "name": "Marble Queen", "note": "Heavily white-marbled, so less leaf is doing the work: slower, drinks less, and wants brighter light to keep the variegation."},
-    {"id": "snow_queen", "name": "Snow Queen", "note": "Whiter still than Marble Queen, and slower again. Needs the brightest indirect light of the family."},
-    {"id": "neon", "name": "Neon", "note": "Plain chartreuse, no variegation. Colour fades toward green in low light rather than reverting."},
-    {"id": "jade", "name": "Jade", "note": "Solid green. The most tolerant of low light, since every leaf is working."},
-    {"id": "njoy", "name": "N'Joy", "note": "Small leaves in clean white and green blocks. Compact and slow; a small pot dries slowly to match."},
-    {"id": "pearls_and_jade", "name": "Pearls and Jade", "note": "Small leaves with grey-green and white at the margins. Slow, and prone to crisping in dry air."},
-    {"id": "manjula", "name": "Manjula", "note": "Wavy leaves with wide cream splashes. Slow, and the cupped leaves hold water: keep it off the foliage."},
-    {"id": "global_green", "name": "Global Green", "note": "Dark green leaves edged in lighter green. Vigorous for a variegated pothos."}
+    {
+      "id": "golden",
+      "name": "Golden",
+      "note": "Gold marbling on green. The quickest grower of the pothos and the most forgiving of a dim corner."
+    },
+    {
+      "id": "marble_queen",
+      "name": "Marble Queen",
+      "note": "Heavily white-marbled, so less leaf is doing the work: slower, drinks less, and wants brighter light to keep the variegation."
+    },
+    {
+      "id": "snow_queen",
+      "name": "Snow Queen",
+      "note": "Whiter still than Marble Queen, and slower again. Needs the brightest indirect light of the family."
+    },
+    {
+      "id": "neon",
+      "name": "Neon",
+      "note": "Plain chartreuse, no variegation. Colour fades toward green in low light rather than reverting."
+    },
+    {
+      "id": "jade",
+      "name": "Jade",
+      "note": "Solid green. The most tolerant of low light, since every leaf is working."
+    },
+    {
+      "id": "njoy",
+      "name": "N'Joy",
+      "note": "Small leaves in clean white and green blocks. Compact and slow; a small pot dries slowly to match."
+    },
+    {
+      "id": "pearls_and_jade",
+      "name": "Pearls and Jade",
+      "note": "Small leaves with grey-green and white at the margins. Slow, and prone to crisping in dry air."
+    },
+    {
+      "id": "manjula",
+      "name": "Manjula",
+      "note": "Wavy leaves with wide cream splashes. Slow, and the cupped leaves hold water: keep it off the foliage."
+    },
+    {
+      "id": "global_green",
+      "name": "Global Green",
+      "note": "Dark green leaves edged in lighter green. Vigorous for a variegated pothos."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
-    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 29], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1400], "scale": [0, 3000]}
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        29
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        500,
+        1400
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
   },
   "watering": {
     "strategy": "partial_dry_back",
     "label": "Let most of the pot dry before watering again",
     "refill_below": 30,
-    "post_water_target": [55, 72],
-    "comfortable_cycle": [30, 72],
+    "post_water_target": [
+      55,
+      72
+    ],
+    "comfortable_cycle": [
+      30,
+      72
+    ],
     "concern_below": 15,
     "concern_above": 85
   },
   "drainage": {
     "label": "Free-draining mix; standing wet is the usual cause of loss",
     "preferred_response": "fast",
-    "acceptable_responses": ["fast", "balanced"],
+    "acceptable_responses": [
+      "fast",
+      "balanced"
+    ],
     "maximum_settle_minutes": 20
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 30], "scale": [10, 35]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 65], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        30
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        40,
+        65
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        4,
+        10
+      ],
+      "scale": [
+        0,
+        20
+      ],
+      "bands": [
+        {
+          "upto": 2,
+          "name": "too little",
+          "effects": {
+            "established": [
+              "Too dark. Variegation fades to plain green and the stems run bare between leaves.",
+              "Dim. New leaves come small and mostly green; the pale marbling is the first thing lost.",
+              "A little short. It grows, but leggy, with more stem than leaf."
+            ]
+          }
+        },
+        {
+          "upto": 4,
+          "name": "getting by"
+        },
+        {
+          "upto": 10,
+          "name": "healthy"
+        },
+        {
+          "upto": 15,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "established": [
+              "Burning. The cream areas go papery first, then dry to tan patches.",
+              "Too much. Leaves bleach to pale yellow-white and crisp at the edges.",
+              "Far too much. Variegated leaves scorch through within days at this level."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 12
+    }
   },
   "chemistry": {
-    "soil_ph": {"label": "pH", "unit": "", "ideal": [6.0, 7.0], "scale": [4.0, 9.0]},
-    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [60, 120], "scale": [0, 200]},
-    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [25, 65], "scale": [0, 140]},
-    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [80, 160], "scale": [0, 240]}
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        6.0,
+        7.0
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        60,
+        120
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        25,
+        65
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        80,
+        160
+      ],
+      "scale": [
+        0,
+        240
+      ]
+    }
   }
 }

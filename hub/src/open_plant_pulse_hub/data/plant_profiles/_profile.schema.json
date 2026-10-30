@@ -4,19 +4,57 @@
   "title": "Open Plant Pulse plant profile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "id", "name", "scientific_name", "root_zone", "watering", "drainage", "climate", "chemistry"],
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "scientific_name",
+    "root_zone",
+    "watering",
+    "drainage",
+    "climate",
+    "chemistry"
+  ],
   "properties": {
-    "$schema": {"type": "string"},
-    "schema_version": {"const": 1},
-    "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
-    "name": {"type": "string", "minLength": 1},
-    "scientific_name": {"type": "string", "minLength": 1},
-    "varieties": {"$ref": "#/$defs/varieties"},
-    "root_zone": {"$ref": "#/$defs/metricGroup"},
-    "watering": {"$ref": "#/$defs/watering"},
-    "drainage": {"$ref": "#/$defs/drainage"},
-    "climate": {"$ref": "#/$defs/metricGroup"},
-    "chemistry": {"$ref": "#/$defs/metricGroup"}
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scientific_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "varieties": {
+      "$ref": "#/$defs/varieties"
+    },
+    "root_zone": {
+      "$ref": "#/$defs/metricGroup"
+    },
+    "watering": {
+      "$ref": "#/$defs/watering"
+    },
+    "drainage": {
+      "$ref": "#/$defs/drainage"
+    },
+    "climate": {
+      "$ref": "#/$defs/metricGroup"
+    },
+    "chemistry": {
+      "$ref": "#/$defs/metricGroup"
+    },
+    "light": {
+      "$ref": "#/$defs/metricGroup"
+    }
   },
   "$defs": {
     "varieties": {
@@ -25,65 +63,205 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "name"],
+        "required": [
+          "id",
+          "name"
+        ],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
-          "name": {"type": "string", "minLength": 1},
-          "note": {"type": "string", "minLength": 1}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "numberPair": {
       "type": "array",
-      "items": {"type": "number"},
+      "items": {
+        "type": "number"
+      },
       "minItems": 2,
       "maxItems": 2
     },
     "metric": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["label", "unit", "scale"],
+      "required": [
+        "label",
+        "unit",
+        "scale"
+      ],
       "properties": {
-        "label": {"type": "string", "minLength": 1},
-        "unit": {"type": "string"},
-        "ideal": {"$ref": "#/$defs/numberPair"},
-        "scale": {"$ref": "#/$defs/numberPair"}
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string"
+        },
+        "ideal": {
+          "$ref": "#/$defs/numberPair"
+        },
+        "scale": {
+          "$ref": "#/$defs/numberPair"
+        },
+        "bands": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/band"
+          },
+          "description": "Named bands in ascending order, each ending at its upto. The last has upto null. Where a metric has both, the healthy band and ideal describe the same span."
+        },
+        "established_after_months": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Age at which this kind is read as established rather than young. A rough boundary for choosing wording, not a birthday."
+        }
       }
     },
     "metricGroup": {
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": {"$ref": "#/$defs/metric"}
+      "additionalProperties": {
+        "$ref": "#/$defs/metric"
+      }
     },
     "watering": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy", "label", "refill_below", "post_water_target", "comfortable_cycle", "concern_below", "concern_above"],
+      "required": [
+        "strategy",
+        "label",
+        "refill_below",
+        "post_water_target",
+        "comfortable_cycle",
+        "concern_below",
+        "concern_above"
+      ],
       "properties": {
-        "strategy": {"type": "string", "minLength": 1},
-        "label": {"type": "string", "minLength": 1},
-        "refill_below": {"type": "number", "minimum": 0, "maximum": 100},
-        "post_water_target": {"$ref": "#/$defs/numberPair"},
-        "comfortable_cycle": {"$ref": "#/$defs/numberPair"},
-        "concern_below": {"type": "number", "minimum": 0, "maximum": 100},
-        "concern_above": {"type": "number", "minimum": 0, "maximum": 100}
+        "strategy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refill_below": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "post_water_target": {
+          "$ref": "#/$defs/numberPair"
+        },
+        "comfortable_cycle": {
+          "$ref": "#/$defs/numberPair"
+        },
+        "concern_below": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "concern_above": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
     "drainage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["label", "preferred_response", "acceptable_responses", "maximum_settle_minutes"],
+      "required": [
+        "label",
+        "preferred_response",
+        "acceptable_responses",
+        "maximum_settle_minutes"
+      ],
       "properties": {
-        "label": {"type": "string", "minLength": 1},
-        "preferred_response": {"enum": ["fast", "balanced", "retaining"]},
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preferred_response": {
+          "enum": [
+            "fast",
+            "balanced",
+            "retaining"
+          ]
+        },
         "acceptable_responses": {
           "type": "array",
-          "items": {"enum": ["fast", "balanced", "retaining"]},
+          "items": {
+            "enum": [
+              "fast",
+              "balanced",
+              "retaining"
+            ]
+          },
           "minItems": 1,
           "uniqueItems": true
         },
-        "maximum_settle_minutes": {"type": "number", "exclusiveMinimum": 0}
+        "maximum_settle_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       }
+    },
+    "band": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upto",
+        "name"
+      ],
+      "properties": {
+        "upto": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Upper edge of this band; null for the last, which has no top."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effects": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "young": {
+              "$ref": "#/$defs/bandEffects"
+            },
+            "established": {
+              "$ref": "#/$defs/bandEffects"
+            }
+          },
+          "description": "Wording per stage. A young plant's signs are not a mature one's: a juvenile monstera makes entire leaves because it is juvenile, whatever the light. Either stage may be left out, and the page then falls back to wording true of plants in general."
+        }
+      }
+    },
+    "bandEffects": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "What this plant does in the bottom, middle and top third of the band."
     }
   }
 }

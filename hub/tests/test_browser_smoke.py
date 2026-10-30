@@ -18,6 +18,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -878,3 +879,239 @@ class BrowserSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_a_missing_moisture_is_not_drawn_as_an_empty_pot(self) -> None:
+        """Number(null) is 0, and 0 is finite.
+
+        A reading carrying no moisture -- every reading from a probe
+        that has just sent its temperature alone -- passed the guard as
+        a good zero. The pot drew itself empty and said "Critically
+        dry" beside a chart showing seventy per cent.
+        """
+        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "app.js").read_text()
+        self.assertIn("const said = latestReading.moisture_percent;", script)
+        self.assertIn("said == null ? NaN : Number(said)", script)
+        self.assertIn('setText(document.getElementById("moisture-phase"), "Waiting for a reading")',
+                      script)
+
+
+    def test_the_name_box_belongs_to_the_device_being_looked_at(self) -> None:
+        """A device with no plant or room kept the last one's name.
+
+        The box was filled at the end of the subject picker's renderer,
+        which returns early for anything that is not about a plant or a
+        room -- so a plug or a leak sensor showed the name of whichever
+        device had been opened before it.
+        """
+        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "app.js").read_text()
+        page = script[script.index("function renderZigbeeDevicePage"):]
+        subject = script[script.index("async function renderZigbeeSubject"):]
+        self.assertIn('nameField.value = (device && device.name) || "";',
+                      page[:page.index("function renderZigbeeDetails")]
+                      if "function renderZigbeeDetails" in page else page)
+        self.assertNotIn('name.value = device.name',
+                         subject[:subject.index("\n}\n")])
+
+
+    def test_an_old_reading_is_shown_with_its_age_not_hidden(self) -> None:
+        """An empty field is worse than an old number.
+
+        A probe that sends temperature and moisture in separate frames
+        leaves gaps in the newest row. The page used to show nothing at
+        all; soil is the slowest thing here, so the last known reading
+        is worth showing as long as it says how old it is.
+        """
+        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "app.js").read_text()
+        self.assertIn("function plantMoisture()", script)
+        self.assertIn("selectedPlant?.soil_sources", script)
+        self.assertIn("last measured ${describeSeconds(reading.ageSeconds)} ago",
+                      script)
+
+    def test_every_renderer_the_device_page_calls_exists(self) -> None:
+        """A renderer deleted by a refactor takes its panel with it.
+
+        Collapsing two chart loaders into one cut from the first
+        variable to the next function, and a renderer defined between
+        them went with it. The soil probe's page then showed charts
+        full of readings above a pair of dashes, because the call was
+        still there and the function was not.
+        """
+        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "app.js").read_text()
+        called = set(re.findall(r"\b(renderZigbee\w+)\(device\)", script))
+        self.assertTrue(called, "no device renderers found to check")
+        for name in sorted(called):
+            self.assertIn(f"function {name}(", script,
+                          f"{name} is called but never defined")
+
+
+class NoWateredTickTests(unittest.TestCase):
+    """The hub reads the weight instead of asking.
+
+    The tick went unticked four times out of five, which had the hub
+    measuring an eleven day drying cycle straight through three
+    refills and offering "124.8 days of water left".
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.script = (here / "app.js").read_text()
+
+    def test_the_tick_is_gone_from_the_page_and_the_script(self) -> None:
+        self.assertNotIn("plant-weight-watered", self.page)
+        self.assertNotIn("plant-weight-watered", self.script)
+        self.assertNotIn("alsoWatered", self.script)
+
+    def test_nothing_still_tells_anybody_to_tick_it(self) -> None:
+        """A page that names a control it no longer has is a wrong page."""
+        self.assertNotIn("Just watered", self.page)
+        self.assertNotIn("Just watered", self.script)
+
+    def test_fertilizing_keeps_its_tick(self) -> None:
+        """Nothing about the weight reveals a feeding."""
+        self.assertIn("plant-weight-fed", self.page)
+        self.assertIn("Just fertilized", self.page)
+
+    def test_a_sudden_change_is_queried_before_it_is_saved(self) -> None:
+        self.assertIn("function weighingLooksRight(", self.script)
+        self.assertIn("if (!weighingLooksRight(grams))", self.script)
+
+
+class ChartUnitTests(unittest.TestCase):
+    """A unit is a symbol, words, and its axis rules -- not prose to sniff."""
+
+    def setUp(self) -> None:
+        self.script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                       / "static" / "app.js").read_text()
+
+    def test_the_chart_does_not_read_its_label_for_hints(self) -> None:
+        """`unit.startsWith("degrees")` chose the padding and
+        `unit.includes("percent")` clamped the axis, so shortening a
+        label would have unclamped a percentage axis in silence."""
+        body = self.script.split("function renderHistoryChart(")[1]
+        self.assertNotIn('unit.startsWith(', body)
+        self.assertNotIn('unit.includes(', body)
+
+    def test_a_percentage_axis_is_still_clamped(self) -> None:
+        self.assertIn('const PERCENT = { symbol: "%", spoken: "percent", '
+                      'pad: 2, lowest: 0, highest: 100 };', self.script)
+        self.assertIn("if (unit.lowest != null)", self.script)
+        self.assertIn("if (unit.highest != null)", self.script)
+
+    def test_the_units_exist_before_anything_names_them(self) -> None:
+        """Plain consts: a table defined earlier reaching one defined
+        later throws on load and takes the whole page with it."""
+        for name in ("CELSIUS", "PERCENT"):
+            declared = self.script.index(f"const {name} = {{")
+            first_use = self.script.index(f"unit: {name}") if f"unit: {name}" in self.script \
+                else self.script.index(f"...{name},")
+            self.assertLess(declared, first_use, f"{name} is used before it exists")
+
+    def test_a_room_card_shows_the_symbol_not_the_sentence(self) -> None:
+        """The card is already titled Relative humidity; "52.7 percent
+        relative humidity" beneath it said the same thing twice."""
+        self.assertIn("setText(unit, metric.unit.symbol);", self.script)
+
+
+class RoomPageTests(unittest.TestCase):
+    """A room is edited on its own page, not in Settings.
+
+    Settings could name a room and count what was in it, but not say
+    which plant blocked a delete, and its form edited whichever room
+    was last clicked with nothing on screen to show which.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.app = (here / "app.js").read_text()
+        self.onboarding = (here / "onboarding.js").read_text()
+
+    def test_the_page_exists_and_is_routed(self) -> None:
+        self.assertIn('data-page="room"', self.page)
+        self.assertIn('if (path.startsWith("/rooms/")) return "room";', self.app)
+
+    def test_it_lists_both_plants_and_sensors(self) -> None:
+        self.assertIn('id="room-page-plants"', self.page)
+        self.assertIn('id="room-page-sensors"', self.page)
+
+    def test_settings_edits_a_room_by_opening_its_page(self) -> None:
+        """One form, on the room's own page. The form in Settings
+        edited whichever room was last clicked, with nothing on screen
+        to show which."""
+        for gone in ("room-form-title", "cancel-room-edit", "edit-room"):
+            self.assertNotIn(gone, self.page, gone)
+            self.assertNotIn(gone, self.app, gone)
+            self.assertNotIn(gone, self.onboarding, gone)
+        self.assertNotIn("function startRoomEdit", self.onboarding)
+        self.assertIn("edit.href = `/rooms/${room.room_id}`;", self.onboarding)
+
+    def test_the_list_still_deletes_a_room(self) -> None:
+        self.assertIn("delete-room", self.onboarding)
+        self.assertIn("async function deleteRoom(roomId)", self.onboarding)
+
+    def test_a_room_holding_anything_cannot_be_deleted_from_the_list(self) -> None:
+        """Plants as well as sensors. Only sensors were checked, and a
+        room with a plant in it crashed the request."""
+        self.assertIn('room.plant_count ? tally(room.plant_count, "plant") : null',
+                      self.onboarding)
+
+    def test_the_room_page_goes_back_to_the_list_it_came_from(self) -> None:
+        """Settings, not /rooms: the overview says what the air is
+        doing, Settings is where rooms are managed."""
+        self.assertIn('id="room-page-back" class="secondary-action" '
+                      'href="/settings/rooms"', self.page)
+        self.assertIn('navigate("/settings/rooms");', self.app)
+
+    def test_adding_a_room_opens_the_same_page(self) -> None:
+        """One form for a room, new or not. Two forms describing the
+        same thing have to be kept agreeing, and were not: the page
+        gained fields the settings form never grew."""
+        self.assertIn('href="/rooms/new"', self.page)
+        self.assertIn("function addingARoom()", self.app)
+        self.assertIn("function renderNewRoomPage()", self.app)
+        for gone in ('id="room-form"', 'id="save-room"', 'id="room-name"'):
+            self.assertNotIn(gone, self.page, gone)
+        self.assertNotIn("async function saveRoom(event)", self.onboarding)
+        self.assertNotIn("function clearRoomForm", self.onboarding)
+
+    def test_a_room_that_does_not_exist_yet_shows_nothing_in_it(self) -> None:
+        """"No plants in this room" is a fact about a room, and there
+        is no room yet."""
+        self.assertIn('id="room-page-plants-section"', self.page)
+        self.assertIn('id="room-page-danger-section"', self.page)
+        self.assertIn('"room-page-danger-section"]', self.app)
+
+    def test_every_renderer_the_room_page_calls_exists(self) -> None:
+        for name in ("refreshRoomPage", "renderRoomPage", "renderRoomOccupants",
+                     "saveRoomPage", "deleteRoomFromItsPage", "currentRoomId"):
+            self.assertIn(f"function {name}(", self.app.replace("async function ",
+                                                                "function "))
+
+
+class WateringDueColourTests(unittest.TestCase):
+    """Only a plant that wants water now is coloured.
+
+    Anything due within two days used to be marked amber, which assumed
+    every pot lasts about the same time. A small pot holding 113 ml and
+    drinking 43 a day wants water every two days by its nature, and a
+    card that warns about it is crying wolf on a plant that is fine.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+        self.css = (here / "app.css").read_text()
+
+    def test_there_is_no_two_day_warning(self) -> None:
+        self.assertNotIn('"soon"', self.app)
+        self.assertNotIn('data-state="soon"', self.css)
+        self.assertIn('days < 1 ? "now" : "later"', self.app)
+
+    def test_now_is_the_state_that_is_coloured(self) -> None:
+        self.assertIn('.fleet-card small[data-state="now"]', self.css)

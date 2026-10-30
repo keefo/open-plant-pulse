@@ -24,6 +24,14 @@ const sensorOfflineAfterMs = 10_000;
 function setText(element, text) {
   const value = text == null ? "" : String(text);
   if (element.textContent !== value) element.textContent = value;
+  /* A figure carries its unit beside it, drawn by CSS from data-unit so a
+     number and its unit cannot drift apart. A placeholder is not a
+     measurement and gets none: "-- ml" reads as a reading that failed,
+     rather than one not taken yet. */
+  if (element.dataset && element.dataset.unit !== undefined) {
+    if (value === "" || value === "--") element.dataset.unitHidden = "true";
+    else delete element.dataset.unitHidden;
+  }
 }
 
 // By attribute rather than the hidden property, which SVG elements lack.
@@ -121,6 +129,7 @@ async function refreshZigbee() {
   zigbeeDevices = data.devices || [];
   renderZigbeeGateway(data.gateway || {});
   renderZigbeeDevices(zigbeeDevices);
+  refreshZigbeeReports();
 }
 
 function renderZigbeeGateway(gateway) {
@@ -129,9 +138,9 @@ function renderZigbeeGateway(gateway) {
   // lives in the folded section.
   const brief = document.getElementById("zigbee-gateway-brief");
   if (brief) {
-    brief.textContent = gateway.released ? "Gateway released"
-      : gateway.connected ? "Gateway connected"
-      : "No gateway found";
+    brief.textContent = gateway.released ? "Dongle released"
+      : gateway.connected ? "Dongle connected"
+      : "No dongle found";
     setClass(brief, "bad", !gateway.connected && !gateway.released);
   }
   setText(document.getElementById("zigbee-gw-state"),
@@ -141,6 +150,9 @@ function renderZigbeeGateway(gateway) {
   setText(document.getElementById("zigbee-gw-channel"),
           gateway.channel === null || gateway.channel === undefined ? "--" : String(gateway.channel));
   setText(document.getElementById("zigbee-gw-count"), String(gateway.devices || 0));
+  setText(document.getElementById("zigbee-gw-uptime"),
+          gateway.uptime_s == null ? "--" : describeSeconds(gateway.uptime_s));
+  renderGatewayRestarts(gateway.restarts || []);
 
   const table = document.getElementById("zigbee-neighbours");
   const empty = document.getElementById("zigbee-neighbours-empty");
@@ -150,7 +162,7 @@ function renderZigbeeGateway(gateway) {
     body.innerHTML = "";
     neighbours.forEach((n) => {
       const tr = document.createElement("tr");
-      const role = n.type === 0 ? "gateway" : n.type === 1 ? "router" : "end device";
+      const role = n.type === 0 ? "dongle" : n.type === 1 ? "router" : "end device";
       [
         n.eui,
         role,
@@ -170,7 +182,7 @@ function renderZigbeeGateway(gateway) {
 
   const release = document.getElementById("zigbee-release");
   if (release) {
-    release.textContent = gateway.released ? "Reconnect the gateway" : "Release the gateway";
+    release.textContent = gateway.released ? "Reconnect the dongle" : "Release the dongle";
     release.dataset.action = gateway.released ? "reconnect" : "release";
   }
 
@@ -188,44 +200,154 @@ function renderZigbeeGateway(gateway) {
   }
 }
 
+/* Two lists, because they answer two different questions.
+ *
+ * The one above the scan button is the devices this hub uses. The one
+ * below it is whatever has turned up on the radio and is waiting to be
+ * let in or turned away. They used to be one list with the waiting ones
+ * sorted to the top, which put a thing needing a decision in among the
+ * things already decided, and made joining look like enrolling.
+ */
+/* How much of the raw record to keep.
+ *
+ * The count is shown beside the choice because "for ever" is only a
+ * comfortable answer for somebody who can see what for ever amounts to.
+ */
+async function refreshZigbeeReports() {
+  try {
+    const response = await fetch("/api/settings");
+    if (!response.ok) return;
+    const settings = await response.json();
+    const choice = document.getElementById("zigbee-reports-keep");
+    if (!choice || choice.matches(":focus")) return;
+    const days = settings.zigbee_report_keep_days;
+    choice.value = days === null || days === undefined ? "forever" : String(days);
+    const kept = (settings.zigbee_reports || {}).reports || 0;
+    const oldest = (settings.zigbee_reports || {}).oldest_at;
+    setText(document.getElementById("zigbee-reports-count"),
+            kept ? `${kept.toLocaleString()} kept${oldest ? `, back to ${new Date(oldest)
+                     .toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`
+                 : "nothing kept yet");
+  } catch (_error) {
+    /* the panel is still readable without it */
+  }
+}
+
+async function saveZigbeeReports() {
+  const choice = document.getElementById("zigbee-reports-keep");
+  const state = document.getElementById("zigbee-reports-state");
+  setText(state, "Saving.");
+  try {
+    const response = await fetch("/api/settings/zigbee-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keep_days: choice.value }),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    setText(state, choice.value === "forever"
+      ? "Keeping every report." : `Keeping the last ${choice.value} days.`);
+    await refreshZigbeeReports();
+  } catch (_error) {
+    setText(state, "That did not save.");
+  }
+}
+
 function renderZigbeeDevices(devices) {
-  const list = document.getElementById("zigbee-devices");
-  if (!list) return;
-  list.innerHTML = "";
-  if (!devices.length) {
+  const inUse = document.getElementById("zigbee-devices");
+  const found = document.getElementById("zigbee-found");
+  if (!inUse || !found) return;
+  const waiting = devices.filter((d) => !d.accepted);
+  const settled = devices.filter((d) => d.accepted);
+
+  inUse.innerHTML = "";
+  if (!settled.length) {
     const empty = document.createElement("p");
     empty.className = "settings-note";
-    empty.textContent = "No devices yet. Put a sensor into pairing, then scan.";
-    list.appendChild(empty);
-    return;
+    empty.textContent = "No devices in use yet. Scan below to find one.";
+    inUse.appendChild(empty);
+  } else {
+    settled.forEach((device) => inUse.appendChild(zigbeeDeviceRow(device)));
   }
-  // Anything waiting goes to the top. A device that has joined the radio but
-  // has not been let in is the one thing on this page that needs a decision,
-  // so it should not be somewhere down the list looking like the others.
-  const waiting = devices.filter((d) => d.waiting);
-  const settled = devices.filter((d) => !d.waiting);
-  waiting.forEach((device) => list.appendChild(zigbeeWaitingRow(device)));
-  settled.forEach((device) => list.appendChild(zigbeeDeviceRow(device)));
+
+  found.innerHTML = "";
+  waiting.forEach((device) => found.appendChild(zigbeeWaitingRow(device)));
+}
+
+/* What a device says it is. Manufacturer and model come from the Basic
+   cluster, which every certified device answers; the device type is from
+   its endpoint descriptor. An address identifies a device without
+   describing it, and three rows of hexadecimal help nobody. */
+/* What each kind of device is, said plainly. The hub's kinds are names
+   for drivers -- "soil", "plug" -- and a page is read by somebody who
+   thinks in terms of what they bought and where they put it. */
+const ZIGBEE_PRODUCT_TYPES = {
+  soil: "Soil probe (temperature and moisture)",
+  leak: "Water leak sensor",
+  thermometer: "Room thermometer (temperature and humidity)",
+  plug: "Smart plug (mains switch)",
+  scale: "Pot scale (weight)",
+};
+
+const ZIGBEE_DEVICE_TYPES = {
+  0x0051: "smart plug",
+  0x0100: "on/off light",
+  0x0101: "dimmable light",
+  0x0002: "on/off output",
+  0x0006: "switch",
+  0x000a: "door lock",
+  0x0302: "temperature sensor",
+  0x0402: "motion sensor",
+  0x0403: "contact sensor",
+  0x0770: "air quality sensor",
+};
+
+function describeZigbeeDevice(device) {
+  const made = [device.manufacturer, device.model].filter(Boolean).join(" ");
+  const type = device.kind && device.kind !== "unknown"
+    ? device.kind
+    : ZIGBEE_DEVICE_TYPES[device.device_type];
+  if (made && type) return `${made} \u00b7 ${type}`;
+  if (made) return made;
+  if (type) return type;
+  // Said plainly rather than guessed at. A device that has not been
+  // asked yet, or that answered nothing, is not a device of unknown
+  // make -- it is one the hub has not got round to interviewing.
+  return "not identified yet";
 }
 
 function zigbeeWaitingRow(device) {
   const row = document.createElement("div");
   row.className = "settings-sensor zigbee-waiting";
 
+  const body = document.createElement("div");
+  body.className = "settings-sensor-body zigbee-row";
+  row.appendChild(body);
+
+  // What it is comes first, because that is the whole question being
+  // asked. The hub has no name for it yet -- naming happens on the way
+  // in -- so the make and model are the only identity there is.
   const name = document.createElement("div");
-  name.className = "settings-sensor-name";
-  name.textContent = `New ${device.kind === "unknown" ? "device" : device.kind} found`;
-  row.appendChild(name);
+  name.className = "zigbee-row-name";
+  name.textContent = describeZigbeeDevice(device);
+  body.appendChild(name);
+
+  const state = document.createElement("div");
+  state.className = "zigbee-row-what";
+  state.textContent = "Found on the radio. Not added, and not reporting.";
+  body.appendChild(state);
 
   const detail = document.createElement("div");
-  detail.className = "mute";
-  detail.textContent = `${device.eui} · ${describeSignal(device)}`;
-  row.appendChild(detail);
+  detail.className = "zigbee-row-eui";
+  detail.textContent = device.readings
+    ? `${device.eui} · ${describeSignal(device)}` : device.eui;
+  body.appendChild(detail);
 
   const actions = document.createElement("div");
   actions.className = "zigbee-actions";
-  actions.style.marginTop = "6px";
-  [["Add it", "accept"], ["Not mine", "ignore"]].forEach(([label, action]) => {
+  // One way out, not two. "Not mine" archived the row to stop the hub
+  // asking again, which made a refusal indistinguishable from a removal
+  // and left a device that came back unaddable.
+  [["Add it", "accept"], ["Remove", "remove"]].forEach(([label, action]) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
@@ -242,33 +364,48 @@ function zigbeeDeviceRow(device) {
   const row = document.createElement("div");
   row.className = "settings-sensor";
 
-  const name = document.createElement("div");
-  name.className = "settings-sensor-name";
-  name.textContent = device.kind === "unknown" ? "Device" : capitalise(device.kind);
-  row.appendChild(name);
+  const body = document.createElement("div");
+  body.className = "settings-sensor-body zigbee-row";
+  row.appendChild(body);
 
-  // Health in words. "17 readings, 2 rejoins" is a number without a verdict:
-  // nothing on the page said whether that was fine.
+  const name = document.createElement("div");
+  name.className = "zigbee-row-name";
+  name.textContent = device.name
+    || (device.kind === "unknown" ? "Device" : capitalise(device.kind));
+  body.appendChild(name);
+
+  const what = document.createElement("div");
+  what.className = "zigbee-row-what";
+  what.textContent = describeZigbeeDevice(device);
+  body.appendChild(what);
+
+  // Health in words, with a dot that carries the same verdict in colour.
+  // "17 readings, 2 rejoins" is a number without a verdict: nothing on
+  // the page said whether that was fine.
+  const silent = zigbeeIsSilent(device);
   const health = document.createElement("div");
+  health.className = silent ? "zigbee-row-status is-silent" : "zigbee-row-status";
   health.textContent = describeZigbeeHealth(device);
-  health.className = zigbeeIsSilent(device) ? "bad" : "mute";
-  row.appendChild(health);
+  body.appendChild(health);
 
   const detail = document.createElement("div");
-  detail.className = "note mute";
+  detail.className = "zigbee-row-eui";
   // The firmware each device is running, where a fleet is read at a
   // glance: one board left behind on an old version is the thing worth
   // spotting here, and opening every device page to find it is not
-  // reading, it is searching.
-  const version = !zigbeeIsSilent(device) && device.last && device.last.fw
-    ? `v${device.last.fw} · ` : "";
-  detail.textContent = `${version}${describeSignal(device)} · ${device.eui}`;
+  // reading, it is searching. Signal joins it only once there has been a
+  // packet to measure -- before that the line above has already said so,
+  // and saying it twice is the panel repeating itself.
+  const parts = [device.eui];
+  if (!silent && device.last && device.last.fw) parts.unshift(`v${device.last.fw}`);
+  if (device.readings) parts.push(describeSignal(device));
+  detail.textContent = parts.join(" · ");
   // The short address is a diagnostic that changes on every rejoin, so it
   // lives in the tooltip rather than competing with the identity.
   detail.title = `short address ${device.short || "unknown"} · `
     + `${device.readings} readings · ${device.joins} joins`
     + (device.failed_commands ? ` · ${device.failed_commands} undelivered commands` : "");
-  row.appendChild(detail);
+  body.appendChild(detail);
 
   const actions = document.createElement("div");
   actions.className = "zigbee-actions";
@@ -307,9 +444,19 @@ const ZIGBEE_MISSED_REPORTS = 3;     // forgiving, but not for ever
 // interval of 0, so judge it by the floor rather than by zero.
 const ZIGBEE_CONTINUOUS_AS_S = 30;
 
+const ZIGBEE_ASLEEP_AS_S = 1800;     // the check-in the hub asks a sleeper for
+
 function zigbeeSilentAfter(device) {
   const stated = Number(device && device.last && device.last.interval);
-  const expected = Number.isFinite(stated) && stated > 0 ? stated : ZIGBEE_CONTINUOUS_AS_S;
+  if (Number.isFinite(stated) && stated > 0) {
+    return Math.max(ZIGBEE_SILENT_FLOOR_S, stated * ZIGBEE_MISSED_REPORTS);
+  }
+  // A device that states no interval is judged by how it is powered. A
+  // battery end device is meant to go quiet between readings; holding
+  // it to a mains device's standard calls every healthy sleeper a
+  // fault, which is the one thing this figure must not do.
+  const expected = device && device.power_source === "battery"
+    ? ZIGBEE_ASLEEP_AS_S : ZIGBEE_CONTINUOUS_AS_S;
   return Math.max(ZIGBEE_SILENT_FLOOR_S, expected * ZIGBEE_MISSED_REPORTS);
 }
 
@@ -323,6 +470,9 @@ function describeSignal(device) {
   // device that has said nothing for twenty minutes has no current signal,
   // however well the last reading came through -- and "silent, check it is
   // powered" next to "signal strong" is the page arguing with itself.
+  if (!device.readings && (device.rssi === null || device.rssi === undefined)) {
+    return "not heard from yet";
+  }
   if (zigbeeIsSilent(device)) return "signal unknown";
   if (device.rssi === null || device.rssi === undefined) return "signal unknown";
   // Said in words, with the numbers on hover. dBm and LQI mean nothing to
@@ -336,7 +486,10 @@ function describeZigbeeHealth(device) {
     return "Joined, but nothing heard from it yet";
   }
   if (zigbeeIsSilent(device)) {
-    return `Silent for ${describeSeconds(device.quiet_for_s)} — check it is powered and in range`;
+    const advice = device.power_source === "battery"
+      ? "check its battery, and that it is in range"
+      : "check it is powered and in range";
+    return `Silent for ${describeSeconds(device.quiet_for_s)} — ${advice}`;
   }
   const weight = device.last && device.last.grams !== undefined && device.last.grams !== null
     ? `, last ${device.last.grams} g` : "";
@@ -344,11 +497,19 @@ function describeZigbeeHealth(device) {
 }
 
 function describeSeconds(seconds) {
-  if (seconds < 90) return `${seconds}s`;
+  if (!Number.isFinite(seconds)) return "some time";
+  if (seconds < 90) return `${Math.round(seconds)}s`;
   if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
   return `${Math.round(seconds / 3600)} h`;
 }
 
+/* Adding or refusing a device that has only joined the radio.
+ *
+ * No confirmation, unlike Remove on a device in use: refusing one that
+ * was never added loses nothing -- no name, no plant, no readings --
+ * and a dialogue in front of "is this yours?" makes the answer feel
+ * heavier than it is.
+ */
 async function claimZigbeeDevice(eui, action) {
   await fetch(`/api/zigbee/${action}`, {
     method: "POST",
@@ -417,6 +578,7 @@ async function loadZigbeeBattery(eui, force = false) {
 }
 
 function renderZigbeeBatteryChart(points) {
+  const section = document.getElementById("zigbee-battery-history");
   const chart = document.getElementById("zigbee-battery-chart");
   const empty = document.getElementById("zigbee-battery-empty");
   const summary = document.getElementById("zigbee-battery-summary");
@@ -424,8 +586,21 @@ function renderZigbeeBatteryChart(points) {
     .map((p) => ({ at: Date.parse(p.at), percent: Number(p.percent), volts: p.volts }))
     .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.percent));
 
+  /* Any device that has ever reported a charge gets this chart,
+     whatever kind of device it is and whether or not it happens to be
+     saying so this minute. Gated on the live value instead, a sensor
+     that reports its battery twice a day showed no history at all for
+     the other eleven hours -- while the history sat in the database. */
+  setHidden(section, usable.length === 0);
   setHidden(chart, usable.length < 2);
   setHidden(empty, usable.length >= 2);
+  // One reading is not a chart, and an empty frame reads as a fault.
+  // A cell at full never crosses the change threshold, so a new sensor
+  // sits on its first point until the next twelve-hourly heartbeat.
+  if (usable.length === 1) {
+    setText(empty, `One reading so far, ${usable[0].percent}%. A line needs two, `
+                   + "and this device reports its charge every few hours.");
+  }
   if (usable.length < 2) {
     setText(summary, usable.length === 1 ? "One reading so far." : "");
     return;
@@ -696,6 +871,37 @@ function renderZigbeeWeightChart(items) {
   setText(summary, parts.join(" · ") + ".");
 }
 
+/* The gateway's restarts, which used to be invisible.
+ *
+ * Each one costs the coordinator its device table, and a device it can no
+ * longer place has its readings discarded -- while still being
+ * acknowledged, so the device believes all is well and never retries.
+ * Three evenings of silence were this, and nothing anywhere said the
+ * gateway had restarted at all. */
+function renderGatewayRestarts(restarts) {
+  const table = document.getElementById("zigbee-gw-restarts");
+  const none = document.getElementById("zigbee-gw-restarts-none");
+  if (!table) return;
+  setHidden(table.parentElement, restarts.length === 0);
+  setHidden(none, restarts.length > 0);
+  const body = table.querySelector("tbody");
+  if (!renderKeyChanged(body, [restarts])) return;
+  body.replaceChildren();
+  for (const restart of restarts) {
+    const row = document.createElement("tr");
+    for (const text of [
+      new Date(restart.at).toLocaleString(),
+      restart.reason || "unknown",
+      restart.ran_for_s == null ? "--" : describeSeconds(restart.ran_for_s),
+    ]) {
+      const cell = document.createElement("td");
+      setText(cell, text);
+      row.append(cell);
+    }
+    body.append(row);
+  }
+}
+
 function renderZigbeeDevicePage() {
   const eui = zigbeeEuiFromLocation();
   const device = zigbeeDevices.find((d) => d.eui === eui);
@@ -722,7 +928,8 @@ function renderZigbeeDevicePage() {
   // died, looking exactly like a scale that was working and reading zero.
   const stale = device && zigbeeIsSilent(device);
   const hasWeight = last.grams !== undefined && last.grams !== null && !stale;
-  setHidden(document.getElementById("zigbee-reading"), !hasWeight && !stale);
+  setHidden(document.getElementById("zigbee-reading"),
+            kind !== "scale" || (!hasWeight && !stale));
   setText(document.getElementById("zigbee-scale-grams"),
           hasWeight ? String(Math.round(last.grams)) : "--");
   // Always a word, never an empty line. Showing nothing when the reading is
@@ -756,14 +963,16 @@ function renderZigbeeDevicePage() {
     && last.batt_pct !== null && Number(last.batt_pct) >= 0;
   renderBattery(document.getElementById("zigbee-scale-batt"), {
     battery_percent: battKnown ? Number(last.batt_pct) : null,
-    battery_voltage_v: battKnown ? Number(last.batt) : null,
+    battery_voltage_v: Number.isFinite(Number(last.batt)) ? Number(last.batt) : null,
     battery_charging: null,
   });
   // The version the device itself reports, which since it travels in
   // every Zigbee frame is known with the Wi-Fi switched off -- the
   // state the scale normally sits in.
+  // Ours reports its build in every reading; a bought device says it
+  // once, during the interview. Either is the firmware this is running.
   setText(document.getElementById("zigbee-scale-firmware"),
-          last.fw && !stale ? last.fw : "--");
+          (device && device.firmware) || last.fw || "--");
   setText(document.getElementById("zigbee-scale-signal"),
           device && !zigbeeIsSilent(device)
             && device.rssi !== null && device.rssi !== undefined
@@ -775,34 +984,85 @@ function renderZigbeeDevicePage() {
   const hasBattery = device && device.last
     && device.last.batt_pct !== undefined && device.last.batt_pct !== null
     && Number(device.last.batt_pct) >= 0;
-  setHidden(document.getElementById("zigbee-battery-history"), !hasBattery);
-  if (hasBattery) loadZigbeeBattery(eui);
+  // Always asked for: the chart hides itself when nothing has been
+  // kept, which is the only honest test of whether this device has a
+  // battery worth charting.
+  loadZigbeeBattery(eui);
   /* The weight chart decides for itself, from what has been kept, rather
    * than from the live device list: a gateway that is unplugged empties
    * that list, and an unplugged gateway is exactly when somebody wants to
    * look at what the scale said before it went quiet. */
   loadZigbeeWeight(eui);
 
+  const nameField = document.getElementById("zigbee-name");
+  if (nameField && document.activeElement !== nameField) {
+    nameField.value = (device && device.name) || "";
+  }
+
   renderZigbeeSubject(device);
 
   // A way back to the device's own page, offered only when the device says
   // its Wi-Fi is on and has told us what it answers to. Guessing an address
   // would produce a link that goes nowhere.
-  const host = device && device.notes ? device.notes.host : undefined;
+  const notes = (device && device.notes) || {};
+  const host = notes.ip || notes.host;
   const ownFigure = document.getElementById("zigbee-own-page-figure");
   const own = document.getElementById("zigbee-own-page");
   // Only while Wi-Fi is on, which is a temporary state by design.
   const reachable = Boolean(host) && last.wifi === true;
   setHidden(ownFigure, !reachable);
   if (reachable) {
-    own.href = `http://${host}.local/`;
-    setText(own, `${host}.local`);
+    const where = notes.ip ? notes.ip : `${host}.local`;
+    own.href = `http://${where}/`;
+    setText(own, where);
   }
 
+  // The panel for this kind of device, or the "no controls yet" one when
+  // the hub has nothing to offer for it. Asking each panel what it is for
+  // rather than naming the kinds here is what lets a new driver bring its
+  // own controls without this line being edited again.
+  const kinds = new Set([...document.querySelectorAll("[data-device-kind]")]
+    .map((panel) => panel.dataset.deviceKind));
+  const shown = kinds.has(kind) ? kind : "unknown";
   document.querySelectorAll("[data-device-kind]").forEach((panel) => {
-    const show = Boolean(device) && panel.dataset.deviceKind === (kind === "scale" ? "scale" : "unknown");
-    setHidden(panel, !show);
+    setHidden(panel, !device || panel.dataset.deviceKind !== shown);
   });
+
+  // Scale-shaped facts, hidden for devices that are not shaped that way.
+  // A mains plug has no battery and no reporting rate, and a dash next to
+  // "Battery" reads as a flat one rather than as a question that does not
+  // apply.
+  setHidden(document.getElementById("zigbee-rate-figure"), kind !== "scale");
+  setHidden(document.getElementById("zigbee-batt-figure"), !hasBattery);
+
+  // True of every Zigbee device, and shown only once the device has
+  // said it. Make answers "which of these is it", power and role
+  // answer most of "why has it gone quiet": a battery end device is
+  // meant to sleep and a mains router never is.
+  // What it is, in the words somebody would use buying one. The kind
+  // is the hub's name for a driver and the make is a model number;
+  // neither of them says "soil probe" to a person reading the page.
+  const type = device ? ZIGBEE_PRODUCT_TYPES[device.kind] : null;
+  setHidden(document.getElementById("zigbee-type-figure"), !type);
+  setText(document.getElementById("zigbee-type"), type || "--");
+
+  const make = device ? [device.manufacturer, device.model].filter(Boolean).join(" ") : "";
+  setHidden(document.getElementById("zigbee-make-figure"), !make);
+  setText(document.getElementById("zigbee-make"), make);
+  const supply = device && device.power_source;
+  const role = device && device.role;
+  setHidden(document.getElementById("zigbee-power-figure"), !supply && !role);
+  setText(document.getElementById("zigbee-power"),
+          [supply, role].filter(Boolean).join(" \u00b7 "));
+
+  renderZigbeeDetails(device);
+  renderZigbeeReporting(device);
+
+  if (kind === "plug") renderZigbeePlug(device);
+  if (kind === "leak") renderZigbeeLeak(device);
+  if (kind === "soil") renderZigbeeSoil(device);
+  if (kind === "thermometer") renderZigbeeAir(device);
+  loadZigbeeMeasurements(eui);
 
   if (!device || kind !== "scale") return;
 
@@ -876,6 +1136,370 @@ function renderZigbeeDevicePage() {
  * Nothing here asks what kind of device it is. The driver says "plant" or
  * "room", and the right list is fetched for it; a kind that is about
  * nothing gets no picker at all. */
+/* The plug's switch, drawn from what the plug last said.
+ *
+ * Three states, not two: on, off, and not yet known. A plug the hub has
+ * never heard from is not off -- it is unasked -- and drawing it as off
+ * would be the page inventing a fact. The switch stays disabled until an
+ * answer arrives, so the only thing to press is the one button that can
+ * produce one.
+ */
+/* The diagnostics, which used to live in the tooltip of an address
+ * that did not look like it had one. Folded away rather than deleted:
+ * a rejoin count is the first thing worth seeing when a device keeps
+ * dropping, and the second thing worth hiding the rest of the time.
+ */
+/* How often this device is asked to speak.
+ *
+ * Offered only where the hub has something to configure: a device
+ * whose reporting it cannot set would get a form that does nothing.
+ */
+const ZIGBEE_CONFIGURABLE = new Set(["thermometer", "soil", "plug"]);
+
+function renderZigbeeReporting(device) {
+  const panel = document.getElementById("zigbee-reporting");
+  if (!panel) return;
+  const offered = Boolean(device) && ZIGBEE_CONFIGURABLE.has(device.kind);
+  setHidden(panel, !offered);
+  if (!offered) return;
+  const maximum = document.getElementById("zigbee-report-max");
+  const sensitivity = document.getElementById("zigbee-report-sensitivity");
+  // Left alone while somebody is choosing from it: the page polls every
+  // second, and a menu that resets under the cursor cannot be used.
+  if (!maximum.matches(":focus")) {
+    maximum.value = String(device.report_max_seconds || 1800);
+  }
+  if (!sensitivity.matches(":focus")) {
+    sensitivity.value = device.report_sensitivity || "normal";
+  }
+}
+
+async function saveZigbeeReporting() {
+  const eui = zigbeeEuiFromLocation();
+  const state = document.getElementById("zigbee-report-state");
+  setText(state, "Asking the device.");
+  try {
+    const response = await fetch("/api/zigbee/reporting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eui,
+        max_seconds: Number(document.getElementById("zigbee-report-max").value),
+        sensitivity: document.getElementById("zigbee-report-sensitivity").value,
+      }),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    const result = await response.json();
+    // Saved either way; whether the device has heard yet is a separate
+    // fact, and a sleeping sensor has not.
+    setText(state, result.asked_now
+      ? "Saved, and the device has been told."
+      : "Saved. The device is asleep, so it will be told when it next speaks.");
+    await refreshZigbee();
+  } catch (_error) {
+    setText(state, "That did not save.");
+  }
+}
+
+function renderZigbeeDetails(device) {
+  setText(document.getElementById("zigbee-short"), (device && device.short) || "--");
+  setText(document.getElementById("zigbee-report-count"),
+          device ? String(device.readings) : "--");
+  setText(document.getElementById("zigbee-join-count"),
+          device ? String(device.joins) : "--");
+  const undelivered = device ? device.failed_commands : 0;
+  setHidden(document.getElementById("zigbee-undelivered-figure"), !undelivered);
+  setText(document.getElementById("zigbee-undelivered"), String(undelivered || 0));
+  setText(document.getElementById("zigbee-clusters"), describeZigbeeClusters(device));
+}
+
+/* What a device can do, in words. The numbers are the specification's
+   and mean nothing to anyone deciding whether a sensor is in a sensible
+   place; the ones with no name are left out rather than printed raw. */
+const ZIGBEE_CLUSTER_NAMES = {
+  0x0001: "battery",
+  0x0006: "on/off",
+  0x0008: "dimming",
+  0x0201: "thermostat",
+  0x0402: "temperature",
+  0x0405: "humidity",
+  0x0406: "occupancy",
+  0x0500: "alarms",
+  0x0702: "metering",
+  0x0b04: "electrical measurement",
+  0xfc00: "weighing",
+};
+
+function describeZigbeeClusters(device) {
+  const named = (device && device.clusters ? device.clusters : [])
+    .map((cluster) => ZIGBEE_CLUSTER_NAMES[cluster])
+    .filter(Boolean);
+  return named.length ? named.join(", ") : "--";
+}
+
+/* The air, from the last thing the sensor said.
+ *
+ * Each number is drawn only if it has been reported: a thermometer that
+ * has sent temperature but not yet humidity should show the one it has
+ * rather than a pair of dashes, and a dash where a reading will appear
+ * is not the same as a dash where one never will.
+ */
+function renderZigbeeAir(device) {
+  const last = (device && device.last) || {};
+  const temp = last.temp_c;
+  const humidity = last.rh_pct;
+  setText(document.getElementById("zigbee-air-temp"),
+          Number.isFinite(temp) ? temp.toFixed(1) : "--");
+  setText(document.getElementById("zigbee-air-rh"),
+          Number.isFinite(humidity) ? Math.round(humidity) : "--");
+  const heard = device && device.quiet_for_s !== null && device.quiet_for_s !== undefined
+    ? `Last reported ${describeSeconds(device.quiet_for_s)} ago.` : "";
+  setText(document.getElementById("zigbee-air-state"),
+          !device ? "This device is no longer on the network."
+          : !Number.isFinite(temp) && !Number.isFinite(humidity)
+            ? "Nothing reported yet. It sends when a reading changes, so give it a few minutes."
+            : heard);
+}
+
+/* Every measurement this device has reported, whatever it is.
+ *
+ * Keyed to the record rather than to the kind of device: a chart
+ * appears because something was measured, not because somebody
+ * remembered to add one for this sort of sensor. A new driver that
+ * decodes a known measurement gets its history with no change here.
+ */
+const ZIGBEE_MEASUREMENTS = [
+  { key: "moisture_percent", label: "Moisture", unit: "%", decimals: 0 },
+  { key: "soil_temperature_c", label: "Soil temperature", unit: "\u00b0C", decimals: 1 },
+  { key: "temp_c", label: "Air temperature", unit: "\u00b0C", decimals: 1 },
+  { key: "rh_pct", label: "Relative humidity", unit: "%", decimals: 0 },
+  { key: "grams", label: "Weight", unit: " g", decimals: 0 },
+];
+
+let zigbeeMeasureHours = 24;
+let zigbeeMeasureFor = null;
+
+async function loadZigbeeMeasurements(eui, force = false) {
+  if (!eui) return;
+  if (!force && zigbeeMeasureFor === `${eui}:${zigbeeMeasureHours}`) return;
+  zigbeeMeasureFor = `${eui}:${zigbeeMeasureHours}`;
+  try {
+    const response = await fetch(
+      `/api/zigbee/${encodeURIComponent(eui)}/reports?hours=${zigbeeMeasureHours}&limit=5000`);
+    if (!response.ok) throw new Error(String(response.status));
+    renderZigbeeMeasurements((await response.json()).items || []);
+  } catch (_error) {
+    zigbeeMeasureFor = null;          // so a later poll tries again
+    renderZigbeeMeasurements([]);
+  }
+}
+
+function renderZigbeeMeasurements(items) {
+  const section = document.getElementById("zigbee-measurements");
+  const grid = document.getElementById("zigbee-measurement-grid");
+  if (!section || !grid) return;
+  const drawn = ZIGBEE_MEASUREMENTS
+    .map((measure) => ({ measure, points: seriesFromReports(items, measure.key) }))
+    .filter((series) => series.points.length >= 2);
+  // Nothing kept worth drawing is not an empty chart, it is no chart.
+  setHidden(section, drawn.length === 0);
+  if (!drawn.length) {
+    grid.replaceChildren();
+    return;
+  }
+  if (!renderKeyChanged(grid, [drawn.map((s) => [s.measure.key, s.points.length,
+                                                 s.points[s.points.length - 1].value]),
+                               zigbeeMeasureHours])) return;
+  grid.replaceChildren();
+  for (const { measure, points } of drawn) {
+    const card = document.createElement("article");
+    card.className = "climate-chart-card";
+    const header = document.createElement("header");
+    const name = document.createElement("span");
+    setText(name, measure.label);
+    const value = document.createElement("strong");
+    setText(value, `${points[points.length - 1].value.toFixed(measure.decimals)}${measure.unit}`);
+    header.append(name, value);
+    const chart = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chart.id = `zigbee-measure-${measure.key}`;
+    chart.setAttribute("class", "history-chart");
+    chart.setAttribute("viewBox", "0 0 720 220");
+    chart.setAttribute("role", "img");
+    chart.setAttribute("aria-label", `${measure.label} over time`);
+    const empty = document.createElement("p");
+    empty.id = `zigbee-measure-${measure.key}-empty`;
+    empty.className = "history-chart-empty";
+    setText(empty, `No ${measure.label.toLowerCase()} in this range.`);
+    card.append(header, chart, empty);
+    grid.append(card);
+  }
+  // After they are in the document: the renderer finds them by id.
+  for (const { measure, points } of drawn) {
+    drawZigbeeSeries(`zigbee-measure-${measure.key}`,
+                     `zigbee-measure-${measure.key}-empty`,
+                     points, measure.unit, measure.decimals);
+  }
+}
+
+function seriesFromReports(items, key) {
+  return items
+    .map((report) => ({ at: Date.parse(report.at),
+                        value: Number((report.values || {})[key]) }))
+    .filter((point) => Number.isFinite(point.at) && Number.isFinite(point.value))
+    .sort((a, b) => a.at - b.at);
+}
+
+/* One line, with the axis labelled at both ends and in the middle.
+ *
+ * Padded so a steady room is not drawn as a mountain range of rounding
+ * noise: a tenth of a degree across a day is a still room, and an axis
+ * fitted tightly to it says the opposite.
+ */
+function drawZigbeeSeries(chartId, emptyId, points, unit, decimals) {
+  const chart = document.getElementById(chartId);
+  const empty = document.getElementById(emptyId);
+  if (!chart || !empty) return;
+  setHidden(chart, points.length < 2);
+  setHidden(empty, points.length >= 2);
+  if (points.length < 2) {
+    chart.replaceChildren();
+    return;
+  }
+  const width = 720, height = 220;
+  const plot = { left: 54, right: 16, top: 16, bottom: 34 };
+  const plotWidth = width - plot.left - plot.right;
+  const plotHeight = height - plot.top - plot.bottom;
+  const first = points[0].at;
+  const span = Math.max(1, points[points.length - 1].at - first);
+  const values = points.map((point) => point.value);
+  const lowest = Math.min(...values);
+  const highest = Math.max(...values);
+  const padding = Math.max(unit === "%" ? 2 : 0.5, (highest - lowest) * 0.15);
+  const bottom = lowest - padding;
+  const top = highest + padding;
+  const x = (at) => plot.left + ((at - first) / span) * plotWidth;
+  const y = (value) => plot.top + ((top - value) / Math.max(0.01, top - bottom)) * plotHeight;
+
+  chart.replaceChildren();
+  for (const value of [bottom, (bottom + top) / 2, top]) {
+    chart.append(svgElement("line", { class: "grid-line", x1: plot.left,
+                                      x2: width - plot.right, y1: y(value), y2: y(value) }));
+    chart.append(svgElement("text", { class: "axis-label", x: plot.left - 8,
+                                      y: y(value) + 4, "text-anchor": "end" },
+                            `${value.toFixed(decimals)}${unit}`));
+  }
+  chart.append(svgElement("path", {
+    class: "history-line",
+    d: points.map((point, index) =>
+      `${index ? "L" : "M"}${x(point.at).toFixed(1)} ${y(point.value).toFixed(1)}`).join(" "),
+  }));
+  for (const at of [first, points[points.length - 1].at]) {
+    chart.append(svgElement("text", {
+      class: "axis-label", x: x(at), y: height - 12,
+      "text-anchor": at === first ? "start" : "end",
+    }, new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })));
+  }
+  // The same readout the plant's charts have: a line nobody can
+  // question is a picture, not a measurement.
+  attachNearestReadout(chart, { width, height }, points.map((point) => ({
+    cx: x(point.at), cy: y(point.value),
+    text: `${point.value.toFixed(decimals)}${unit}`,
+    when: new Date(point.at).toLocaleString([], {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+  })));
+}
+
+/* A leak sensor's one answer.
+ *
+ * Three states, not two: wet, dry, and not yet heard from. A sensor
+ * that has never reported is not dry -- it is unasked -- and a leak
+ * sensor that says "Dry" when it has never spoken is the single most
+ * dangerous thing this page could print.
+ */
+function renderZigbeeLeak(device) {
+  const state = document.getElementById("zigbee-leak-state");
+  const detail = document.getElementById("zigbee-leak-detail");
+  const trouble = document.getElementById("zigbee-leak-trouble");
+  if (!state) return;
+  const last = (device && device.last) || {};
+  const wet = last.wet;
+  const known = wet === true || wet === false;
+  setData(state, "wet", known ? String(wet) : "unknown");
+  setText(state, !known ? "Nothing reported yet"
+          : wet ? "Water detected" : "Dry");
+  setText(detail, !device ? "This device is no longer on the network."
+          : known ? `Last reported ${describeSeconds(device.quiet_for_s)} ago.`
+          : "It reports when something changes. Wetting the probe is the way to see it work.");
+  // Worth saying separately: a flat battery or a prised-open case is
+  // the sensor telling you it may stop being able to warn you.
+  const worries = [last.battery_low ? "its battery is low" : null,
+                   last.tamper ? "it has been opened or moved" : null].filter(Boolean);
+  setText(trouble, worries.length ? `The sensor says ${worries.join(", and ")}.` : "");
+  setHidden(trouble, !worries.length);
+}
+
+/* What the pot is doing, from the probe's last word.
+ *
+ * Moisture leads: it is the number somebody opens this page to see,
+ * and soil temperature is context for it rather than the other way
+ * round.
+ */
+function renderZigbeeSoil(device) {
+  const last = (device && device.last) || {};
+  const moisture = last.moisture_percent;
+  const temperature = last.soil_temperature_c;
+  setText(document.getElementById("zigbee-soil-moisture"),
+          Number.isFinite(moisture) ? Math.round(moisture) : "--");
+  setText(document.getElementById("zigbee-soil-temp"),
+          Number.isFinite(temperature) ? temperature.toFixed(1) : "--");
+  setText(document.getElementById("zigbee-soil-state"),
+          !device ? "This device is no longer on the network."
+          : !Number.isFinite(moisture) && !Number.isFinite(temperature)
+            ? "Nothing reported yet. It sends when a reading changes, so give it a few minutes."
+            : `Last reported ${describeSeconds(device.quiet_for_s)} ago.`);
+}
+
+function renderZigbeePlug(device) {
+  const toggle = document.getElementById("zigbee-plug-toggle");
+  const label = document.getElementById("zigbee-plug-label");
+  const state = document.getElementById("zigbee-plug-state");
+  if (!toggle) return;
+  const on = device && device.last ? device.last.on : undefined;
+  const known = on === true || on === false;
+  const silent = Boolean(device) && zigbeeIsSilent(device);
+  toggle.dataset.eui = device ? device.eui : "";
+  toggle.setAttribute("aria-checked", known ? String(on) : "mixed");
+  toggle.disabled = !device || !known;
+  setText(label, known ? (on ? "On" : "Off") : "--");
+  setText(state, !device ? "This device is no longer on the network."
+    : !known ? "The plug has not said whether it is on. Ask it."
+    : silent ? `Last answered ${describeSeconds(device.quiet_for_s)} ago, so this may be out of date.`
+    : `Answered ${describeSeconds(device.quiet_for_s)} ago.`);
+}
+
+async function commandZigbeePlug(eui, command) {
+  if (!eui) return;
+  setText(document.getElementById("zigbee-plug-state"),
+          command === "state" ? "Asking the plug."
+          : `Telling the plug to turn ${command}.`);
+  const say = (word) => fetch("/api/zigbee/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eui, command: word }),
+  });
+  await say(command);
+  // Asked rather than assumed. A command the radio accepted is not the
+  // same as a relay that moved, and the plug is the only thing that
+  // knows which of those happened.
+  if (command !== "state") {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await say("state");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await refreshZigbee();
+  if (pageFromLocation() === "zigbee-device") renderZigbeeDevicePage();
+}
+
 async function renderZigbeeSubject(device) {
   const block = document.getElementById("zigbee-subject");
   const label = document.getElementById("zigbee-subject-label");
@@ -912,8 +1536,6 @@ async function renderZigbeeSubject(device) {
   });
   choice.value = current ? String(current) : "";
 
-  const name = document.getElementById("zigbee-name");
-  if (name && document.activeElement !== name) name.value = device.name || "";
 }
 
 function describeInterval(seconds) {
@@ -934,11 +1556,11 @@ function describeInterval(seconds) {
  * obvious -- which a plant-at-a-time view can never show.
  */
 let roomsOverview = [];
-let roomHistory = new Map();        // room_id -> {items, fetchedAt}
+let roomHistory = new Map();        // "room_id:sensor_id" -> {items, fetchedAt}
 const ROOM_HISTORY_MS = 24 * 60 * 60 * 1000;
 const ROOM_HISTORY_REFETCH_MS = 60_000;
 
-async function refreshRooms() {
+async function refreshRoomsPage() {
   try {
     const response = await fetch("/api/rooms/overview");
     if (!response.ok) return;
@@ -946,53 +1568,270 @@ async function refreshRooms() {
   } catch (_error) {
     return;
   }
-  renderRooms();
+  renderRoomsPage();
   // Histories after the cards, so the page is readable before the charts
   // arrive rather than blank until the last one does.
   for (const room of roomsOverview) {
-    if (room.air) loadRoomHistory(room);
+    if ((room.air_sources || []).length) loadRoomHistory(room);
   }
 }
 
+/* One history per sensor, not one per room.
+ *
+ * A room with a probe at the window and a thermometer by the door has
+ * two honest answers, and drawing only the one that reported most
+ * recently made the other look broken. Averaging them would be worse:
+ * it produces a third reading that is true nowhere in the room.
+ */
 async function loadRoomHistory(room) {
-  const held = roomHistory.get(room.room_id);
-  if (held && Date.now() - held.fetchedAt < ROOM_HISTORY_REFETCH_MS) return;
-  const end = Date.now();
-  const query = new URLSearchParams({
-    sensor_id: room.air.sensor_id,
-    start: new Date(end - ROOM_HISTORY_MS).toISOString(),
-    end: new Date(end).toISOString(),
-  });
-  try {
-    const response = await fetch(`/api/readings/history?${query}`);
-    if (!response.ok) return;
-    const items = (await response.json()).items || [];
-    roomHistory.set(room.room_id, { items, fetchedAt: Date.now(), end });
-    renderRooms();
-  } catch (_error) {
-    /* The card still shows the current air. */
+  for (const source of room.air_sources || []) {
+    const key = `${room.room_id}:${source.sensor_id}`;
+    const held = roomHistory.get(key);
+    if (held && Date.now() - held.fetchedAt < ROOM_HISTORY_REFETCH_MS) continue;
+    const end = Date.now();
+    const query = new URLSearchParams({
+      sensor_id: source.sensor_id,
+      start: new Date(end - ROOM_HISTORY_MS).toISOString(),
+      end: new Date(end).toISOString(),
+    });
+    try {
+      const response = await fetch(`/api/readings/history?${query}`);
+      if (!response.ok) continue;
+      const items = (await response.json()).items || [];
+      roomHistory.set(key, { items, fetchedAt: Date.now(), end });
+      renderRoomsPage();
+    } catch (_error) {
+      /* The card still shows the current air. */
+    }
   }
 }
 
-function renderRooms() {
+/* One room's own page.
+ *
+ * Settings could say a room held one plant; only this can say which,
+ * and the thing that blocks a delete is exactly the thing worth
+ * showing beside the delete button.
+ */
+let shownRoom = null;
+
+function currentRoomId() {
+  const match = window.location.pathname.match(/^\/rooms\/(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function addingARoom() {
+  return window.location.pathname === "/rooms/new";
+}
+
+async function refreshRoomPage() {
+  if (addingARoom()) {
+    renderNewRoomPage();
+    return;
+  }
+  const roomId = currentRoomId();
+  if (roomId === null) return;
+  try {
+    const response = await fetch(`/api/rooms/${roomId}`);
+    if (!response.ok) {
+      shownRoom = null;
+      setText(document.getElementById("room-page-title"), "No such room");
+      setText(document.getElementById("room-page-summary"),
+              "It may have been deleted.");
+      return;
+    }
+    shownRoom = await response.json();
+  } catch (_error) {
+    return;
+  }
+  renderRoomPage();
+}
+
+function renderNewRoomPage() {
+  shownRoom = null;
+  setText(document.getElementById("room-page-title"), "New room");
+  setText(document.getElementById("room-page-summary"),
+          "Where a plant lives shapes what it needs.");
+  setText(document.getElementById("room-page-details-title"), "Details");
+  setText(document.getElementById("room-page-save"), "Add room");
+  document.title = "New room \u00b7 Open Plant Pulse";
+  for (const id of ["room-page-plants-section", "room-page-sensors-section",
+                    "room-page-danger-section"]) {
+    setHidden(document.getElementById(id), true);
+  }
+  const form = document.getElementById("room-page-form");
+  if (form.contains(document.activeElement)) return;
+  document.getElementById("room-page-id").value = "";
+  document.getElementById("room-page-name").value = "";
+  document.getElementById("room-page-aspect").value = "unknown";
+  document.getElementById("room-page-light").value = "unknown";
+  document.getElementById("room-page-notes").value = "";
+}
+
+function renderRoomPage() {
+  const room = shownRoom;
+  if (!room) return;
+  for (const id of ["room-page-plants-section", "room-page-sensors-section",
+                    "room-page-danger-section"]) {
+    setHidden(document.getElementById(id), false);
+  }
+  setText(document.getElementById("room-page-save"), "Save");
+  setText(document.getElementById("room-page-title"), room.name);
+  setText(document.getElementById("room-page-summary"),
+          [tally(room.sensor_count, "sensor"),
+           tally(room.plant_count, "plant")].join(" \u00b7 "));
+  document.title = `${room.name} \u00b7 Open Plant Pulse`;
+
+  // The form is only filled when it is not being typed into, so a
+  // refresh underneath somebody mid-edit does not take the field back.
+  const form = document.getElementById("room-page-form");
+  if (!form.contains(document.activeElement)) {
+    document.getElementById("room-page-id").value = room.room_id;
+    document.getElementById("room-page-name").value = room.name;
+    document.getElementById("room-page-aspect").value = room.aspect || "unknown";
+    document.getElementById("room-page-light").value = room.light || "unknown";
+    document.getElementById("room-page-notes").value = room.notes || "";
+  }
+
+  renderRoomOccupants("room-page-plants", room.plants || [],
+                      (plant) => ({ href: `/plants/${plant.plant_id}`,
+                                    name: plant.display_name,
+                                    detail: plant.profile_id || "no profile" }),
+                      "No plants in this room.");
+  renderRoomOccupants("room-page-sensors", room.sensors || [],
+                      (sensor) => ({ href: `/sensors/${sensor.sensor_id}`,
+                                     name: sensor.display_name || sensor.sensor_id,
+                                     detail: sensor.transport || "" }),
+                      "No sensors in this room.");
+
+  // Said before the button is pressed, not after: what is in the way
+  // is on the page already.
+  const held = [room.plant_count ? tally(room.plant_count, "plant") : null,
+                room.sensor_count ? tally(room.sensor_count, "sensor") : null]
+    .filter(Boolean);
+  setText(document.getElementById("room-page-delete-note"),
+          held.length
+            ? `This room still holds ${held.join(" and ")}. Move `
+              + (room.plant_count + room.sensor_count === 1 ? "it" : "them")
+              + " out before deleting it."
+            : "Nothing is in this room, so it can be deleted.");
+  document.getElementById("room-page-delete").disabled = held.length > 0;
+}
+
+function renderRoomOccupants(listId, items, describe, emptyText) {
+  const list = document.getElementById(listId);
+  if (!list) return;
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    setText(empty, emptyText);
+    list.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const { href, name, detail } = describe(item);
+    const card = document.createElement("div");
+    card.className = "settings-sensor";
+    const heading = document.createElement("div");
+    heading.className = "settings-sensor-heading";
+    const link = document.createElement("a");
+    link.href = href;
+    setText(link, name);
+    heading.append(link);
+    card.append(heading);
+    if (detail) {
+      const note = document.createElement("code");
+      setText(note, detail);
+      card.append(note);
+    }
+    list.append(card);
+  }
+}
+
+async function saveRoomPage(event) {
+  event.preventDefault();
+  const adding = addingARoom();
+  const roomId = currentRoomId();
+  const message = document.getElementById("room-page-message");
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch(adding ? "/api/rooms" : `/api/rooms/${roomId}`, {
+      method: adding ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById("room-page-name").value.trim(),
+        aspect: document.getElementById("room-page-aspect").value,
+        light: document.getElementById("room-page-light").value,
+        notes: document.getElementById("room-page-notes").value.trim() || null,
+      }),
+    });
+  } catch (_error) {
+    setText(message, "The hub could not be reached. Nothing was saved.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "Could not save the room.");
+    return;
+  }
+  if (adding) {
+    const created = await response.json().catch(() => ({}));
+    if (created.room_id) {
+      navigate(`/rooms/${created.room_id}`);
+      return;
+    }
+  }
+  setText(message, "Saved.");
+  await refreshRoomPage();
+}
+
+async function deleteRoomFromItsPage() {
+  const roomId = currentRoomId();
+  const message = document.getElementById("room-page-delete-message");
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch(`/api/rooms/${roomId}`, { method: "DELETE" });
+  } catch (_error) {
+    setText(message, "The hub could not be reached. The room was not deleted.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "Could not delete the room.");
+    return;
+  }
+  navigate("/settings/rooms");
+}
+
+function renderRoomsPage() {
   const grid = document.getElementById("rooms-grid");
   if (!grid) return;
   setHidden(document.getElementById("rooms-empty"), roomsOverview.length > 0);
-  if (!renderKeyChanged(grid, [roomsOverview, [...roomHistory.keys()],
+  if (!renderKeyChanged(grid, [roomsOverview, [...roomHistory.keys()].sort(),
                                [...roomHistory.values()].map((h) => h.items.length)])) return;
   grid.replaceChildren();
   for (const room of roomsOverview) grid.append(roomCard(room));
   // After they are in the document: renderHistoryChart finds its
   // elements by id, which only works once they exist.
   for (const room of roomsOverview) {
-    const held = roomHistory.get(room.room_id);
-    if (!held || held.items.length < 2) continue;
+    // One chart per measurement with a line per sensor, rather than a
+    // chart pair per sensor: two thermometers in a room are worth
+    // comparing, and stacked separately they could not be.
+    const sources = room.air_sources || [];
+    const held = new Map(sources
+      .map((source) => [source.sensor_id,
+                        (roomHistory.get(`${room.room_id}:${source.sensor_id}`) || {}).items || []]));
+    const end = Math.max(...sources
+      .map((s) => (roomHistory.get(`${room.room_id}:${s.sensor_id}`) || {}).end || 0), 0);
+    if (!end) continue;
     for (const metric of ROOM_AIR_METRICS) {
-      renderHistoryChart(
-        `room-${room.room_id}-${metric.slug}-chart`,
-        `room-${room.room_id}-${metric.slug}-empty`,
-        held.items, metric.key, metric.unit,
-        held.end - ROOM_HISTORY_MS, held.end);
+      const series = historySeries(held, metric.key, sources, metric.decimals);
+      renderChartLegend(`room-${room.room_id}-legend`, series);
+      renderHistoryChart(`room-${room.room_id}-${metric.slug}-chart`,
+                         `room-${room.room_id}-${metric.slug}-empty`,
+                         series, metric.unit, end - ROOM_HISTORY_MS, end);
     }
   }
 }
@@ -1004,13 +1843,16 @@ function roomCard(room) {
   const heading = document.createElement("div");
   heading.className = "room-card-heading";
   const name = document.createElement("h2");
-  setText(name, room.name);
+  const link = document.createElement("a");
+  link.href = `/rooms/${room.room_id}`;
+  setText(link, room.name);
+  name.append(link);
   heading.append(name);
   const what = document.createElement("p");
   what.className = "note mute";
   const bits = [
-    `${room.plant_count} plant${room.plant_count === 1 ? "" : "s"}`,
-    `${room.sensor_count} sensor${room.sensor_count === 1 ? "" : "s"}`,
+    tally(room.plant_count, "plant"),
+    tally(room.sensor_count, "sensor"),
   ];
   setText(what, bits.join(" · "));
   heading.append(what);
@@ -1055,22 +1897,50 @@ function roomCard(room) {
   // styling, and calling the same renderer means the gridlines, the
   // axis labels and the breaks across outages all behave the same
   // here as they do there.
-  const held = roomHistory.get(room.room_id);
-  if (held && held.items.length > 1) {
+  // One block of charts per sensor. Where there is more than one, each
+  // is named: "25.1 °C" means something different at the window than
+  // by the door, and a card that shows two unlabelled pairs of charts
+  // is a puzzle rather than a reading.
+  const sources = room.air_sources || [];
+  const anyHistory = sources.some((source) => {
+    const held = roomHistory.get(`${room.room_id}:${source.sensor_id}`);
+    return held && held.items.length > 1;
+  });
+  if (anyHistory) {
+    const legend = document.createElement("div");
+    legend.className = "chart-legend";
+    legend.id = `room-${room.room_id}-legend`;
+    card.append(legend);
     const grid = document.createElement("div");
     grid.className = "climate-chart-grid";
-    for (const metric of ROOM_AIR_METRICS) {
-      grid.append(roomChartCard(room, metric));
-    }
+    for (const metric of ROOM_AIR_METRICS) grid.append(roomChartCard(room, metric));
     card.append(grid);
   }
   return card;
 }
 
+/* A unit: what to show, what to say, and what its axis may do.
+ *
+ * This was one string of prose, and the chart read it for hints --
+ * `unit.startsWith("degrees")` chose the padding, `unit.includes(
+ * "percent")` clamped the axis to 0-100 -- while the readout quietly
+ * translated it back to a symbol to draw it. So the heading said
+ * "52.7 percent relative humidity" beside a card already titled
+ * Relative humidity, and shortening that label would have unclamped
+ * a percentage axis with nothing to say it had.
+ *
+ * A symbol to draw, words for a screen reader, and the axis rules
+ * stated outright. Nothing has to be inferred from how a label reads.
+ */
+const CELSIUS = { symbol: "\u00b0C", spoken: "degrees Celsius", pad: 0.5 };
+const PERCENT = { symbol: "%", spoken: "percent", pad: 2, lowest: 0, highest: 100 };
+
 const ROOM_AIR_METRICS = [
-  { key: "air_temperature_c", label: "Temperature", unit: "°C", slug: "temperature" },
-  { key: "air_humidity_percent", label: "Relative humidity", unit: "% RH",
-    slug: "humidity" },
+  { key: "air_temperature_c", label: "Temperature",
+    unit: CELSIUS, slug: "temperature", decimals: 1 },
+  { key: "air_humidity_percent", label: "Relative humidity",
+    unit: { ...PERCENT, spoken: "percent relative humidity" },
+    slug: "humidity", decimals: 0 },
 ];
 
 function roomChartCard(room, metric) {
@@ -1081,9 +1951,9 @@ function roomChartCard(room, metric) {
   setText(name, metric.label);
   const value = document.createElement("strong");
   const number = document.createElement("b");
-  setText(number, room.air[metric.key] ?? "--");
+  setText(number, (room.air ?? {})[metric.key] ?? "--");
   const unit = document.createElement("small");
-  setText(unit, metric.unit);
+  setText(unit, metric.unit.symbol);
   value.append(number, unit);
   header.append(name, value);
   article.append(header);
@@ -1093,7 +1963,8 @@ function roomChartCard(room, metric) {
   chart.setAttribute("class", "history-chart");
   chart.setAttribute("viewBox", "0 0 720 220");
   chart.setAttribute("role", "img");
-  chart.setAttribute("aria-label", `${metric.label} over the last day`);
+  chart.setAttribute("aria-label",
+                     `${metric.label} in ${metric.unit.spoken} over the last day`);
   const empty = document.createElement("p");
   empty.id = `room-${room.room_id}-${metric.slug}-empty`;
   empty.className = "history-chart-empty";
@@ -1130,21 +2001,45 @@ function pageFromLocation() {
    * while every device was a scale. What a device can do belongs with the
    * device, not spread across a table that has to know about all of them. */
   if (path.startsWith("/zigbee/")) return "zigbee-device";
-  if (path === "/rooms" || path.startsWith("/rooms/")) return "rooms";
+  if (path === "/rooms") return "rooms";
+  if (path.startsWith("/rooms/")) return "room";
   if (path === "/settings" || path.startsWith("/settings/")) return "settings";
   if (path === "/onboarding" || path.startsWith("/onboarding/")) return "onboarding";
   return "fleet";
 }
 
+const SETTINGS_TABS = ["sensors", "rooms", "lights", "wifi", "time",
+                       "firmware", "zigbee"];
+const SETTINGS_TAB_KEY = "opp.settings.tab";
+
 function settingsTabFromLocation() {
   const path = window.location.pathname;
-  if (path === "/settings/wifi") return "wifi";
-  if (path === "/settings/time") return "time";
-  if (path === "/settings/rooms") return "rooms";
-  if (path === "/settings/lights") return "lights";
-  if (path === "/settings/firmware") return "firmware";
-  if (path === "/settings/zigbee") return "zigbee";
+  const named = path.startsWith("/settings/") ? path.slice("/settings/".length) : "";
+  if (SETTINGS_TABS.includes(named)) return named;
+  // Bare /settings means "the one I was last on", which is remembered
+  // per browser rather than on the hub: which tab somebody had open is
+  // a convenience for them, not a setting of the house.
+  return rememberedSettingsTab();
+}
+
+function rememberedSettingsTab() {
+  try {
+    const kept = window.localStorage.getItem(SETTINGS_TAB_KEY);
+    if (SETTINGS_TABS.includes(kept)) return kept;
+  } catch (_error) {
+    // Private windows and blocked site data both throw here. Settings
+    // opening on Sensors is a smaller loss than the page not opening.
+  }
   return "sensors";
+}
+
+function rememberSettingsTab(tab) {
+  if (!SETTINGS_TABS.includes(tab)) return;
+  try {
+    window.localStorage.setItem(SETTINGS_TAB_KEY, tab);
+  } catch (_error) {
+    /* nothing is lost that was not already unavailable */
+  }
 }
 
 function sensorIdFromLocation() {
@@ -1152,13 +2047,95 @@ function sensorIdFromLocation() {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-function sensorPath(sensorId, suffix = "") {
-  return "/sensors/" + encodeURIComponent(sensorId) + suffix;
-}
-
 function sensorQuery() {
   return selectedSensorId ? `?${new URLSearchParams({ sensor_id: selectedSensorId })}` : "";
 }
+
+/* The long explanatory notes, folded away.
+ *
+ * They earn their length the first time somebody meets a feature and
+ * are in the way every time after, so each one collapses to its first
+ * line and remembers whether it was opened. Kept per note rather than
+ * one switch for all of them: the note about what a weighing records
+ * is worth keeping open long after the one about pot weights is not.
+ *
+ * The key is the note's own words. Reordering the page keeps a note's
+ * state, and rewriting a note resets it -- which is the right way
+ * round, because a rewritten note is one worth reading again.
+ */
+const NOTE_STATE_PREFIX = "open-plant-pulse.note.";
+
+function noteKey(note) {
+  /* An id where the note has one, because some notes are written by the
+     page and are empty when this runs -- keyed by their words they would
+     answer to one key while blank and another once filled. */
+  if (note.id) return NOTE_STATE_PREFIX + note.id;
+  const words = (note.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  let hash = 0;
+  for (let index = 0; index < words.length; index += 1) {
+    hash = (hash * 31 + words.charCodeAt(index)) | 0;
+  }
+  return NOTE_STATE_PREFIX + (hash >>> 0).toString(36);
+}
+
+function noteIsOpen(note) {
+  try {
+    return window.localStorage.getItem(noteKey(note)) === "open";
+  } catch (error) {
+    // Private windows and blocked site data throw rather than return
+    // null; a note that cannot remember simply starts closed.
+    return false;
+  }
+}
+
+function rememberNote(note, open) {
+  try {
+    window.localStorage.setItem(noteKey(note), open ? "open" : "shut");
+  } catch (error) {
+    /* Nothing to do: the fold still works for this visit. */
+  }
+}
+
+/* Applied after renders as well as at load, because some notes are
+   written by the page rather than sitting in the markup. */
+function foldNotes() {
+  /* Every note, including the ones still empty: marking one later, on
+     the poll that fills it, is the page changing under somebody's
+     hands. Done once each, at the first render. */
+  for (const note of document.querySelectorAll(".settings-note")) {
+    if (!note.dataset.foldable) {
+      setData(note, "foldable", "true");
+      setAttr(note, "role", "button");
+      setAttr(note, "tabindex", "0");
+      const open = noteIsOpen(note);
+      if (!open) setData(note, "folded", "true");
+      setAttr(note, "aria-expanded", String(open));
+    }
+  }
+}
+
+function toggleNote(note) {
+  const open = "folded" in note.dataset;   // folded now means opening
+  if (open) delete note.dataset.folded;
+  else setData(note, "folded", "true");
+  setAttr(note, "aria-expanded", String(open));
+  rememberNote(note, open);
+}
+
+document.addEventListener("click", (event) => {
+  const note = event.target.closest(".settings-note[data-foldable]");
+  // A link or a bold word inside a note is still part of the note; only
+  // a link needs to be left alone.
+  if (!note || event.target.closest("a, button, input, select")) return;
+  toggleNote(note);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const note = event.target.closest?.(".settings-note[data-foldable]");
+  if (!note) return;
+  event.preventDefault();
+  toggleNote(note);
+});
 
 function renderPage() {
   const page = pageFromLocation();
@@ -1173,11 +2150,19 @@ function renderPage() {
   document.querySelectorAll("[data-page]").forEach((element) => {
     const rightPage = element.dataset.page.split(" ").includes(page);
     const rightKind = element.dataset.sensorKind === undefined
-      || element.dataset.sensorKind === shownKind;
+      || element.dataset.sensorKind.split(" ").includes(shownKind);
+    /* A section that decides for itself is left alone once it is on the
+       right page: showing it here and letting its renderer hide it again
+       is the same flip this function was written to stop, and at one
+       render a second it reads as the page blinking. Off the page it is
+       hidden like anything else. */
+    if (element.dataset.ownVisibility && rightPage && rightKind) return;
     setHidden(element, !(rightPage && rightKind));
   });
+  foldNotes();
   setClass(document.getElementById("fleet-link"), "active", page === "fleet");
-  setClass(document.getElementById("rooms-link"), "active", page === "rooms");
+  setClass(document.getElementById("rooms-link"), "active",
+           page === "rooms" || page === "room");
   setClass(document.getElementById("settings-link"), "active", page === "settings");
   if (selectedSensorId) {
     /* Configuring the device and configuring the plant are different jobs.
@@ -1186,16 +2171,26 @@ function renderPage() {
      * had one, which left a sensor with no plant -- a scale, say -- with
      * nowhere to be configured, and buried the device's own settings under
      * a plant that merely happens to be in front of it. */
-    const plantId = selectedSensor?.plant_id ?? null;
-    // Lighting is the plant's, so that one still goes to the plant.
-    setAttr(document.getElementById("plant-lighting-change"), "href",
-            plantId === null ? sensorPath(selectedSensorId, "/settings")
-                             : `/plants/${plantId}/config`);
   }
   if (page === "plant" || page === "plant-config") {
     const plantId = plantIdFromLocation();
     if (plantId !== null) {
       setAttr(document.getElementById("plant-page-config"), "href", `/plants/${plantId}/config`);
+    }
+  }
+  if (page === "room") {
+    if (addingARoom()) {
+      renderNewRoomPage();
+    } else if (shownRoom && shownRoom.room_id === currentRoomId()) {
+      renderRoomPage();
+    } else {
+      // Another room's details are not this room's. Blank until
+      // its own arrive, rather than the last one under a new name.
+      shownRoom = null;
+      for (const id of ["room-page-plants-section", "room-page-sensors-section",
+                        "room-page-danger-section"]) {
+        setHidden(document.getElementById(id), true);
+      }
     }
   }
   if (page === "plant-config") {
@@ -1251,6 +2246,7 @@ function titleForPage(page) {
     return `${selectedPlant?.display_name || "Plant"} · Open Plant Pulse`;
   }
   if (page === "rooms") return "Rooms · Open Plant Pulse";
+  if (page === "room") return `${shownRoom?.name || "Room"} · Open Plant Pulse`;
   if (page === "settings") return "Settings · Open Plant Pulse";
   if (page === "zigbee-device") return "Device · Zigbee · Open Plant Pulse";
   if (page === "onboarding") return "Add a sensor · Open Plant Pulse";
@@ -1505,6 +2501,19 @@ function tileName(tile) {
   return tile.plant.display_name.toLowerCase();
 }
 
+/* What kind of plant this is, for grouping.
+ *
+ * The profile's name rather than its id, because that is what the rest
+ * of the page calls it: sorting by id would file Bird of paradise
+ * under S. A plant with no profile chosen sorts last rather than under
+ * whatever the default happens to be called.
+ */
+function tileProfile(tile) {
+  const id = tile.plant.profile_id;
+  if (!id) return "\uffff";
+  return (profiles?.profiles?.[id]?.name || id).toLowerCase();
+}
+
 /* How much water is left, as a percentage, for ordering only.
  *
  * A weighed pot and a probe are not measuring the same quantity -- one is
@@ -1513,8 +2522,9 @@ function tileName(tile) {
  * to show. A plant that cannot say sorts last rather than sorting as zero
  * and jumping the queue. */
 function tileThirst(tile) {
-  const left = tile.plant.weight?.remaining_percent;
-  if (left != null) return left;
+  const weight = tile.plant.weight;
+  const left = weight?.remaining_percent;
+  if (left != null) return left - (weight.thirsty_percent ?? 0);
   const moisture = tile.sensor?.latest?.reading?.moisture_percent;
   return moisture != null ? Number(moisture) : Infinity;
 }
@@ -1533,6 +2543,9 @@ function sortHousehold(tiles) {
   } else if (by === "room") {
     const room = (tile) => (tile.plant.room || "\uffff").toLowerCase();
     sorted.sort((a, b) => room(a).localeCompare(room(b)) || compareName(a, b));
+  } else if (by === "profile") {
+    sorted.sort((a, b) => tileProfile(a).localeCompare(tileProfile(b))
+                          || compareName(a, b));
   } else {
     sorted.sort(compareName);
   }
@@ -1581,9 +2594,21 @@ function updateHouseholdCard(card, plant, sensor) {
    * has never been asked should not be given a made-up answer. */
   const where = card.querySelector("code");
   const home = plant && timeAtHomeParts(plant.acquired_at || plant.created_at);
-  setText(where, home ? `Home ${home.short}`
+  /* How old it is, beside how long it has been here. They are different
+     questions and often different answers -- a plant bought mature is
+     old and newly arrived -- and the age is what decides how its light
+     is read, so it is worth seeing without opening the plant. */
+  const age = plant && timeAtHomeParts(plant.started_at);
+  const parts = [
+    home ? `Home ${home.short}` : null,
+    age ? `${age.short} old` : null,
+  ].filter(Boolean);
+  setText(where, parts.length ? parts.join(" \u00b7 ")
     : (plant?.room || sensor?.room || "no room recorded"));
-  setAttr(where, "title", home ? home.long : "");
+  setAttr(where, "title", [
+    home ? home.long : null,
+    age ? age.long.replace("At home", "Growing for") : null,
+  ].filter(Boolean).join(" \u00b7 "));
 
   /* The last thing that happened to this plant, by whichever instrument
    * knows. A pot can be weighed without the watering being logged, and a
@@ -1611,7 +2636,8 @@ function updateHouseholdCard(card, plant, sensor) {
     setText(badge, left);
     setHidden(badge, left === "");
     setData(badge, "state", weight.remaining_percent == null ? "manual"
-      : weight.remaining_percent <= 15 ? "thirsty" : "watered");
+      : weight.remaining_percent <= (weight.thirsty_percent ?? 15)
+        ? "thirsty" : "watered");
   }
 
   /* What it drinks, beside what it has left: one is the plant's habit and
@@ -1627,7 +2653,7 @@ function updateHouseholdCard(card, plant, sensor) {
   setText(due, days == null ? ""
     : days < 1 ? "Water now" : `Water in ${Math.round(days)}d`);
   setHidden(due, days == null);
-  setData(due, "state", days == null ? "unknown" : days <= 2 ? "soon" : "later");
+  setData(due, "state", days == null ? "unknown" : days < 1 ? "now" : "later");
 }
 
 
@@ -2313,9 +3339,52 @@ function wateringPhase(watering, value) {
   return "Drying normally";
 }
 
+// Past this, a reading is worth labelling with its age rather than
+// being shown as though it had just arrived.
+const MOISTURE_STALE_AFTER_S = 45 * 60;
+
+/* The soil moisture to show, and how old it is.
+ *
+ * The plant's own latest reading first; failing that, the newest
+ * moisture any probe in its pot has reported, however long ago. A
+ * probe that sends temperature and moisture in separate frames leaves
+ * gaps in the latest row, and an empty field is worse than an old
+ * number: soil is the slowest thing here, so yesterday's moisture
+ * still tells you more than a dash. It is labelled with its age so it
+ * cannot pass itself off as current.
+ */
+function plantMoisture() {
+  const said = latestReading?.moisture_percent;
+  if (said != null && Number.isFinite(Number(said))) {
+    const at = Date.parse(latestReadingAt || latestReading?.observed_at || "");
+    return { value: Number(said),
+             ageSeconds: Number.isFinite(at) ? (Date.now() - at) / 1000 : null };
+  }
+  let best = null;
+  for (const source of selectedPlant?.soil_sources || []) {
+    if (source.moisture_percent == null) continue;
+    const at = Date.parse(source.observed_at || "");
+    if (!best || (Number.isFinite(at) && at > best.at)) {
+      best = { value: Number(source.moisture_percent), at };
+    }
+  }
+  if (!best) return { value: NaN, ageSeconds: null };
+  return { value: best.value,
+           ageSeconds: Number.isFinite(best.at) ? (Date.now() - best.at) / 1000 : null };
+}
+
 function renderMoistureVessel(profile) {
-  const value = Number(latestReading.moisture_percent);
-  if (!Number.isFinite(value)) return;
+  const reading = plantMoisture();
+  const value = reading.value;
+  if (!Number.isFinite(value)) {
+    // Say nothing rather than draw an empty pot: the last verdict left
+    // on screen is as wrong as a made-up one.
+    setText(document.getElementById("moisture-phase"), "Waiting for a reading");
+    setText(document.getElementById("moisture-strategy"), "");
+    setAttr(document.getElementById("moisture-vessel"), "aria-label",
+            "Soil moisture not reported yet");
+    return;
+  }
   const watering = profile.watering;
   const vessel = document.getElementById("moisture-vessel");
   const [targetLow, targetHigh] = watering.post_water_target;
@@ -2337,7 +3406,10 @@ function renderMoistureVessel(profile) {
   setText(document.getElementById("moisture-target-label"), `After watering ${targetLow}–${targetHigh}%`);
   setText(document.getElementById("moisture-refill-label"), `Water below ${watering.refill_below}%`);
   setText(document.getElementById("moisture-phase"), wateringPhase(watering, value));
-  setText(document.getElementById("moisture-strategy"), watering.label);
+  setText(document.getElementById("moisture-strategy"),
+          reading.ageSeconds != null && reading.ageSeconds > MOISTURE_STALE_AFTER_S
+            ? `${watering.label} · last measured ${describeSeconds(reading.ageSeconds)} ago`
+            : watering.label);
 }
 
 // The value a profile metric is judged on. Conductivity targets describe the
@@ -2617,58 +3689,192 @@ function svgElement(name, attributes, text = null) {
   return element;
 }
 
-function historyTickLabel(timestamp) {
-  const options = selectedHistoryRange === "live" || selectedHistoryRange === "24h"
-    ? { hour: "numeric", minute: "2-digit" }
-    : { month: "short", day: "numeric" };
-  return new Intl.DateTimeFormat(undefined, options).format(new Date(timestamp));
+/* Readings from one sensor turned into a drawable line.
+ *
+ * The colour is the sensor's position in the list rather than
+ * anything about the sensor, so "white bird" is the same colour in the
+ * air chart and the soil chart beneath it and the legend is read once.
+ */
+const SERIES_COLOURS = 6;
+
+/* A sensor's colour, decided by the sensor and nothing else.
+ *
+ * Taken from its position in the list to begin with, which meant the
+ * colours shuffled on every refresh: the list is ordered by which
+ * sensor reported last, so a thermometer changed colour whenever the
+ * other one spoke. A line that changes colour while you watch it
+ * cannot be followed, and the legend has to be re-read every time.
+ *
+ * Hashed from the sensor's id, so it survives refreshes, pages and
+ * restarts. Where two sensors would collide the one whose id sorts
+ * first keeps the colour and the other takes the next free slot, so
+ * the answer stays the same for the same set of sensors.
+ */
+function seriesColours(sensorIds) {
+  const chosen = new Map();
+  const taken = new Set();
+  for (const sensorId of [...sensorIds].sort()) {
+    let hash = 0;
+    for (const character of sensorId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+    let colour = hash % SERIES_COLOURS;
+    while (taken.has(colour) && taken.size < SERIES_COLOURS) {
+      colour = (colour + 1) % SERIES_COLOURS;
+    }
+    taken.add(colour);
+    chosen.set(sensorId, colour);
+  }
+  return chosen;
 }
 
-function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, endTime, ideal) {
+function historySeries(items, metric, sources, decimals = 1) {
+  const colours = seriesColours(sources.map((source) => source.sensor_id));
+  // Named order, not reporting order: the legend should not rearrange
+  // itself because a sensor spoke.
+  sources = [...sources].sort((a, b) => a.sensor_name.localeCompare(b.sensor_name));
+  return sources.map((source) => {
+    const points = (items.get(source.sensor_id) || [])
+      .map((item) => ({
+        timestamp: Date.parse(item.reading.observed_at || item.received_at),
+        value: item.reading[metric] == null ? null : Number(item.reading[metric]),
+      }))
+      .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value))
+      .sort((a, b) => a.timestamp - b.timestamp);
+    return {
+      sensorId: source.sensor_id,
+      name: source.sensor_name,
+      colour: colours.get(source.sensor_id) ?? 0,
+      points,
+      latest: points.length ? points[points.length - 1].value.toFixed(decimals) : null,
+    };
+  }).filter((entry) => entry.points.length);
+}
+
+/* Which sensors a reader has switched off, by sensor id.
+ *
+ * Per viewer rather than per hub: hiding a line is a way of looking at
+ * a chart, not a decision about the house, and it should not follow
+ * anybody to another screen or hide a line for somebody else.
+ */
+const hiddenSeries = new Set(readHiddenSeries());
+
+function readHiddenSeries() {
+  try {
+    return JSON.parse(window.localStorage.getItem("opp.chart.hidden") || "[]");
+  } catch (_error) {
+    return [];   // blocked site data: every line shown is the safe answer
+  }
+}
+
+function rememberHiddenSeries() {
+  try {
+    window.localStorage.setItem("opp.chart.hidden", JSON.stringify([...hiddenSeries]));
+  } catch (_error) {
+    /* the toggle still works for this visit */
+  }
+}
+
+/* A legend for a set of charts, with a line somebody can switch off.
+ *
+ * One legend for the section rather than one per chart: the same
+ * sensors draw the temperature and the humidity, and hiding a sensor
+ * means hiding it from both -- two legends saying the same thing would
+ * be two places to disagree.
+ */
+function renderChartLegend(legendId, series) {
+  const legend = document.getElementById(legendId);
+  if (!legend) return;
+  setHidden(legend, series.length < 2);
+  if (!renderKeyChanged(legend, [series.map((s) => [s.sensorId, s.name, s.latest]),
+                                 [...hiddenSeries].sort()])) return;
+  legend.replaceChildren();
+  for (const entry of series) {
+    const off = hiddenSeries.has(entry.sensorId);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `chart-legend-entry series-${entry.colour}`;
+    button.setAttribute("aria-pressed", String(!off));
+    button.dataset.sensorId = entry.sensorId;
+    const swatch = document.createElement("span");
+    swatch.className = "chart-legend-swatch";
+    swatch.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    setText(name, entry.name);
+    button.append(swatch, name);
+    if (entry.latest != null) {
+      const value = document.createElement("b");
+      setText(value, entry.latest);
+      button.append(value);
+    }
+    legend.append(button);
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const entry = event.target.closest(".chart-legend-entry");
+  if (!entry) return;
+  const sensorId = entry.dataset.sensorId;
+  if (hiddenSeries.has(sensorId)) hiddenSeries.delete(sensorId);
+  else hiddenSeries.add(sensorId);
+  rememberHiddenSeries();
+  renderPage();
+});
+
+/* One chart, one measurement, one line per sensor measuring it.
+ *
+ * A room with two thermometers has two honest answers and a pot can
+ * have two probes in it; drawing only one of them makes the other
+ * sensor look broken, and averaging them produces a reading that is
+ * true nowhere. The ideal band stays the plant's, because what counts
+ * as comfortable is the plant's business and not the thermometer's.
+ */
+function renderHistoryChart(chartId, emptyId, series, unit, startTime, endTime, ideal) {
   const chart = document.getElementById(chartId);
   const empty = document.getElementById(emptyId);
-  const points = items.map((item) => ({
-    timestamp: Date.parse(item.reading.observed_at || item.received_at),
-    value: item.reading[metric] == null ? null : Number(item.reading[metric])
-  })).filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value));
-  if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;
+  if (!chart) return;
+  const shown = series.filter((entry) => !hiddenSeries.has(entry.sensorId)
+                                      && entry.points.length);
+  const everything = shown.flatMap((entry) => entry.points);
+  if (!renderKeyChanged(chart, [shown.map((s) => [s.sensorId, s.points.length,
+                                                  s.points[s.points.length - 1].value]),
+                                unit, startTime, endTime, selectedHistoryRange, ideal])) return;
   chart.replaceChildren();
-  setHidden(chart, points.length === 0);
-  setHidden(empty, points.length !== 0);
-  if (!points.length) return;
+  setHidden(chart, everything.length === 0);
+  if (empty) setHidden(empty, everything.length !== 0);
+  if (!everything.length) return;
 
   const width = 720;
   const height = 220;
   const plot = { left: 52, right: 16, top: 16, bottom: 34 };
   const plotWidth = width - plot.left - plot.right;
   const plotHeight = height - plot.top - plot.bottom;
-  const values = points.map((point) => point.value);
+  const values = everything.map((point) => point.value);
   const observedMinimum = Math.min(...values);
   const observedMaximum = Math.max(...values);
-  // The plant's ideal range is always in view, so the line is read against it.
+  // The plant's ideal range is always in view, so the lines are read
+  // against it; the scale covers every sensor shown, so two lines can
+  // be compared rather than each being drawn to its own flattering axis.
   let minimum = ideal ? Math.min(observedMinimum, ideal[0]) : observedMinimum;
   let maximum = ideal ? Math.max(observedMaximum, ideal[1]) : observedMaximum;
-  const padding = Math.max((maximum - minimum) * 0.12, metric === "air_temperature_c" ? 0.5 : 2);
+  const padding = Math.max((maximum - minimum) * 0.12, unit.pad);
   minimum -= padding;
   maximum += padding;
-  if (metric === "air_humidity_percent") {
-    minimum = Math.max(0, minimum);
-    maximum = Math.min(100, maximum);
-  }
-  const x = timestamp => plot.left + ((timestamp - startTime) / (endTime - startTime)) * plotWidth;
-  const y = value => plot.top + ((maximum - value) / (maximum - minimum)) * plotHeight;
+  // A percentage cannot be 104 %, so padding is not allowed to invent it.
+  if (unit.lowest != null) minimum = Math.max(unit.lowest, minimum);
+  if (unit.highest != null) maximum = Math.min(unit.highest, maximum);
+  const x = (timestamp) => plot.left + ((timestamp - startTime) / (endTime - startTime)) * plotWidth;
+  const y = (value) => plot.top + ((maximum - value) / (maximum - minimum)) * plotHeight;
 
   if (ideal) {
     const [idealLow, idealHigh] = ideal;
     chart.append(
       svgElement("rect", {
-        class: "ideal-band", x: plot.left, width: plotWidth, y: y(idealHigh), height: y(idealLow) - y(idealHigh)
+        class: "ideal-band", x: plot.left, width: plotWidth,
+        y: y(idealHigh), height: y(idealLow) - y(idealHigh)
       }),
       svgElement("line", { class: "ideal-edge", x1: plot.left, x2: width - plot.right, y1: y(idealHigh), y2: y(idealHigh) }),
       svgElement("line", { class: "ideal-edge", x1: plot.left, x2: width - plot.right, y1: y(idealLow), y2: y(idealLow) }),
-      svgElement("text", {
-        class: "ideal-band-label", x: plot.left + 6, y: y(idealHigh) + 14
-      }, `Ideal ${idealLow}–${idealHigh}`)
+      svgElement("text", { class: "ideal-band-label", x: plot.left + 6, y: y(idealHigh) + 14 },
+                 `Ideal ${idealLow}\u2013${idealHigh}`)
     );
   }
   for (let index = 0; index <= 4; index += 1) {
@@ -2681,28 +3887,54 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
   }
   [startTime, startTime + (endTime - startTime) / 2, endTime].forEach((timestamp, index) => {
     chart.append(svgElement("text", {
-      class: "axis-label",
-      x: x(timestamp),
-      y: height - 8,
+      class: "axis-label", x: x(timestamp), y: height - 8,
       "text-anchor": index === 0 ? "start" : index === 2 ? "end" : "middle"
-    }, historyTickLabel(timestamp)));
+    }, new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })));
   });
 
-  /* One line per stretch of readings, not one line through everything.
-   *
-   * A single polyline joins the last reading before an outage straight
-   * to the first one after it, drawing a confident diagonal across a
-   * day when the sensor was flat on its back. The gap is the thing
-   * worth seeing, so the line stops at the edge of what was measured
-   * and starts again when readings do.
-   *
-   * What counts as a gap is the sensor's own rhythm: the median spacing
-   * of the readings in view, so a probe reporting hourly and one
-   * reporting every ten seconds are each judged against themselves. */
+  const marks = [];
+  for (const entry of shown) {
+    drawHistorySeries(chart, entry, x, y);
+    for (const point of entry.points) {
+      marks.push({
+        cx: x(point.timestamp), cy: y(point.value),
+        text: `${point.value.toFixed(1)} ${unit.symbol}`,
+        when: shown.length > 1
+          ? `${entry.name} \u00b7 ${new Date(point.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+          : new Date(point.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+      });
+    }
+  }
+  attachNearestReadout(chart, { width, height }, marks);
+
+  chart.setAttribute("aria-label",
+    `${historyRanges[selectedHistoryRange].label} ${unit.spoken} history. `
+    + shown.map((entry) => `${entry.name}: ${entry.points.length} readings, latest `
+        + `${entry.points[entry.points.length - 1].value.toFixed(1)}`).join("; ")
+    + `. Range ${observedMinimum.toFixed(1)} to ${observedMaximum.toFixed(1)} ${unit.spoken}.`);
+}
+
+/* One sensor's line, broken wherever that sensor went quiet.
+ *
+ * A single polyline joins the last reading before an outage straight to
+ * the first one after it, drawing a confident diagonal across a day
+ * when the sensor was flat on its back. The gap is the thing worth
+ * seeing, so the line stops at the edge of what was measured.
+ *
+ * What counts as a gap is this sensor's own rhythm, judged near the top
+ * of its spacings rather than the middle: a device that reports on
+ * change sends several frames in a minute and then nothing for half an
+ * hour, and the median of that claims it reports every minute -- which
+ * turned a thermometer's humidity into a scatter of dots while its
+ * temperature, spread more evenly, stayed a line.
+ */
+function drawHistorySeries(chart, entry, x, y) {
+  const points = entry.points;
   const spacings = points.slice(1)
     .map((point, index) => point.timestamp - points[index].timestamp)
     .sort((a, b) => a - b);
-  const typical = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 0;
+  const typical = spacings.length
+    ? spacings[Math.min(spacings.length - 1, Math.floor(spacings.length * 0.9))] : 0;
   const gapAfter = Math.max(typical * 4, 15 * 60 * 1000);
   const runs = [];
   let run = [];
@@ -2714,40 +3946,72 @@ function renderHistoryChart(chartId, emptyId, items, metric, unit, startTime, en
     run.push(point);
   }
   runs.push(run);
-  const latest = points[points.length - 1];
   for (const stretch of runs) {
     if (stretch.length < 2) continue;
     chart.append(svgElement("polyline", {
-      class: "history-line",
+      class: `history-line series-${entry.colour}`,
       points: stretch.map((point) => (
         `${x(point.timestamp).toFixed(2)},${y(point.value).toFixed(2)}`
       )).join(" "),
     }));
   }
   for (const [index, point] of points.entries()) {
+    const last = index === points.length - 1;
     chart.append(svgElement("circle", {
-      class: index === points.length - 1 ? "history-point latest-point" : "history-point",
-      cx: x(point.timestamp),
-      cy: y(point.value),
-      r: index === points.length - 1 ? 4 : 2.5
+      class: `${last ? "history-point latest-point" : "history-point"} series-${entry.colour}`,
+      cx: x(point.timestamp), cy: y(point.value), r: last ? 3 : 1.6
     }));
   }
-  chart.setAttribute(
-    "aria-label",
-    `${historyRanges[selectedHistoryRange].label} ${unit} history. `
-      + `${points.length} readings from ${observedMinimum.toFixed(1)} to ${observedMaximum.toFixed(1)}; `
-      + `latest ${latest.value.toFixed(1)} ${unit}.`
-  );
 }
 
 // The air history last fetched, kept so a change of plant profile redraws its
 // ideal bands without waiting for the next report.
 let climateHistory = null;
 
+/* The soil, drawn exactly as the air is.
+ *
+ * A pot can hold more than one probe and they will disagree -- a
+ * capacitive probe reads on its own uncalibrated scale, so 28% on one
+ * and 80% on another can both be honest about the same soil. Showing
+ * both is the only way that is visible; averaging them would invent a
+ * number true of neither.
+ */
+function renderSoilHistory(items, startTime, endTime, profile) {
+  const section = document.querySelector('[data-section="soil"]');
+  if (!section) return;
+  const sources = selectedPlant?.soil_sources || [];
+  const moisture = historySeries(items, "moisture_percent", sources, 0);
+  const temperature = historySeries(items, "soil_temperature_c", sources, 1);
+  // Nothing measured means no section, rather than a pair of empty
+  // frames on the page of a plant with no probe in it.
+  setHidden(section, !moisture.length && !temperature.length);
+  if (!moisture.length && !temperature.length) return;
+
+  const latest = (series) => series.length
+    ? series[0].points[series[0].points.length - 1].value : null;
+  setText(document.getElementById("soil-history-moisture"),
+          moisture.length ? Math.round(latest(moisture)) : "--");
+  setText(document.getElementById("soil-history-temperature"),
+          temperature.length ? latest(temperature).toFixed(1) : "--");
+  renderChartLegend("soil-legend", moisture.length ? moisture : temperature);
+  renderHistoryChart("soil-moisture-chart", "soil-moisture-empty", moisture,
+                     { ...PERCENT, spoken: "percent moisture" }, startTime, endTime,
+                     profile?.root_zone?.moisture_percent?.ideal);
+  renderHistoryChart("soil-temp-chart", "soil-temp-empty", temperature,
+                     CELSIUS, startTime, endTime,
+                     profile?.root_zone?.soil_temperature_c?.ideal);
+  setText(document.getElementById("soil-history-status"),
+          sources.length > 1
+            ? `${sources.length} probes in this pot. Capacitive probes each read on `
+              + "their own scale, so they will not agree."
+            : "");
+}
+
 function renderClimateHistory(items, startTime, endTime) {
   climateHistory = [items, startTime, endTime];
   const profile = profiles?.profiles?.[climateProfileId || profiles?.default_profile];
-  const sampleTimes = items
+  const everyItem = [...items.values()].flat();
+  const sampleTimes = everyItem
     .map(item => Date.parse(item.reading.observed_at || item.received_at))
     .filter(Number.isFinite);
   let chartStartTime = startTime;
@@ -2764,11 +4028,11 @@ function renderClimateHistory(items, startTime, endTime) {
     const firstSampleTime = Math.min(...sampleTimes);
     if (firstSampleTime < chartEndTime) chartStartTime = firstSampleTime;
   }
-  const temperatures = items
+  const temperatures = everyItem
     .map(item => item.reading.air_temperature_c)
     .filter(value => value != null && Number.isFinite(Number(value)))
     .map(Number);
-  const humidities = items
+  const humidities = everyItem
     .map(item => item.reading.air_humidity_percent)
     .filter(value => value != null && Number.isFinite(Number(value)))
     .map(Number);
@@ -2776,14 +4040,22 @@ function renderClimateHistory(items, startTime, endTime) {
     ? temperatures[temperatures.length - 1].toFixed(1) : "--");
   setText(document.getElementById("history-humidity"), humidities.length
     ? humidities[humidities.length - 1].toFixed(1) : "--");
+  renderSoilHistory(items, chartStartTime, chartEndTime, profile);
+  const sources = selectedPlant?.air_sources || [];
+  const temperatureSeries = historySeries(items, "air_temperature_c", sources, 1);
+  const humiditySeries = historySeries(items, "air_humidity_percent", sources, 0);
+  // One legend for the section: the same sensors draw both charts, and
+  // switching one off means switching it off in both.
+  renderChartLegend("climate-legend", temperatureSeries.length
+    ? temperatureSeries : humiditySeries);
   renderHistoryChart(
-    "temperature-history-chart", "temperature-history-empty", items,
-    "air_temperature_c", "degrees Celsius", chartStartTime, chartEndTime,
+    "temperature-history-chart", "temperature-history-empty", temperatureSeries,
+    CELSIUS, chartStartTime, chartEndTime,
     profile?.climate.air_temperature_c.ideal
   );
   renderHistoryChart(
-    "humidity-history-chart", "humidity-history-empty", items,
-    "air_humidity_percent", "percent relative humidity", chartStartTime, chartEndTime,
+    "humidity-history-chart", "humidity-history-empty", humiditySeries,
+    { ...PERCENT, spoken: "percent relative humidity" }, chartStartTime, chartEndTime,
     profile?.climate.air_humidity_percent.ideal
   );
   const status = document.getElementById("climate-history-status");
@@ -2812,30 +4084,38 @@ function renderClimateHistory(items, startTime, endTime) {
  * is measuring. The ideal bands come from the plant being looked at either
  * way, because what counts as comfortable is the plant's business and not
  * the thermometer's. */
-function airSource() {
-  if (selectedSensorId && latestReading && latestReadingAt) {
-    return {
-      sensorId: selectedSensorId,
-      at: latestReadingAt,
-      stamp: latestReading.report_id,
-      profileId: selectedSensor?.profile_id,
-      borrowedFrom: null,
-    };
-  }
-  const air = selectedPlant?.room_air;
-  return air
-    ? {
-        sensorId: air.sensor_id,
-        at: air.observed_at,
-        stamp: air.observed_at,
-        profileId: selectedPlant?.profile_id,
-        borrowedFrom: air.sensor_name,
-      }
-    : null;
+function plantHistorySources() {
+  // Every sensor either section will draw, fetched once. A Bluetooth
+  // probe measures the air and the soil, so asking per section would
+  // request the same readings twice.
+  const air = selectedPlant?.air_sources || [];
+  const soil = selectedPlant?.soil_sources || [];
+  const seen = new Map();
+  for (const source of [...air, ...soil]) seen.set(source.sensor_id, source);
+  return [...seen.values()];
+}
+
+function airSources() {
+  // Every sensor measuring the air this plant is in, which is every
+  // air sensor in its room -- its own probe among them. Two
+  // thermometers in a room are two honest answers about different
+  // corners of it, and the reader is better served by both than by
+  // whichever happened to report last.
+  const sources = plantHistorySources();
+  if (!sources.length) return null;
+  const newest = sources
+    .map((source) => Date.parse(source.observed_at))
+    .filter(Number.isFinite);
+  return {
+    sources,
+    at: new Date(Math.max(...newest)).toISOString(),
+    stamp: sources.map((source) => source.observed_at).join(","),
+    profileId: selectedSensor?.profile_id || selectedPlant?.profile_id,
+  };
 }
 
 async function refreshClimateHistory() {
-  const source = airSource();
+  const source = airSources();
   if (source === null) return;
   const range = historyRanges[selectedHistoryRange];
   const newest = Date.parse(source.at);
@@ -2857,25 +4137,26 @@ async function refreshClimateHistory() {
   /* Rounded to the minute so a key built from "now" does not refetch on
    * every poll; the newest reading still forces one as soon as it moves. */
   const windowKey = Math.floor(endTime / 60000);
-  const requestKey = `${source.sensorId}:${selectedHistoryRange}:${source.at}`
-    + `:${source.stamp}:${windowKey}`;
+  const requestKey = `${source.sources.map((s) => s.sensor_id).join(",")}`
+    + `:${selectedHistoryRange}:${source.at}:${source.stamp}:${windowKey}`;
   if (historyRequestKey === requestKey) return;
   historyRequestKey = requestKey;
   climateProfileId = source.profileId;
-  setText(document.getElementById("climate-history-eyebrow"), source.borrowedFrom
-    ? `ROOM AIR · MEASURED BY ${source.borrowedFrom.toUpperCase()}`
-    : "SHT45 · LIVE HISTORY");
-  const query = new URLSearchParams({
-    sensor_id: source.sensorId,
-    start: new Date(startTime).toISOString(),
-    end: new Date(endTime).toISOString()
-  });
+  setText(document.getElementById("climate-history-eyebrow"), "AIR");
   try {
-    const response = await fetch(`/api/readings/history?${query}`);
-    if (!response.ok) throw new Error("history request failed");
-    const items = (await response.json()).items;
+    const histories = new Map();
+    for (const entry of source.sources) {
+      const query = new URLSearchParams({
+        sensor_id: entry.sensor_id,
+        start: new Date(startTime).toISOString(),
+        end: new Date(endTime).toISOString()
+      });
+      const response = await fetch(`/api/readings/history?${query}`);
+      if (!response.ok) throw new Error("history request failed");
+      histories.set(entry.sensor_id, (await response.json()).items || []);
+    }
     if (historyRequestKey !== requestKey) return;
-    renderClimateHistory(items, startTime, endTime);
+    renderClimateHistory(histories, startTime, endTime);
   } catch (_error) {
     if (historyRequestKey !== requestKey) return;
     historyRequestKey = null;
@@ -3699,7 +4980,8 @@ async function refresh() {
     } else {
       await refreshFleet();
     }
-    if (page === "rooms") await refreshRooms();
+    if (page === "rooms") await refreshRoomsPage();
+    if (page === "room") await refreshRoomPage();
     if (page === "plant") {
       await Promise.all([refreshPlant(), refreshPlantPhotos()]);
       /* What the plant's probe says, asked for by the plant.
@@ -4137,6 +5419,292 @@ function daysSince(at) {
   return `${days} days ago`;
 }
 
+/* Where a plant's light sits against what its kind wants.
+ *
+ * The daily total on its own says little: fourteen mol is generous for a
+ * pothos and thin for a jasmine. So it is shown the way air temperature
+ * and humidity are -- a marker on the profile's scale, with the healthy
+ * span marked -- and the rest of the scale is coloured by band, because
+ * "too little" and "scorching" are different kinds of wrong and a single
+ * ideal range cannot say which one a plant is in.
+ *
+ * The figure quoted is the last *complete* day. At nine in the morning
+ * today's total is a third of what it will be, and a marker sitting in
+ * "too little" because the day is young would be alarming and wrong. */
+function renderPlantLight() {
+  const section = document.querySelector('[data-section="light"]');
+  if (!section) return;
+  const days = (selectedPlant && selectedPlant.light_days) || [];
+  const profile = profiles?.profiles?.[
+    selectedPlant?.profile_id || profiles?.default_profile];
+  const metric = profile?.light?.dli_mol_m2_day;
+
+  /* One number, and it is always a whole day.
+   *
+   * Either the last day the hub watched from end to end, or -- where no
+   * lamp it switches lights this plant -- the day the typed hours
+   * describe. Never a part of today: half a day's light is a true
+   * figure that answers a question nobody asked, and sitting it beside
+   * yesterday's it reads as a collapse rather than a morning.
+   */
+  const ppfd = selectedPlant?.ppfd_umol_m2s;
+  const typedHours = selectedPlant?.light_hours_per_day;
+  const complete = days.filter((day) => day.complete);
+  const logged = complete.length ? complete[complete.length - 1] : null;
+  const today = days.find((day) => !day.complete) || null;
+  const assumed = (!logged && ppfd && typedHours)
+    ? { dli: Math.round(ppfd * typedHours * 3.6) / 1000,
+        lit_hours: typedHours }
+    : null;
+  const latest = logged || assumed;
+
+  setHidden(section, !metric || !latest);
+  if (!metric || !latest) return;
+
+  const card = document.getElementById("plant-light-gauge");
+
+  setText(document.getElementById("plant-light-latest"),
+          latest ? latest.dli.toFixed(1) : "--");
+  setText(document.getElementById("plant-light-period"),
+    logged ? "Daily light \u00b7 last full day" : "Daily light \u00b7 from hours you entered");
+  // = what you measured, times how long the lamps were on.
+  setText(document.getElementById("plant-light-working"),
+    latest && ppfd
+      ? `= ${ppfd} \u00b5mol/m\u00b2/s \u00d7 ${latest.lit_hours} h`
+        + (assumed ? " a day" : " lit")
+      : "");
+  const unsure = days.reduce((total, day) => total + (day.unsure_hours || 0), 0);
+  setText(document.getElementById("plant-light-summary"), assumed
+    ? "No full day logged yet \u00b7 from the hours you entered until there is one"
+    : `${complete.length} full day${complete.length === 1 ? "" : "s"} recorded`
+      + (unsure ? ` \u00b7 ${unsure.toFixed(1)} h the hub could not vouch for` : ""));
+
+  renderLightBands(card, metric);
+  wireLightTrack();
+  renderGauge(card, "dli_mol_m2_day", metric, latest ? latest.dli : null);
+  /* Not while somebody is reading it. The page refreshes on a timer, and
+     a refresh that lands mid-sentence replaces the figure under the
+     cursor with the plant's own -- which looks like the bar forgetting
+     what was asked of it, two seconds after it was asked. */
+  if (!pointerOnLightTrack) {
+    setText(document.getElementById("plant-light-hint"), latest
+      ? `${latest.dli.toFixed(1)} mol/m\u00b2/day `
+        + `${logged ? "on its last full day" : "every day"} \u2014 `
+        + `${bandFor(metric, latest.dli)} for ${profile.name}. ${lightEffect(metric, latest.dli)}`
+      : "No complete day yet. Point along the bar to read what a day of any amount would do.");
+  }
+}
+
+/* What a day of this much light would do to a plant in general.
+ *
+ * A fallback. Where a profile gives a band its own `effects` it wins,
+ * because what too much light looks like is a fact about the species.
+ *
+ * The five bands say which box a figure falls in; they cannot say that
+ * 12.1 and 19.9 are both "healthy" but not the same healthy. So each band
+ * is read in thirds -- its bottom, middle and top -- which is as fine as
+ * a starter figure honestly supports. Anything more precise would be
+ * inventing certainty: these ranges are a sensible beginning for a kind
+ * of plant, not a measurement of this one.
+ *
+ * Phrased about what the plant does, because "getting by" is a label and
+ * "it will hold its leaves but put out few new ones" is an answer. */
+const LIGHT_EFFECTS = {
+  "too little": [
+    "Deep shade for this kind. It holds what it has and grows almost nothing new.",
+    "Too little. Growth stalls, new leaves come smaller, and stems stretch toward the window.",
+    "Still short. It will tick over rather than fill out, and lower leaves may yellow and drop.",
+  ],
+  "getting by": [
+    "Scraping by. Enough to keep it alive, not enough to replace what it loses.",
+    "Modest. It grows slowly and stays thin; expect a new leaf now and then rather than steadily.",
+    "Almost enough. Growth is real but unhurried, and it will take longer to dry its pot.",
+  ],
+  "healthy": [
+    "Comfortable. Steady growth, good colour, and a pot that dries at a predictable rate.",
+    "Where this kind is happiest. Leaves come regularly and hold their size and colour.",
+    "Generously lit. Strong growth, and it will drink and feed noticeably harder.",
+  ],
+  "vigorous": [
+    "More than it needs. Fast growth, and water and feed will run down quicker.",
+    "Pushing it. Growth is rapid but leaves may come paler and thicker, and it dries fast.",
+    "Near the limit. Watch for bleaching on the leaves that face the lamp most directly.",
+  ],
+  "scorching": [
+    "Past what this kind can use. Expect bleached patches where the light lands hardest.",
+    "Too much. Leaves scorch, especially in dry air or with the pot run dry.",
+    "Far too much. This damages leaves rather than growing them.",
+  ],
+};
+
+/* Which band a value is in, and how far through it -- 0 at the bottom
+   edge, 1 at the top. The last band has no top, so it is read against
+   the width of the one before it. */
+function bandPosition(metric, value) {
+  const bands = metric.bands || [];
+  const [scaleLow, scaleHigh] = metric.scale;
+  let from = scaleLow;
+  for (let index = 0; index < bands.length; index += 1) {
+    const band = bands[index];
+    const last = band.upto == null;
+    const to = last ? scaleHigh : band.upto;
+    if (last || value < to) {
+      const width = to - from || 1;
+      return { band, share: Math.max(0, Math.min(1, (value - from) / width)), from, to };
+    }
+    from = to;
+  }
+  return null;
+}
+
+/* How old the plant is, in months, or null where nobody has said. */
+function plantAgeMonths(plant) {
+  const subject = plant || selectedPlant;
+  if (!subject?.started_at) return null;
+  const began = Date.parse(subject.started_at);
+  if (!Number.isFinite(began)) return null;
+  return Math.max(0, (Date.now() - began) / (1000 * 60 * 60 * 24 * 30.44));
+}
+
+function describePlantAge(months) {
+  if (months < 1) return "under a month old";
+  if (months < 24) return `${Math.round(months)} months old`;
+  return `${(months / 12).toFixed(months < 120 ? 1 : 0)} years old`;
+}
+
+/* Young or established, against the age its kind grows up at.
+ *
+ * A plant nobody has dated is read as established. The alternative is to
+ * call every undated plant a juvenile, which would quietly excuse a
+ * grown plant that really is short of light -- the error that matters
+ * more, because it is the one that changes nothing. */
+function plantStage(plant) {
+  const subject = plant || selectedPlant;
+  const months = plantAgeMonths(subject);
+  if (months == null) return "established";
+  const profile = profiles?.profiles?.[
+    subject?.profile_id || profiles?.default_profile];
+  const grownUp = profile?.light?.dli_mol_m2_day?.established_after_months;
+  if (!grownUp) return "established";
+  return months < grownUp ? "young" : "established";
+}
+
+function lightEffect(metric, value) {
+  const found = bandPosition(metric, value);
+  if (!found) return "";
+  /* The profile's own words where it has them: a bleached pothos goes
+     cream and a scorched spider plant browns at the tips, and one
+     sentence cannot be true of both. Where a profile says nothing, the
+     wording above is true of plants in general, which is better than
+     silence and honest about being general. */
+  const staged = found.band.effects;
+  const thirds = (staged && staged[plantStage()]) || LIGHT_EFFECTS[found.band.name];
+  if (!thirds) return found.band.name;
+  return thirds[found.share < 1 / 3 ? 0 : found.share < 2 / 3 ? 1 : 2];
+}
+
+/* Reading the bar with a pointer. Works with a finger as well as a mouse,
+   because pointer events cover both, and leaves nothing behind when the
+   pointer goes: a hint that outlives the cursor reads as a fact about the
+   plant rather than a question somebody asked. */
+// Whether a pointer is on the light bar right now, so a refresh does not
+// talk over it.
+let pointerOnLightTrack = false;
+
+function wireLightTrack() {
+  const track = document.getElementById("plant-light-track");
+  const hint = document.getElementById("plant-light-hint");
+  const probe = document.getElementById("plant-light-probe");
+  if (!track || track.dataset.wired) return;
+  setData(track, "wired", "true");
+
+  const show = (event) => {
+    const metric = lightMetric();
+    if (!metric) return;
+    pointerOnLightTrack = true;
+    const box = track.getBoundingClientRect();
+    const share = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+    const [scaleLow, scaleHigh] = metric.scale;
+    const value = scaleLow + share * (scaleHigh - scaleLow);
+    setHidden(probe, false);
+    probe.style.left = `${share * 100}%`;
+    const latest = lastCompleteLightDay();
+    const against = latest == null ? ""
+      : ` \u00b7 ${Math.abs(value - latest.dli).toFixed(1)} ${value >= latest.dli ? "more" : "less"} than its last full day`;
+    /* What it would take to land there. The hours are the ones this plant
+       actually keeps, so the figure answers "how much brighter?" rather
+       than describing some other plant's day -- and it is the number you
+       would change, by moving the lamp closer or turning it up, since the
+       hours are the schedule's business. */
+    const hours = latest && latest.lit_hours ? latest.lit_hours : null;
+    const needs = hours
+      ? ` Over its usual ${hours} h that needs a PPFD of ${Math.round(value * 1e6 / (hours * 3600))}.`
+      : "";
+    setText(hint, `${value.toFixed(1)} mol/m\u00b2/day \u2014 ${bandFor(metric, value)}${against}.${needs} `
+      + lightEffect(metric, value));
+  };
+  track.addEventListener("pointermove", show);
+  track.addEventListener("pointerdown", show);
+  // Back to the plant's own figure when the pointer goes: a sentence
+  // about a value nobody is pointing at any more reads as a fact about
+  // this plant rather than an answer to a question that has ended.
+  const release = () => {
+    pointerOnLightTrack = false;
+    setHidden(probe, true);
+    renderPlantLight();
+  };
+  track.addEventListener("pointerleave", release);
+  // A pointer can be taken away without leaving -- a touch cancelled by a
+  // scroll, a window losing focus mid-drag -- and the line would then stay
+  // on a value nobody is pointing at.
+  track.addEventListener("pointercancel", release);
+  window.addEventListener("blur", release);
+}
+
+function lightMetric() {
+  const profile = profiles?.profiles?.[
+    selectedPlant?.profile_id || profiles?.default_profile];
+  return profile?.light?.dli_mol_m2_day || null;
+}
+
+function lastCompleteLightDay() {
+  const complete = ((selectedPlant && selectedPlant.light_days) || [])
+    .filter((day) => day.complete);
+  return complete.length ? complete[complete.length - 1] : null;
+}
+
+// Which named band a figure falls in. The last band has no top edge.
+function bandFor(metric, value) {
+  const bands = metric.bands || [];
+  const found = bands.find((band) => band.upto == null || value < band.upto);
+  return found ? found.name : "unknown";
+}
+
+/* The scale behind the marker, one block per band. Drawn once per profile:
+   the bands are the plant's kind, not its readings, so they do not change
+   when a day does. */
+function renderLightBands(card, metric) {
+  const host = card.querySelector(".light-bands");
+  const renderKey = JSON.stringify(metric.bands || []);
+  if (host.dataset.renderKey === renderKey) return;
+  setData(host, "renderKey", renderKey);
+  host.replaceChildren();
+  const [scaleLow, scaleHigh] = metric.scale;
+  let from = scaleLow;
+  (metric.bands || []).forEach((band) => {
+    const upto = band.upto == null ? scaleHigh : Math.min(band.upto, scaleHigh);
+    const width = (upto - from) / (scaleHigh - scaleLow) * 100;
+    if (width <= 0) { from = upto; return; }
+    const block = document.createElement("i");
+    block.className = "light-band";
+    setData(block, "band", band.name.replace(/ /g, "-"));
+    block.style.width = `${width}%`;
+    block.title = `${band.name}: ${from}\u2013${band.upto == null ? "" : band.upto} mol/m\u00b2/day`;
+    host.append(block);
+    from = upto;
+  });
+}
+
 function renderPlantPage() {
   if (!selectedPlant) return;
   const weight = selectedPlant.weight || {};
@@ -4174,12 +5742,15 @@ function renderPlantPage() {
 
   setText(document.getElementById("plant-weight-latest"),
     weight.latest ? showWeight(weight.latest.grams) : "--");
-  setText(document.getElementById("plant-weight-latest-label"),
-    "Weighs now (g)");
+  setText(document.getElementById("plant-weight-latest-label"), "Weighs now");
   setText(document.getElementById("plant-weight-used"),
     weight.used_grams == null ? "--" : String(weight.used_grams));
   setText(document.getElementById("plant-weight-remaining"),
     weight.remaining_percent == null ? "--" : weight.remaining_percent + "%");
+  setText(document.getElementById("plant-weight-remaining-label"),
+    weight.thirsty_percent == null
+      ? "Water left"
+      : `Water left · wants water at ${weight.thirsty_percent}%`);
   setText(document.getElementById("plant-weight-daily"),
     weight.daily_grams == null ? "--" : String(weight.daily_grams));
   setText(document.getElementById("plant-weight-days"),
@@ -4193,6 +5764,7 @@ function renderPlantPage() {
       : "No watered weight yet");
 
   renderPlantScale(selectedPlant.scale);
+  renderPlantLight();
 
   setText(document.getElementById("plant-journey-days"), journey.monitored_days ?? "--");
   setText(document.getElementById("plant-journey-waterings"), journey.watering_count ?? "--");
@@ -4422,9 +5994,295 @@ async function refreshPlantPhotos() {
   renderPlantPhotos();
 }
 
+/* On a phone the grid is one column, so a plant with a year of pictures
+   buries every section under it. The newest is the one somebody came to
+   see; the rest are a tap away. On a wider screen they sit side by side
+   and nothing is hidden -- which is why the collapsing lives in a media
+   query and the button is simply not shown there. */
+let photosExpanded = false;
+
+/* Looking through a plant's photographs.
+ *
+ * Newer is up, older is down. A plant's pictures are a time series and
+ * the question is nearly always "what did it look like before", so the
+ * axis is the one the dates already run along -- and a vertical swipe on
+ * a phone means the same thing as the arrow keys on a desktop.
+ *
+ * The list is whatever the page is showing, so the order and the dates
+ * are the ones on screen rather than a second copy that could drift.
+ */
+let viewedPhotoId = null;
+
+function photoViewerList() {
+  return plantPhotos || [];
+}
+
+function openPhotoViewer(photoId) {
+  const viewer = document.getElementById("photo-viewer");
+  if (!viewer || !photoViewerList().some((photo) => photo.photo_id === photoId)) return;
+  viewedPhotoId = photoId;
+  resetPhotoZoom();
+  setHidden(viewer, false);
+  // The page behind must not scroll under the viewer: on a phone a swipe
+  // meant for the pictures would otherwise take the page with it.
+  document.body.style.overflow = "hidden";
+  renderPhotoViewer();
+  document.getElementById("photo-viewer-close").focus();
+}
+
+function closePhotoViewer() {
+  const viewer = document.getElementById("photo-viewer");
+  if (!viewer || viewer.hidden) return;
+  setHidden(viewer, true);
+  document.body.style.overflow = "";
+  // Back to the tile it was opened from, so the keyboard does not start
+  // again at the top of the page.
+  const tile = document.querySelector(`#plant-photo-grid a[data-photo-id="${viewedPhotoId}"]`);
+  viewedPhotoId = null;
+  if (tile) tile.focus();
+}
+
+function stepPhotoViewer(by) {
+  const photos = photoViewerList();
+  const at = photos.findIndex((photo) => photo.photo_id === viewedPhotoId);
+  if (at < 0) return;
+  const next = photos[at + by];
+  if (!next) return;
+  viewedPhotoId = next.photo_id;
+  // A new picture is looked at whole first; carrying the old zoom over
+  // would open it already cropped to somewhere that meant nothing here.
+  resetPhotoZoom();
+  renderPhotoViewer();
+}
+
+function renderPhotoViewer() {
+  const viewer = document.getElementById("photo-viewer");
+  if (!viewer || viewer.hidden) return;
+  const photos = photoViewerList();
+  const at = photos.findIndex((photo) => photo.photo_id === viewedPhotoId);
+  if (at < 0) { closePhotoViewer(); return; }
+  const photo = photos[at];
+  const taken = photo.taken_at || photo.added_at;
+
+  const image = document.getElementById("photo-viewer-image");
+  image.src = photoUrl(photo.photo_id, photo.digest);
+  setAttr(image, "alt", `${selectedPlant?.display_name || "This plant"}, ${daysSince(taken)}`);
+
+  setText(document.getElementById("photo-viewer-when"),
+    new Date(taken).toLocaleDateString([], {year: "numeric", month: "long", day: "numeric"}));
+  /* How long before now, and how far from the picture above it -- the gap
+     is what says whether a change took a fortnight or half a year. */
+  const previous = photos[at + 1];
+  const apart = previous
+    ? ` \u00b7 ${describeSpan(Date.parse(taken) - Date.parse(previous.taken_at || previous.added_at))} after the one below`
+    : "";
+  setText(document.getElementById("photo-viewer-since"), `${daysSince(taken)}${apart}`);
+  setText(document.getElementById("photo-viewer-count"), `${at + 1} of ${photos.length}`);
+
+  setDisabled(document.getElementById("photo-viewer-newer"), at === 0);
+  setDisabled(document.getElementById("photo-viewer-older"), at === photos.length - 1);
+
+  renderPhotoTrack(photos, at);
+
+  /* The neighbours are fetched now so a step is instant. Without this the
+     next picture arrives blank and fills in, which reads as the viewer
+     having lost its place. */
+  for (const near of [photos[at - 1], photos[at + 1]]) {
+    if (near) new Image().src = photoUrl(near.photo_id, near.digest);
+  }
+}
+
+/* Where each photograph sits on the plant's history.
+ *
+ * Spaced by elapsed time, but with each gap compressed -- the width of a
+ * gap grows with the logarithm of its length, plus a fixed amount per
+ * photograph so that pictures taken minutes apart are still separately
+ * reachable.
+ *
+ * Strictly proportional was the first attempt and it was unusable on any
+ * plant with an old photograph: a spider plant here has one picture from
+ * 2023 and the rest from this month, so a single gap took 98% of the
+ * track and sixteen photographs shared the remaining six pixels. The
+ * ordering and the sense of "this gap is much longer than that one"
+ * survive compression; being able to reach a photograph does not survive
+ * the alternative. A gap long enough to have been squeezed is marked, so
+ * the track says where it has been economical with the truth.
+ */
+const PHOTO_TICK_ROOM = 0.6;   // every photograph gets a little width
+const PHOTO_GAP_MARKED_DAYS = 45;  // longer than this and the gap is drawn as one
+
+function photoAt(photo) {
+  return Date.parse(photo.taken_at || photo.added_at);
+}
+
+/* Positions along the track, keyed by photo id, plus the gaps that were
+   compressed enough to be worth marking. Photos arrive newest first and
+   the track reads oldest to newest, so it walks them backwards. */
+function photoTrackLayout(photos) {
+  const oldestFirst = [...photos].reverse().filter((photo) => Number.isFinite(photoAt(photo)));
+  if (!oldestFirst.length) return null;
+  const steps = [0];
+  for (let index = 1; index < oldestFirst.length; index += 1) {
+    const days = Math.max(0,
+      (photoAt(oldestFirst[index]) - photoAt(oldestFirst[index - 1])) / 86400000);
+    steps.push(PHOTO_TICK_ROOM + Math.log1p(days));
+  }
+  const running = [];
+  steps.reduce((total, step) => {
+    running.push(total + step);
+    return total + step;
+  }, 0);
+  const span = running[running.length - 1] || 1;
+  const at = new Map();
+  const marks = [];
+  oldestFirst.forEach((photo, index) => {
+    at.set(photo.photo_id, running[index] / span * 100);
+    if (index === 0) return;
+    const days = (photoAt(photo) - photoAt(oldestFirst[index - 1])) / 86400000;
+    if (days >= PHOTO_GAP_MARKED_DAYS) {
+      marks.push({
+        middle: (running[index] + running[index - 1]) / 2 / span * 100,
+        days: Math.round(days),
+      });
+    }
+  });
+  return {at, marks, first: photoAt(oldestFirst[0]),
+          last: photoAt(oldestFirst[oldestFirst.length - 1])};
+}
+
+function renderPhotoTrack(photos, at) {
+  const ticks = document.getElementById("photo-track-ticks");
+  const track = document.getElementById("photo-track");
+  if (!ticks || !track) return;
+  const layout = photoTrackLayout(photos);
+  const renderKey = JSON.stringify([photos.map((photo) => photo.photo_id), at]);
+  if (ticks.dataset.renderKey !== renderKey) {
+    setData(ticks, "renderKey", renderKey);
+    ticks.replaceChildren();
+    for (const mark of (layout ? layout.marks : [])) {
+      const gap = document.createElement("i");
+      gap.className = "photo-track-gap";
+      gap.style.left = `${mark.middle}%`;
+      gap.title = `${describeSpan(mark.days * 86400000)} with no photograph`;
+      ticks.append(gap);
+    }
+    photos.forEach((photo, index) => {
+      const tick = document.createElement("i");
+      tick.className = "photo-track-tick";
+      tick.style.left = `${layout ? layout.at.get(photo.photo_id) ?? 50 : 50}%`;
+      if (index === at) setData(tick, "current", "true");
+      ticks.append(tick);
+    });
+  }
+  setAttr(track, "aria-valuemin", 0);
+  setAttr(track, "aria-valuemax", photos.length - 1);
+  setAttr(track, "aria-valuenow", photos.length - 1 - at);
+  setAttr(track, "aria-valuetext",
+    new Date(photoAt(photos[at])).toLocaleDateString([], {month: "long", day: "numeric", year: "numeric"}));
+  const shortDate = (time) => new Date(time).toLocaleDateString([], {month: "short", year: "numeric"});
+  setText(document.getElementById("photo-track-first"), layout ? shortDate(layout.first) : "");
+  setText(document.getElementById("photo-track-last"), layout ? shortDate(layout.last) : "");
+}
+
+/* Pointing picks the photograph whose tick is nearest, which is now the
+   same thing as nearest in pixels: the track is no longer linear in
+   time, so comparing dates would send the finger somewhere else. */
+function seekPhotoTrack(clientX) {
+  const track = document.getElementById("photo-track");
+  const photos = photoViewerList();
+  const layout = photoTrackLayout(photos);
+  if (!track || !layout) return;
+  const box = track.getBoundingClientRect();
+  const share = Math.max(0, Math.min(100, (clientX - box.left) / box.width * 100));
+  let nearest = photos[0];
+  for (const photo of photos) {
+    const here = layout.at.get(photo.photo_id);
+    if (here === undefined) continue;
+    if (Math.abs(here - share) < Math.abs((layout.at.get(nearest.photo_id) ?? 0) - share)) {
+      nearest = photo;
+    }
+  }
+  if (nearest.photo_id === viewedPhotoId) return;
+  viewedPhotoId = nearest.photo_id;
+  resetPhotoZoom();
+  renderPhotoViewer();
+}
+
+/* Zooming in on a leaf.
+ *
+ * Double tap, or double click, toward the thing you want bigger: the
+ * picture grows about that point rather than about its middle, because
+ * the whole reason to zoom is that something interesting is off to one
+ * side. Double again to come back out.
+ *
+ * While zoomed, a drag pans instead of stepping to the next photograph.
+ * The two gestures are the same movement, so one of them has to give
+ * way, and panning is the one somebody zoomed in order to do.
+ */
+const PHOTO_ZOOM = 2.6;
+let photoZoom = 1;
+let photoPan = {x: 0, y: 0};
+
+function applyPhotoZoom() {
+  const image = document.getElementById("photo-viewer-image");
+  if (!image) return;
+  // Kept inside its own edges: panning past them shows backdrop where
+  // the picture should be, which reads as the image having come loose.
+  const box = image.getBoundingClientRect();
+  const slackX = Math.max(0, (box.width * photoZoom - box.width) / 2);
+  const slackY = Math.max(0, (box.height * photoZoom - box.height) / 2);
+  photoPan = {
+    x: Math.max(-slackX, Math.min(slackX, photoPan.x)),
+    y: Math.max(-slackY, Math.min(slackY, photoPan.y)),
+  };
+  image.style.transform = photoZoom === 1
+    ? ""
+    : `translate(${photoPan.x}px, ${photoPan.y}px) scale(${photoZoom})`;
+  setData(image, "zoomed", photoZoom === 1 ? "" : "true");
+  if (photoZoom === 1) delete image.dataset.zoomed;
+}
+
+function resetPhotoZoom() {
+  photoZoom = 1;
+  photoPan = {x: 0, y: 0};
+  applyPhotoZoom();
+}
+
+function togglePhotoZoom(clientX, clientY) {
+  const image = document.getElementById("photo-viewer-image");
+  if (!image) return;
+  if (photoZoom !== 1) { resetPhotoZoom(); return; }
+  /* Shift the point under the finger toward the middle, by the amount
+     the extra scale would otherwise carry it outward. */
+  const box = image.getBoundingClientRect();
+  const fromMiddleX = clientX - (box.left + box.width / 2);
+  const fromMiddleY = clientY - (box.top + box.height / 2);
+  photoZoom = PHOTO_ZOOM;
+  photoPan = {x: -fromMiddleX * (PHOTO_ZOOM - 1) / PHOTO_ZOOM * 1.0,
+              y: -fromMiddleY * (PHOTO_ZOOM - 1) / PHOTO_ZOOM * 1.0};
+  applyPhotoZoom();
+}
+
+// "3 days", "2 months" -- the gap between two photographs, said roughly.
+function describeSpan(milliseconds) {
+  const days = Math.max(0, Math.round(milliseconds / 86400000));
+  if (days < 1) return "hours";
+  if (days < 45) return `${days} day${days === 1 ? "" : "s"}`;
+  const months = Math.round(days / 30.44);
+  if (months < 24) return `${months} months`;
+  return `${(days / 365.25).toFixed(1)} years`;
+}
+
 function renderPlantPhotos() {
   const grid = document.getElementById("plant-photo-grid");
   if (grid === null) return;
+  setClass(grid, "is-collapsed", !photosExpanded);
+  const more = document.getElementById("plant-photo-more");
+  if (more) {
+    setHidden(more, plantPhotos.length < 2);
+    setText(more, photosExpanded ? "Show fewer"
+      : `Show all ${plantPhotos.length} photographs`);
+  }
   const follows = document.getElementById("plant-cover-follows");
   if (follows !== null && follows.checked !== coverFollowsLatest) {
     follows.checked = coverFollowsLatest;
@@ -4447,11 +6305,18 @@ function renderPlantPhotos() {
     // nothing. Declared here because the picture's own description uses it.
     const taken = photo.taken_at || photo.added_at;
 
-    /* Opening the picture at its own address rather than in a viewer of our
-     * own: the browser already has one, with zoom and save. */
+    /* Still a real link to the file, so the browser's own open-in-new-tab,
+       save and copy-address all work. The viewer takes the plain click,
+       which is the one that used to lose the page. */
     const link = document.createElement("a");
     link.href = photoUrl(photo.photo_id, photo.digest);
     link.target = "_blank";
+    setData(link, "photoId", photo.photo_id);
+    link.addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+      event.preventDefault();
+      openPhotoViewer(photo.photo_id);
+    });
     link.rel = "noopener";
     const image = document.createElement("img");
     image.src = photoUrl(photo.photo_id, photo.digest);
@@ -4475,24 +6340,25 @@ function renderPlantPhotos() {
     if (!photo.taken_at) setData(when, "undated", "true");
     when.addEventListener("change", () => setPhotoDate(photo.photo_id, when.value));
     const actions = document.createElement("div");
+    actions.className = "photo-actions";
     if (photo.cover) {
-      const mark = document.createElement("strong");
-      // Said plainly when it is the cover because it is the newest rather
-      // than because anybody chose it: the next photograph will take it.
-      setText(mark, coverFollowsLatest ? "Cover · newest" : "Cover");
+      /* The same star, filled: the outline asks, the solid one answers.
+         Which kind of cover it is -- chosen, or simply the newest and due
+         to be replaced by the next photograph -- is in the label, because
+         a filled star cannot say it and the difference matters when the
+         next picture quietly takes over. */
+      const mark = iconGlyph(
+        coverFollowsLatest
+          ? "Cover, because it is the newest photograph"
+          : "Cover, chosen by hand",
+        COVER_ICON, { filled: true });
       actions.append(mark);
     } else {
-      const choose = document.createElement("button");
-      choose.type = "button";
-      choose.className = "link-button";
-      setText(choose, "Make cover");
+      const choose = iconButton("Make cover", COVER_ICON);
       choose.addEventListener("click", () => setPlantCover(photo.photo_id));
       actions.append(choose);
     }
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "link-button";
-    setText(remove, "Remove");
+    const remove = iconButton("Remove this photograph", BIN_ICON, { danger: true });
     remove.addEventListener("click", () => removePlantPhoto(photo));
     actions.append(remove);
     caption.append(when, actions);
@@ -4501,6 +6367,67 @@ function renderPlantPhotos() {
     grid.append(tile);
   }
 }
+
+/* A button that is a picture.
+ *
+ * Only for actions whose icon is already understood -- a star for the
+ * one on the cover, a bin for throwing away -- and never for anything a
+ * person has to guess at. The word is still there for anybody who needs
+ * it, as the label a screen reader reads and the tooltip a pointer
+ * reveals; what goes is the width it took beside every photograph. */
+function iconButton(label, paths, { danger = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button";
+  if (danger) setData(button, "danger", "true");
+  setAttr(button, "aria-label", label);
+  setAttr(button, "title", label);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("aria-hidden", "true");
+  for (const definition of paths) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", definition);
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "1.7");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+  }
+  button.append(svg);
+  return button;
+}
+
+/* The same picture as an icon button, standing for a state rather than an
+   action. Not a button: there is nothing to press, and a control that
+   does nothing when clicked is worse than a label. */
+function iconGlyph(label, paths, { filled = false } = {}) {
+  const span = document.createElement("span");
+  span.className = "icon-glyph";
+  if (filled) setData(span, "filled", "true");
+  setAttr(span, "role", "img");
+  setAttr(span, "aria-label", label);
+  setAttr(span, "title", label);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", filled ? "currentColor" : "none");
+  svg.setAttribute("aria-hidden", "true");
+  for (const definition of paths) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", definition);
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "1.7");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+  }
+  span.append(svg);
+  return span;
+}
+
+const COVER_ICON = ["M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.55L12 16.6l-5.05 2.6.95-5.55L3.85 9.7l5.6-.8z"];
+const BIN_ICON = ["M4.5 6.8h15", "M10 6.8V4.6h4v2.2", "M6.6 6.8l.9 12.6h9l.9-12.6",
+                  "M10.2 10.4v5.6", "M13.8 10.4v5.6"];
 
 async function setPhotoDate(photoId, date) {
   const message = document.getElementById("plant-photo-message");
@@ -4593,6 +6520,7 @@ function sensorKind(sensor) {
   const transport = sensor?.transport || "";
   if (transport === "http-scale") return "scale";
   if (transport === "bthome") return "bthome";
+  if (transport === "zigbee-soil") return "soil";
   if (transport.startsWith("zigbee")) return "zigbee";
   return "unknown";
 }
@@ -4601,7 +6529,7 @@ const SENSOR_KINDS = {
   zigbee: {
     label: "ZIGBEE DEVICE",
     note: "Administered on the Zigbee page, because what can be done with it "
-      + "depends on the gateway being plugged in.",
+      + "depends on the dongle being plugged in.",
   },
   unknown: {
     label: "DEVICE",
@@ -4811,6 +6739,17 @@ function renderPlantConfig() {
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
   setValue(document.getElementById("plant-config-watering-days"),
     selectedPlant.expected_watering_days ?? "");
+  const started = document.getElementById("plant-config-started");
+  setAttr(started, "max", localDate(new Date()));
+  setValue(started, selectedPlant.started_at
+    ? localDate(new Date(selectedPlant.started_at)) : "");
+  const months = plantAgeMonths();
+  setText(document.getElementById("plant-config-age-note"),
+    months == null ? "" : `\u00b7 ${describePlantAge(months)}, read as ${plantStage()}`);
+  setValue(document.getElementById("plant-config-ppfd"),
+    selectedPlant.ppfd_umol_m2s ?? "");
+  setValue(document.getElementById("plant-config-light-hours"),
+    selectedPlant.light_hours_per_day ?? "");
   const acquired = document.getElementById("plant-config-acquired");
   setAttr(acquired, "max", localDate(new Date()));
   setValue(acquired, selectedPlant.acquired_at
@@ -4831,6 +6770,10 @@ async function savePlantConfig(event) {
   if (!selectedPlant) return;
   const message = document.getElementById("plant-config-message");
   const days = document.getElementById("plant-config-watering-days").value;
+  // Blank means nobody has measured it, which is not zero.
+  const light = document.getElementById("plant-config-ppfd").value;
+  const lightHours = document.getElementById("plant-config-light-hours").value;
+  const startedOn = document.getElementById("plant-config-started").value;
   const room = document.getElementById("plant-config-room").value;
   const response = await fetch(`/api/plants/${selectedPlant.plant_id}`, {
     method: "PUT",
@@ -4839,6 +6782,14 @@ async function savePlantConfig(event) {
       display_name: document.getElementById("plant-config-display-name").value,
       room_id: room === "" ? null : Number(room),
       expected_watering_days: days === "" ? null : Number(days),
+      ppfd_umol_m2s: light === "" ? null : Number(light),
+      light_hours_per_day: lightHours === "" ? null : Number(lightHours),
+      // Midday local, like acquired_at, so no time zone moves the day.
+      started_at: (() => {
+        if (!startedOn) return null;
+        const [y, m, d] = startedOn.split("-").map(Number);
+        return new Date(y, m - 1, d, 12, 0, 0).toISOString();
+      })(),
       profile_id: document.getElementById("plant-config-profile").value || null,
       variety: document.getElementById("plant-config-variety").value || null,
       // A date with no time of day is filed at midday local time, far enough
@@ -5526,8 +7477,7 @@ function plantWeightPoints() {
  * Touch gets it on a tap: there is no hover on a phone, and a number you
  * cannot reach is worse than no number.
  */
-function attachPointReadout(chart, marks, size) {
-  if (!marks.length) return;
+function createReadout(chart, size) {
   const readout = svgElement("g", { class: "point-readout", opacity: "0" });
   const bubble = svgElement("rect", { class: "point-readout-bubble", rx: 5, x: 0, y: 0,
                                       width: 10, height: 30 });
@@ -5556,7 +7506,20 @@ function attachPointReadout(chart, marks, size) {
     setAttr(readout, "opacity", "1");
   };
   const hide = () => setAttr(readout, "opacity", "0");
+  chart.append(readout);
+  return { show, hide, readout };
+}
 
+/* A dot you can ask what it is, one target per dot.
+ *
+ * Each dot gets a target ten times its size that draws nothing,
+ * because a dot two and a half pixels across cannot be pointed at.
+ * Suits a chart with tens of readings; a chart with hundreds uses the
+ * nearest-point version below, which needs no targets at all.
+ */
+function attachPointReadout(chart, marks, size) {
+  if (!marks.length) return;
+  const { show, hide, readout } = createReadout(chart, size);
   for (const mark of marks) {
     const target = svgElement("circle", {
       class: "point-target", cx: mark.cx, cy: mark.cy, r: 14,
@@ -5567,6 +7530,45 @@ function attachPointReadout(chart, marks, size) {
     chart.append(target);
   }
   chart.addEventListener("pointerleave", hide);
+  chart.append(readout);   // last, so it sits above the targets
+}
+
+/* The reading nearest the pointer, anywhere over the chart.
+ *
+ * A line drawn from hundreds of readings cannot give each one a hit
+ * target: that is hundreds of elements rebuilt on every poll, and the
+ * dots are too close together to aim at anyway. One transparent sheet
+ * over the plot and a search for the nearest reading does the same job
+ * for any density, and means the number appears wherever the pointer
+ * is rather than only when it finds a dot.
+ */
+function attachNearestReadout(chart, size, marks) {
+  if (!marks.length) return;
+  const { show, hide, readout } = createReadout(chart, size);
+  const sheet = svgElement("rect", {
+    class: "point-sheet", x: 0, y: 0, width: size.width, height: size.height,
+  });
+  const nearest = (event) => {
+    const box = chart.getBoundingClientRect();
+    if (!box.width) return;
+    // Client pixels into the chart's own coordinates, so this works at
+    // any width the page gives it.
+    const at = ((event.clientX - box.left) / box.width) * size.width;
+    let best = null;
+    let bestGap = Infinity;
+    for (const mark of marks) {
+      const gap = Math.abs(mark.cx - at);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = mark;
+      }
+    }
+    if (best) show(best);
+  };
+  sheet.addEventListener("pointermove", nearest);
+  sheet.addEventListener("pointerdown", nearest);
+  sheet.addEventListener("pointerleave", hide);
+  chart.append(sheet);
   chart.append(readout);
 }
 
@@ -5685,7 +7687,12 @@ function renderPlantWeightChart() {
       svgElement("text", {
         class: "trend-dry-label", x: plot.left + 4, y: y(dryGrams) - 4,
         "text-anchor": "start",
-      }, `Driest seen ${showWeight(dryGrams)} g`)
+      }, weight.dry_stated
+        ? `Dry at ${showWeight(dryGrams)} g`
+          + (weight.lightest && weight.lightest.grams < dryGrams
+            ? ` \u00b7 weighed ${showWeight(weight.lightest.grams)} g once`
+            : "")
+        : `Driest seen ${showWeight(dryGrams)} g`)
     );
   } else if (weight.watered) {
     chart.append(
@@ -5752,37 +7759,65 @@ function renderPlantWeightChart() {
 /* Setting an anchor is a claim about the pot in a state it is not in: what it
  * weighs full, or dry. It is not a weighing taken now, so it does not become
  * what the pot weighs now, and setting the full weight is not watering it. */
-const PLANT_ANCHOR_FIELDS = {
-  watered: "plant-weight-full",
-  thirsty: "plant-weight-thirsty",
-};
-
-async function setPlantAnchor(kind) {
+/* The three weights a pot is read against, saved by one button.
+ *
+ * Only what changed is sent. A person correcting the thirsty weight
+ * should not have the full weight rewritten underneath them with the
+ * same number it already held -- it is a reference every other figure is
+ * measured against, and rewriting it would move its date for nothing. */
+async function setPlantAnchors() {
   const plantId = currentPlantId();
-  const fieldId = PLANT_ANCHOR_FIELDS[kind];
-  const field = document.getElementById(fieldId);
   const message = document.getElementById("plant-weight-anchor-message");
-  const typed = Number(field.value);
-  if (plantId === null || !field.value || !Number.isFinite(typed) || typed <= 0) {
-    setText(message, "Type the weight in grams.");
+  const weight = (selectedPlant && selectedPlant.weight) || {};
+  const wanted = [
+    ["watered", "plant-weight-full", weight.watered],
+    ["thirsty", "plant-weight-thirsty", weight.thirsty],
+    // Only what was stated counts as the current value here. Left empty,
+    // dry falls back to the lightest weighing -- so comparing against
+    // that would send a "change" every time somebody saves the other two.
+    ["dry", "plant-weight-dry", weight.dry_stated ? weight.dry : null],
+  ];
+  const changed = [];
+  for (const [kind, fieldId, anchor] of wanted) {
+    const field = document.getElementById(fieldId);
+    if (field === null || field.value === "") continue;
+    const typed = Number(field.value);
+    if (!Number.isFinite(typed) || typed <= 0) {
+      setText(message, "Type the weight in grams.");
+      return;
+    }
+    const grams = Math.round(typed);
+    if (anchor && Math.round(anchor.grams) === grams) continue;
+    changed.push([kind, grams]);
+  }
+  if (plantId === null) return;
+  if (!changed.length) {
+    setText(message, "Both weights already say that.");
     return;
   }
-  const grams = Math.round(typed);
-  const response = await fetch(`/api/plants/${plantId}/weight`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ grams, kind, observed: false }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    setText(message, payload.error || "That weight could not be recorded.");
-    return;
+  for (const [kind, grams] of changed) {
+    const response = await fetch(`/api/plants/${plantId}/weight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grams, kind, observed: false }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setText(message, payload.error || "That weight could not be recorded.");
+      return;
+    }
   }
-  // Said plainly, because somebody who has just watered the plant and typed
-  // its full weight will otherwise expect the watering to be in the log.
-  setText(message, kind === "watered"
-    ? "Full weight set — a reference, not a watering. Tick Just watered on a weighing to record one."
-    : "Thirsty weight set.");
+  // The full weight is said plainly, because somebody who has just watered
+  // the plant and typed its full weight will expect a watering in the log.
+  const saved = changed.map(([kind]) => kind);
+  const named = {watered: "Full", thirsty: "Thirsty", dry: "Dry"};
+  const list = saved.map((kind) => named[kind]);
+  const which = list.length > 1
+    ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]} weights set`
+    : `${list[0]} weight set`;
+  setText(message, saved.includes("watered")
+    ? `${which} \u2014 a reference, not a watering. Weigh the pot after watering to record one.`
+    : `${which}.`);
   await refreshPlant();
 }
 
@@ -5793,6 +7828,9 @@ function fillPlantAnchorFields() {
   const fields = [
     ["plant-weight-full", weight.watered],
     ["plant-weight-thirsty", weight.thirsty],
+    // Empty where nobody has stated one, so the placeholder can say the
+    // scale is answering it instead.
+    ["plant-weight-dry", weight.dry_stated ? weight.dry : null],
   ];
   for (const [id, anchor] of fields) {
     const field = document.getElementById(id);
@@ -5834,15 +7872,53 @@ async function recordPlantCare(kind) {
   await refreshPlant();
 }
 
-/* One button. The checkbox beside it says whether this weighing is the pot
- * full -- the ceiling everything else is measured against, and a watering in
- * the care log with it. */
+/* One button, and two ticks for what else happened at the pot.
+ *
+ * Both ticks only record. Watering used to also declare the weighing to
+ * be the pot full, which moved the ceiling every other figure is measured
+ * against -- so a pot weighed before it finished draining quietly
+ * re-scaled its own history downward, and the water-left percentages with
+ * it. The full weight is a deliberate claim now, made in the Full at
+ * field, which is the one place that reads like a claim.
+ */
+/* A last look at a number before it goes in the log.
+ *
+ * The hub reads a sudden gain as a watering and files it as one, so
+ * nobody has to remember a tick. The mistake that leaves behind is a
+ * mistyped number, which is wrong in the log afterwards and makes the
+ * weighing that follows it look like a refill. Cheap to ask once,
+ * hard to spot later.
+ *
+ * Only for a change big enough to be one or the other: a pot losing
+ * water a few grams at a time goes straight through.
+ */
+function weighingLooksRight(grams) {
+  const previous = plantWeightPoints().at(-1)?.grams;
+  if (previous == null) return true;
+  const change = grams - previous;
+  if (change >= Math.max(40, previous * 0.08)) {
+    return window.confirm(
+      `${showWeight(grams)} g is ${showWeight(change)} g heavier than the last `
+      + `weighing of ${showWeight(previous)} g.\n\n`
+      + "It will be recorded as a watering. Press Cancel if the number is wrong.");
+  }
+  if (change <= -Math.max(40, previous * 0.3)) {
+    return window.confirm(
+      `${showWeight(grams)} g is ${showWeight(-change)} g lighter than the last `
+      + `weighing of ${showWeight(previous)} g.\n\n`
+      + "A pot rarely loses that much at once. Press Cancel if the number is wrong.");
+  }
+  return true;
+}
+
 async function recordPlantWeight() {
   const plantId = currentPlantId();
   const field = document.getElementById("plant-weight-input");
-  const watered = document.getElementById("plant-weight-watered");
+  const fed = document.getElementById("plant-weight-fed");
   const message = document.getElementById("plant-weight-message");
-  const kind = watered.checked ? "watered" : "reading";
+  // Always a weighing. What else happened is recorded beside it, not
+  // folded into what the weighing is taken to mean.
+  const kind = "reading";
   const at = weighingTime();
   if (at === null) {
     setText(message, "That date has not happened yet.");
@@ -5856,6 +7932,17 @@ async function recordPlantWeight() {
   // Grams on the wire and grams in the database: the unit is a keypad choice,
   // not something the rest of the hub should have to know about.
   const grams = Math.round(typed);
+  // Checked against the last weighing before it is written. A sudden
+  // gain the hub files as a watering without asking; a sudden loss is
+  // usually a mistyped number -- 240 for 2400 -- and that one is worth
+  // stopping, because it is wrong in the log afterwards and makes the
+  // next correct weighing look like a refill.
+  if (!weighingLooksRight(grams)) {
+    setText(message, "Not recorded.");
+    field.focus();
+    field.select();
+    return;
+  }
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -5866,14 +7953,36 @@ async function recordPlantWeight() {
     setText(message, payload.error || "That weight could not be recorded.");
     return;
   }
+  /* What else happened, each its own record, written at the weighing's
+     own time so a back-dated weighing does not file today's watering.
+     They go after the weight, because the weight is the thing that cannot
+     be re-entered from memory: if one of these fails the weighing is
+     still saved and the tick can be made again. */
+  const alsoFed = fed.checked;
+  const failed = [];
+  // Only the feeding. The watering is the hub's own reading of the
+  // weight and is recorded with the weighing itself.
+  for (const [ticked, careKind, said] of [[alsoFed, "fertilizing", "feeding"]]) {
+    if (!ticked) continue;
+    const response = await fetch(`/api/plants/${plantId}/care`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: careKind, at }),
+    });
+    if (!response.ok) failed.push(said);
+  }
+
   field.value = "";
-  // Cleared, so the next weighing is not a watering by leftover tick, and
+  // Cleared, so the next weighing is not a feeding by leftover tick, and
   // back to today, so a number typed tomorrow is not filed under yesterday.
-  watered.checked = false;
+  fed.checked = false;
   resetWeighingDate();
-  setText(message, kind === "watered"
-    ? "Recorded, and the watering with it."
-    : "Recorded.");
+  const kept = [alsoFed && !failed.includes("feeding") ? "the feeding" : null]
+    .filter(Boolean);
+  setText(message, failed.length
+    ? `Weight recorded, but the ${failed.join(" and ")} could not be saved. Tick again.`
+    : kept.length ? `Recorded, with ${kept.join(" and ")}.`
+      : "Recorded.");
   await refreshPlant();
 }
 
@@ -5936,17 +8045,13 @@ document.getElementById("fleet-link").addEventListener("click", (event) => {
   event.preventDefault();
   navigate("/");
 });
-document.getElementById("room-form").addEventListener("submit", saveRoom);
-document.getElementById("cancel-room-edit").addEventListener("click", clearRoomForm);
 document.getElementById("room-list").addEventListener("click", (event) => {
-  const edit = event.target.closest(".edit-room");
-  if (edit) {
-    startRoomEdit(Number(edit.dataset.roomId));
-    return;
-  }
   const remove = event.target.closest(".delete-room");
   if (remove) deleteRoom(Number(remove.dataset.roomId));
 });
+document.getElementById("room-page-form").addEventListener("submit", saveRoomPage);
+document.getElementById("room-page-delete")
+  .addEventListener("click", deleteRoomFromItsPage);
 document.getElementById("onboarding-room").addEventListener("change", renderRoomChoices);
 document.getElementById("onboarding-plant").addEventListener("change", applyPlantChoice);
 document.getElementById("detail-console-toggle").addEventListener("change", (event) => {
@@ -6122,7 +8227,16 @@ document.getElementById("zigbee-device-back").addEventListener("click", (event) 
   event.preventDefault();
   navigate("/settings/zigbee");
 });
-document.getElementById("zigbee-devices").addEventListener("click", (event) => {
+/* Both device lists, because the rows moved and the listener did not.
+ *
+ * Splitting the panel in two put the Add it and Remove buttons in a
+ * second container while this was still bound to the first, so they
+ * rendered perfectly and did nothing at all. Bound to each list rather
+ * than to the panel around them: the panel also holds the scan button,
+ * and a click handler that sees more than it needs is how a stray click
+ * becomes an action.
+ */
+function onZigbeeListClick(event) {
   const command = event.target.closest(".zigbee-command");
   if (command) {
     sendZigbeeCommand(command.dataset.eui, command.dataset.command);
@@ -6141,7 +8255,32 @@ document.getElementById("zigbee-devices").addEventListener("click", (event) => {
   }
   const claim = event.target.closest(".zigbee-claim");
   if (claim) claimZigbeeDevice(claim.dataset.eui, claim.dataset.action);
+}
+document.getElementById("zigbee-report-save")
+  .addEventListener("click", saveZigbeeReporting);
+document.getElementById("zigbee-plug-toggle").addEventListener("click", (event) => {
+  const toggle = event.currentTarget;
+  if (toggle.disabled) return;
+  const on = toggle.getAttribute("aria-checked") === "true";
+  commandZigbeePlug(toggle.dataset.eui, on ? "off" : "on");
 });
+document.getElementById("zigbee-plug-refresh").addEventListener("click", () => {
+  commandZigbeePlug(zigbeeEuiFromLocation(), "state");
+});
+document.getElementById("zigbee-reports-keep")
+  .addEventListener("change", saveZigbeeReports);
+document.querySelectorAll("[data-measure-range]").forEach((button) => {
+  button.addEventListener("click", () => {
+    zigbeeMeasureHours = Number(button.dataset.measureRange);
+    document.querySelectorAll("[data-measure-range]").forEach((other) => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+    loadZigbeeMeasurements(zigbeeEuiFromLocation(), true);
+  });
+});
+for (const id of ["zigbee-devices", "zigbee-found"]) {
+  document.getElementById(id).addEventListener("click", onZigbeeListClick);
+}
 document.getElementById("settings-sensor-list").addEventListener("click", (event) => {
   const forget = event.target.closest(".forget-sensor");
   if (forget) forgetSensor(forget.dataset.sensorId);
@@ -6283,8 +8422,7 @@ document.getElementById("plant-weight-schedule").addEventListener("change", asyn
     setText(message, error.message || "Could not save");
   }
 });
-document.getElementById("plant-weight-set-full").addEventListener("click", () => setPlantAnchor("watered"));
-document.getElementById("plant-weight-set-thirsty").addEventListener("click", () => setPlantAnchor("thirsty"));
+document.getElementById("plant-weight-set-anchors").addEventListener("click", setPlantAnchors);
 /* The label opens the picker by itself, which is one less thing to go wrong
  * than forwarding a click; the keyboard needs the forwarding, though, since a
  * label is not a button. */
@@ -6293,6 +8431,134 @@ document.getElementById("plant-photo-add").addEventListener("keydown", (event) =
     event.preventDefault();
     document.getElementById("plant-photo-file").click();
   }
+});
+document.getElementById("photo-viewer-close").addEventListener("click", closePhotoViewer);
+document.getElementById("photo-viewer-newer").addEventListener("click", () => stepPhotoViewer(-1));
+document.getElementById("photo-viewer-older").addEventListener("click", () => stepPhotoViewer(1));
+// The backdrop closes; the picture and its controls do not, or every
+// attempt to look closely would shut the thing being looked at.
+document.getElementById("photo-viewer").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closePhotoViewer();
+});
+document.addEventListener("keydown", (event) => {
+  if (document.getElementById("photo-viewer").hidden) return;
+  /* Up and down are the photographs' own axis. Left and right do the
+     same, because half of people reach for those in a picture viewer and
+     being wrong about which should cost nothing. */
+  const steps = {ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1,
+                 PageUp: -1, PageDown: 1};
+  if (event.key === "Escape") { event.preventDefault(); closePhotoViewer(); return; }
+  if (event.key in steps) { event.preventDefault(); stepPhotoViewer(steps[event.key]); }
+});
+/* One pointer, three meanings: a vertical swipe steps, a drag pans while
+   zoomed, and two quick taps zoom in or out.
+ *
+ * A swipe is measured from where the finger went down to where it left
+ * rather than followed as it moves: a photograph that slides under the
+ * finger and snaps back when the swipe was too short is worse than one
+ * that simply does not move. */
+const DOUBLE_TAP_MS = 320;
+let photoSwipeFrom = null;
+let photoLastTap = 0;
+const photoViewerFrame = document.getElementById("photo-viewer");
+
+photoViewerFrame.addEventListener("pointerdown", (event) => {
+  photoSwipeFrom = {x: event.clientX, y: event.clientY,
+                    pan: {...photoPan}, moved: false};
+});
+
+photoViewerFrame.addEventListener("pointermove", (event) => {
+  if (photoSwipeFrom === null || photoZoom === 1) return;
+  // Dragging a zoomed picture moves the picture, not the page.
+  event.preventDefault();
+  photoSwipeFrom.moved = true;
+  photoPan = {x: photoSwipeFrom.pan.x + (event.clientX - photoSwipeFrom.x),
+              y: photoSwipeFrom.pan.y + (event.clientY - photoSwipeFrom.y)};
+  applyPhotoZoom();
+});
+
+photoViewerFrame.addEventListener("pointerup", (event) => {
+  const from = photoSwipeFrom;
+  photoSwipeFrom = null;
+  if (from === null) return;
+  const down = event.clientY - from.y;
+  const across = Math.abs(event.clientX - from.x);
+  const still = Math.abs(down) < 10 && across < 10;
+
+  /* Two taps in the same place, quickly. Only counted on the picture
+     itself: double-tapping the backdrop means nothing, and the buttons
+     have their own job. */
+  if (still && event.target.id === "photo-viewer-image") {
+    const now = Date.now();
+    if (now - photoLastTap < DOUBLE_TAP_MS) {
+      photoLastTap = 0;
+      togglePhotoZoom(event.clientX, event.clientY);
+      return;
+    }
+    photoLastTap = now;
+    return;
+  }
+  // Zoomed in, a drag was a pan and has already happened.
+  if (photoZoom !== 1 || from.moved) return;
+  // Far enough to be meant, and more vertical than horizontal.
+  if (Math.abs(down) < 60 || across > Math.abs(down)) return;
+  stepPhotoViewer(down > 0 ? -1 : 1);
+});
+
+/* Dragging the scrubber. Its pointer events stop here rather than
+   reaching the viewer, which would otherwise read the same drag as a
+   swipe and step twice. */
+const photoTrack = document.getElementById("photo-track");
+let scrubbing = false;
+photoTrack.addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+  event.preventDefault();
+  scrubbing = true;
+  photoTrack.setPointerCapture(event.pointerId);
+  seekPhotoTrack(event.clientX);
+});
+photoTrack.addEventListener("pointermove", (event) => {
+  event.stopPropagation();
+  if (scrubbing) seekPhotoTrack(event.clientX);
+});
+for (const ending of ["pointerup", "pointercancel"]) {
+  photoTrack.addEventListener(ending, (event) => {
+    event.stopPropagation();
+    scrubbing = false;
+  });
+}
+// Left and right walk the track; the viewer's own arrows still work,
+// and mean the same thing.
+photoTrack.addEventListener("keydown", (event) => {
+  const steps = {ArrowLeft: 1, ArrowRight: -1, Home: "first", End: "last"};
+  if (!(event.key in steps)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const photos = photoViewerList();
+  if (steps[event.key] === "first") {
+    viewedPhotoId = photos[photos.length - 1]?.photo_id ?? viewedPhotoId;
+    resetPhotoZoom();
+    renderPhotoViewer();
+    return;
+  }
+  if (steps[event.key] === "last") {
+    viewedPhotoId = photos[0]?.photo_id ?? viewedPhotoId;
+    resetPhotoZoom();
+    renderPhotoViewer();
+    return;
+  }
+  stepPhotoViewer(steps[event.key]);
+});
+
+/* A mouse says double-click rather than double-tap, and says it plainly,
+   so it does not need the timing above. */
+document.getElementById("photo-viewer-image").addEventListener("dblclick", (event) => {
+  event.preventDefault();
+  togglePhotoZoom(event.clientX, event.clientY);
+});
+document.getElementById("plant-photo-more").addEventListener("click", () => {
+  photosExpanded = !photosExpanded;
+  renderPlantPhotos();
 });
 document.getElementById("sensor-attach-save").addEventListener("click", () => {
   const chosen = document.getElementById("sensor-attach-choice").value;

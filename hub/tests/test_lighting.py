@@ -9,7 +9,8 @@ from urllib.request import Request, urlopen
 
 from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
 from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
-from open_plant_pulse_hub.lighting.driver import FakeLight, LightDriver
+from open_plant_pulse_hub.lighting.driver import (CONFIRMED, UNCONFIRMED,
+                                                  FakeLight, LightDriver)
 from open_plant_pulse_hub.lighting.neewer_gl1c import (
     NeewerGL1C,
     beacon_mac,
@@ -21,6 +22,7 @@ from open_plant_pulse_hub.lighting.neewer_gl1c import (
 from open_plant_pulse_hub.lighting.schedule import in_window, validate_schedule
 from open_plant_pulse_hub.lighting.service import DRIVERS, LightService
 from open_plant_pulse_hub.lighting.wemo_switch import WemoSwitch, parse_binary_state
+from open_plant_pulse_hub.lighting.zigbee_plug import ZigbeePlugLight
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -184,31 +186,86 @@ class LightStoreTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
 
-    def test_a_plant_starts_with_the_default_window_unsaved(self):
+    def test_a_light_starts_with_the_default_window_unsaved(self):
+        self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
+        hours = self.store.light_schedule("light-a")
+        self.assertEqual(hours["schedule"], {"enabled": True, "on": "08:00", "off": "21:30"})
+        self.assertFalse(hours["schedule_saved"])
+
+    def test_a_plant_records_only_the_lamps_it_stands_under(self):
+        """Its hours are the lamp's, so they are not asked for here."""
         lighting = self.store.plant_lighting(self.sensor_ids[0])
         self.assertEqual(lighting["light_ids"], [])
-        self.assertEqual(lighting["schedule"], {"enabled": True, "on": "08:00", "off": "21:30"})
-        self.assertFalse(lighting["schedule_saved"])
+        self.assertNotIn("schedule", lighting)
 
-    def test_lights_and_schedule_are_saved_together(self):
+    def test_a_plant_picks_up_a_light(self):
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
-        lighting = self.store.set_plant_lighting(
-            self.sensor_ids[0], ["light-a"], {"enabled": True, "on": "07:00", "off": "19:00"}
-        )
+        lighting = self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
         self.assertEqual(lighting["light_ids"], ["light-a"])
-        self.assertTrue(lighting["schedule_saved"])
         self.assertEqual(self.store.light("light-a")["plant"]["display_name"], "Strelitzia")
 
-    def test_a_light_belongs_to_one_plant(self):
+    def test_a_lamp_keeps_one_set_of_hours_for_everything_under_it(self):
+        """Two plants, one switch: there is only one window to keep."""
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
-        schedule = {"enabled": True, "on": "07:00", "off": "19:00"}
-        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"], schedule)
-        with self.assertRaisesRegex(ValueError, "already lights Strelitzia"):
-            self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"], schedule)
-        # Letting go of it frees it for another plant.
-        self.store.set_plant_lighting(self.sensor_ids[0], [], schedule)
-        self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"], schedule)
-        self.assertEqual(self.store.light("light-a")["plant"]["display_name"], "Monstera")
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"])
+        self.store.set_light_schedule(
+            "light-a", {"enabled": True, "on": "07:00", "off": "19:00"}
+        )
+        assignment = self.store.light_assignments()["light-a"]
+        self.assertEqual(len(assignment["plants"]), 2)
+        self.assertEqual(assignment["schedule"], {"enabled": True, "on": "07:00", "off": "19:00"})
+
+    def test_one_light_can_serve_several_plants(self):
+        """A panel over a bench lights everything under it."""
+        self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"])
+        both = self.store.light_assignments()["light-a"]["plants"]
+        self.assertEqual(len(both), 2)
+
+    def test_a_light_serving_two_plants_is_listed_once(self):
+        """A panel over a bench is one lamp, however many plants it covers.
+
+        Listing the pairs showed the same light once per plant, which on
+        the settings page reads as two devices and invites somebody to
+        delete one of them.
+        """
+        self.store.create_light("light-a", "Bench panel", "neewer-gl1c", {})
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"])
+        listed = self.store.lights()
+        self.assertEqual([light["light_id"] for light in listed], ["light-a"])
+        # It still names a plant, and every plant is in the assignments.
+        self.assertIsNotNone(listed[0]["plant"])
+        self.assertEqual(len(self.store.light_assignments()["light-a"]["plants"]), 2)
+
+    def test_each_plant_under_a_light_has_its_own_light_level(self):
+        """A meter reads the spot, so the figure is the plant's own."""
+        self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_plant_lighting(self.sensor_ids[1], ["light-a"])
+        first = self.store.plant_lighting(self.sensor_ids[0])["plant_id"]
+        second = self.store.plant_lighting(self.sensor_ids[1])["plant_id"]
+        self.store.update_plant(first, "Strelitzia", ppfd_umol_m2s=320)
+        self.store.update_plant(second, "Monstera", ppfd_umol_m2s=110)
+        self.assertEqual(self.store.plant(first)["ppfd_umol_m2s"], 320.0)
+        self.assertEqual(self.store.plant(second)["ppfd_umol_m2s"], 110.0)
+
+    def test_unmeasured_light_reports_no_days_rather_than_zeroes(self):
+        """Blank means nobody has measured it, which is not the same as zero."""
+        self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        plant_id = self.store.plant_lighting(self.sensor_ids[0])["plant_id"]
+        self.assertIsNone(self.store.plant(plant_id)["ppfd_umol_m2s"])
+        self.assertEqual(self.store.plant_light_days(plant_id), [])
+
+    def test_a_measured_plant_with_no_lamp_still_reports_no_days(self):
+        """The level is the spot's; the hours need a lamp the hub switches."""
+        plant_id = self.store.plant_lighting(self.sensor_ids[0])["plant_id"]
+        self.store.update_plant(plant_id, "Strelitzia", ppfd_umol_m2s=200)
+        self.assertEqual(self.store.plant(plant_id)["ppfd_umol_m2s"], 200.0)
+        self.assertEqual(self.store.plant_light_days(plant_id), [])
 
     def test_only_an_enrolled_plant_can_have_lights(self):
         with self.assertRaises(ValueError):
@@ -219,24 +276,30 @@ class LightStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.create_light("light-b", "Neewer", "wemo-switch", {"host": "10.0.0.2"})
 
-    def test_deleting_the_plant_lets_go_of_its_lights_and_schedule(self):
+    def test_deleting_the_plant_lets_go_of_its_lights(self):
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
-        self.store.set_plant_lighting(
-            self.sensor_ids[0], ["light-a"], {"enabled": True, "on": "07:00", "off": "19:00"}
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_light_schedule(
+            "light-a", {"enabled": True, "on": "07:00", "off": "19:00"}
         )
         self.store.delete_sensor(self.sensor_ids[0])
         self.assertIsNone(self.store.light("light-a")["plant"])
         self.assertEqual(self.store.light_assignments(), {})
 
-    def test_the_schedule_survives_replacing_the_sensor(self):
+    def test_the_lights_survive_replacing_the_sensor(self):
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
-        self.store.set_plant_lighting(
-            self.sensor_ids[0], ["light-a"], {"enabled": False, "on": "07:00", "off": "19:00"}
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        self.store.set_light_schedule(
+            "light-a", {"enabled": False, "on": "07:00", "off": "19:00"}
         )
         self.store.replace_sensor(self.sensor_ids[0], self.sensor_ids[2])
         lighting = self.store.plant_lighting(self.sensor_ids[2])
         self.assertEqual(lighting["light_ids"], ["light-a"])
-        self.assertEqual(lighting["schedule"], {"enabled": False, "on": "07:00", "off": "19:00"})
+        # The lamp's hours are the lamp's, so swapping a sensor cannot touch them.
+        self.assertEqual(
+            self.store.light_schedule("light-a")["schedule"],
+            {"enabled": False, "on": "07:00", "off": "19:00"},
+        )
 
     def test_learned_facts_are_merged_into_the_settings(self):
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {"cct": 4200})
@@ -272,10 +335,11 @@ class LightingCareLogTests(unittest.TestCase):
         enroll(self.store, self.sensor_id, "Strelitzia")
         self.store.create_light("light-a", "Lamp A", "wemo-switch", {})
         self.store.create_light("light-b", "Lamp B", "wemo-switch", {})
-        self.store.set_plant_lighting(
-            self.sensor_id, ["light-a", "light-b"],
-            {"enabled": True, "on": "08:00", "off": "21:30"},
-        )
+        self.store.set_plant_lighting(self.sensor_id, ["light-a", "light-b"])
+        for light_id in ("light-a", "light-b"):
+            self.store.set_light_schedule(
+                light_id, {"enabled": True, "on": "08:00", "off": "21:30"}
+            )
 
     def tearDown(self):
         self.store.close()
@@ -451,11 +515,17 @@ class SchedulerTests(unittest.TestCase):
         return self.service._lights[self.light_id].driver
 
     def schedule(self, enabled, on, off, sensor=0, light_ids=None):
-        self.store.set_plant_lighting(
-            self.sensor_ids[sensor],
-            [self.light_id] if light_ids is None else light_ids,
-            {"enabled": enabled, "on": on, "off": off},
-        )
+        """Put a plant under the lamps, and give the lamps their hours.
+
+        Two steps now rather than one: which plant stands under a lamp is
+        the plant's business, when the lamp is lit is the lamp's.
+        """
+        chosen = [self.light_id] if light_ids is None else light_ids
+        self.store.set_plant_lighting(self.sensor_ids[sensor], chosen)
+        for light_id in chosen or [self.light_id]:
+            self.store.set_light_schedule(
+                light_id, {"enabled": enabled, "on": on, "off": off}
+            )
         self.service.lighting_changed()
 
     def tick(self, hhmm=None):
@@ -581,9 +651,30 @@ class SchedulerTests(unittest.TestCase):
 
 class DriverRegistryTests(unittest.TestCase):
     def test_the_real_drivers_are_offered_and_the_simulated_one_is_not(self):
-        self.assertEqual(set(DRIVERS), {"neewer-gl1c", "wemo-switch"})
+        self.assertEqual(set(DRIVERS),
+                         {"neewer-gl1c", "wemo-switch", "zigbee-plug", "timer"})
         for driver in DRIVERS.values():
             self.assertTrue(issubclass(driver, LightDriver))
+
+    def test_a_timer_light_is_kept_rather_than_switched(self):
+        """A lamp with its own timer has nothing for the hub to talk to.
+
+        It obeys at once because there is no device to fail, which is what
+        lets a daily light total be worked out from the log. What it cannot
+        do is notice the dial being moved.
+        """
+        from open_plant_pulse_hub.lighting.driver import TimerLight
+
+        light = TimerLight({})
+        # Nothing has been said yet, so its power is unknown, not off.
+        self.assertTrue(light.state().online)
+        self.assertIsNone(light.state().power)
+        self.assertEqual(light.set_power(True).outcome, "confirmed")
+        self.assertIs(light.state().power, True)
+        self.assertEqual(light.set_power(False).outcome, "confirmed")
+        self.assertIs(light.state().power, False)
+        # It asks for nothing to be configured: there is no address to give.
+        self.assertEqual(TimerLight.config_fields, ())
 
 
 class LightApiTests(unittest.TestCase):
@@ -657,22 +748,33 @@ class LightApiTests(unittest.TestCase):
             self.refused("/api/lights", "POST", {"display_name": "X", "driver": "lava-lamp"}), 400
         )
 
-    def test_a_plant_picks_its_lights_and_schedule(self):
+    def test_a_plant_picks_its_lights(self):
+        """The plant says which lamps it stands under, and how much reaches it."""
         light_id = self.call("/api/lights", "POST", {"display_name": "Bench", "driver": "fake"})["light_id"]
         path = f"/api/sensors/{quote(self.sensor_id)}/lighting"
         before = self.call(path)
-        self.assertFalse(before["schedule_saved"])
         self.assertEqual([light["light_id"] for light in before["lights"]], [light_id])
+        self.assertNotIn("schedule", before)
+        self.assertNotIn("ppfd", before)
 
-        saved = self.call(
-            path, "PUT", {"light_ids": [light_id], "schedule": {"enabled": True, "on": "07:30", "off": "19:00"}}
-        )
+        saved = self.call(path, "PUT", {"light_ids": [light_id]})
         self.assertEqual(saved["light_ids"], [light_id])
         self.assertEqual(saved["lights"][0]["plant"]["sensor_id"], self.sensor_id)
-        self.assertEqual(saved["lights"][0]["schedule"]["on"], "07:30")
 
+    def test_a_lamps_hours_are_set_on_the_lamp(self):
+        light_id = self.call("/api/lights", "POST", {"display_name": "Bench", "driver": "fake"})["light_id"]
+        path = f"/api/lights/{quote(light_id)}"
+        saved = self.call(path, "PUT", {
+            "display_name": "Bench", "config": {},
+            "schedule": {"enabled": True, "on": "07:30", "off": "19:00"},
+        })
+        self.assertEqual(saved["schedule"]["on"], "07:30")
+        # A window that starts and ends at the same minute is no window.
         self.assertEqual(
-            self.refused(path, "PUT", {"light_ids": [light_id], "schedule": {"enabled": True, "on": "07:30", "off": "07:30"}}),
+            self.refused(path, "PUT", {
+                "display_name": "Bench", "config": {},
+                "schedule": {"enabled": True, "on": "07:30", "off": "07:30"},
+            }),
             400,
         )
 
@@ -709,3 +811,93 @@ class LightApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZigbeePlugLightTests(unittest.TestCase):
+    """A light switched by a Zigbee plug the hub already owns."""
+
+    def setUp(self) -> None:
+        self.sent: list = []
+        self.reported: dict = {"present": True, "values": {}, "quiet_for_s": 1.0}
+        test = self
+
+        class Radio:
+            def command(self, eui, word, kind=None):
+                test.sent.append((eui, word))
+                # The plug answers, the way a plug does.
+                if word in ("on", "off"):
+                    test.reported["values"] = {"on": word == "on"}
+                return len(test.sent)
+
+            def reported(self, eui):
+                return dict(test.reported)
+
+        self.light = ZigbeePlugLight({"eui": "a4c1381f1312ffff"}, zigbee=Radio())
+
+    def test_it_switches_and_confirms_from_what_the_plug_says(self) -> None:
+        result = self.light.set_power(True)
+        self.assertEqual(result.outcome, CONFIRMED)
+        self.assertEqual(self.sent[0], ("a4c1381f1312ffff", "on"))
+        self.assertTrue(self.light.state().power)
+
+    def test_a_plug_that_says_nothing_is_not_confirmed(self) -> None:
+        """Delivery is not proof. A frame accepted is not a relay moved."""
+        class Deaf:
+            def command(self, eui, word, kind=None):
+                return 1
+
+            def reported(self, eui):
+                return {"present": True, "values": {}, "quiet_for_s": 1.0}
+
+        light = ZigbeePlugLight({"eui": "a4c1381f1312ffff"}, zigbee=Deaf())
+        self.assertEqual(light.set_power(True).outcome, UNCONFIRMED)
+
+    def test_an_unheard_plug_has_no_power_rather_than_being_off(self) -> None:
+        """Off is a fact about a relay; this is the absence of one."""
+        self.reported["values"] = {}
+        state = self.light.state()
+        self.assertTrue(state.online)
+        self.assertIsNone(state.power)
+
+    def test_a_plug_that_left_the_network_is_offline(self) -> None:
+        self.reported["present"] = False
+        self.assertFalse(self.light.state().online)
+
+    def test_a_plug_that_stopped_answering_is_not_vouched_for(self) -> None:
+        self.reported["values"] = {"on": True}
+        self.reported["quiet_for_s"] = 9999.0
+        state = self.light.state()
+        self.assertFalse(state.online)
+        self.assertIsNone(state.power)
+
+    def test_the_address_is_checked_not_trusted(self) -> None:
+        """The form offers a list; the API takes whatever it is given."""
+        with self.assertRaises(ValueError):
+            ZigbeePlugLight.validate_config({"eui": "not-an-address"})
+        self.assertEqual(
+            ZigbeePlugLight.validate_config({"eui": "A4:C1:38:1F:13:12:FF:FF"})["eui"],
+            "a4c1381f1312ffff")
+
+
+class ScheduleOutranksAnOldManualFlipTests(unittest.TestCase):
+    """Setting the hours is a more deliberate instruction than a flip.
+
+    A light switched by hand is left alone for an hour. Somebody who then
+    sets a schedule has said what they want more deliberately than
+    whoever pressed the button, and used to be told the hub would not
+    act on it for the rest of that hour.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.service = LightService(self.store, {FakeLight.kind: FakeLight},
+                                    watchdog=False, threaded=False)
+        self.light = self.service.add_light("Bench", FakeLight.kind, {})
+
+    def test_setting_a_schedule_clears_the_override(self) -> None:
+        light_id = self.light["light_id"]
+        self.service.set_power(light_id, True)
+        self.assertGreater(self.service.light(light_id)["override_seconds_left"], 0)
+        self.service.update_light(light_id, "Bench", {},
+                                  {"enabled": True, "on": "08:00", "off": "20:00"})
+        self.assertEqual(self.service.light(light_id)["override_seconds_left"], 0)

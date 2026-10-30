@@ -40,6 +40,26 @@ class Device:
     eui: str
     short: Optional[int] = None
     last_seen_s: Optional[int] = None
+    # What the device says it is, asked of it in the standard way when it
+    # joins: ManufacturerName and ModelIdentifier from the Basic cluster,
+    # and the device type from its endpoint descriptor. Worth carrying
+    # because an address identifies a device without describing it, and a
+    # page listing three "Zigbee device" rows helps nobody.
+    #
+    # A backend that cannot ask leaves them None rather than guessing.
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    device_type: Optional[int] = None
+    # What the device can do. The device type is a label and two very
+    # different devices can wear the same one; the clusters are the
+    # capabilities and are what the hub decides a kind from.
+    clusters: tuple = ()
+    # True of every Zigbee device, and between them the answer to most
+    # of "why has this gone quiet?": a battery end device is meant to
+    # sleep, and a mains router never is.
+    power_source: Optional[str] = None
+    role: Optional[str] = None
+    firmware: Optional[str] = None
 
 
 @dataclass(frozen=True)

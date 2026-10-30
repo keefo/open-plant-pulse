@@ -55,6 +55,9 @@ bool remote_wifi_enabled(void);
 // The name this scale answers to, so a hub reached over another link can
 // offer a way back to the scale's own page.
 const char *remote_hostname(void);
+// The address Wi-Fi gave it, or "" when it is not on a network. The
+// name resolves only where mDNS does; the address resolves anywhere.
+const char *remote_sta_ip(void);
 #endif
 
 // Seconds between readings, 0 meaning continuous (ten a second). The one

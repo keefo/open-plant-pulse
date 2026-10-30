@@ -7,6 +7,7 @@ history and a journey of its own.
 
 from datetime import datetime, timedelta, timezone
 import json
+import re
 from threading import Thread
 import unittest
 from urllib.error import HTTPError
@@ -590,7 +591,8 @@ class PlantWeightTests(unittest.TestCase):
         self.store.delete_plant_weight(wrong["weight_id"])
 
         self.assertEqual(len(self.store.plant_weights(self.plant_id)), 3)
-        self.assertLess(self.store.water_use(self.plant_id)["daily_grams"], 100)
+        use = self.store.water_use(self.plant_id)["daily_grams"]
+        self.assertTrue(use is None or use < 100, f"still mad: {use}")
         with self.assertRaises(ValueError):
             self.store.delete_plant_weight(wrong["weight_id"])
         self.assertIsNotNone(slip)
@@ -920,11 +922,14 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(page.count('id="humidity-history-chart"'), 1)
         self.assertNotIn("room-air-panel", page)
 
-        # The values come from whichever sensor is in the room; the green
-        # band comes from the plant being looked at.
-        self.assertIn("function airSource()", script)
-        self.assertIn("profileId: selectedPlant?.profile_id", script)
+        # The values come from every sensor measuring the room's air,
+        # one line each; the green band comes from the plant.
+        self.assertIn("function airSources()", script)
+        self.assertIn("selectedPlant?.air_sources", script)
         self.assertIn("profiles?.profiles?.[climateProfileId", script)
+        # A legend that names the lines and can switch one off.
+        self.assertIn('id="climate-legend"', page)
+        self.assertIn("function renderChartLegend(", script)
 
     def test_the_forecast_reaches_the_list_and_the_plants_page(self) -> None:
         page = self.call_text("/")
@@ -941,13 +946,13 @@ class PlantApiTests(unittest.TestCase):
         self.assertFalse(self.call("GET", f"/api/plants/{plant}")["forecast"]["ready"])
 
     def test_the_section_order_is_one_order_for_every_plant(self) -> None:
-        """Somebody who wants the forecast at the top wants it on all of them."""
+        """Somebody who wants the pot weight at the top wants it on all of them."""
         settings = self.call("GET", "/api/settings")
         self.assertEqual(settings["plant_section_order"][:2], ["readings", "air"])
 
         saved = self.call("PUT", "/api/settings/sections",
-                          {"order": ["forecast", "weight"]})
-        self.assertEqual(saved["plant_section_order"][:2], ["forecast", "weight"])
+                          {"order": ["weight", "air"]})
+        self.assertEqual(saved["plant_section_order"][:2], ["weight", "air"])
         # Sections the saved order has not heard of follow it, in the order
         # they were built, so a new one is visible rather than lost.
         self.assertEqual(sorted(saved["plant_section_order"]),
@@ -964,9 +969,10 @@ class PlantApiTests(unittest.TestCase):
         page = self.call_text("/")
         script = self.call_text("/app.js")
 
-        for name in ("readings", "air", "weight", "forecast", "water-use",
-                     "journey", "photos", "care-log"):
-            self.assertIn(f'data-section="{name}"', page)
+        # Which sections exist is checked against PLANT_SECTIONS in
+        # test_every_section_of_the_page_can_be_reordered; naming them again
+        # here only gives somebody a second list to forget to update.
+        self.assertIn('data-section="weight"', page)
         # Arranged as miniatures, because a page of full-height panels
         # cannot be dragged into order.
         self.assertIn("main.arranging [data-section]", self.call_text("/app.css"))
@@ -1287,8 +1293,8 @@ class PlantApiTests(unittest.TestCase):
         # Cents on the wire, whole currency in the field.
         self.assertIn("Math.round(amount * 100)", self.call_text("/app.js"))
 
-    def test_the_driest_weighing_becomes_the_floor_without_being_asked_for(self) -> None:
-        """Thirsty is a decision about the plant; dry is what the scale said."""
+    def test_the_dry_floor_is_stated_or_read_off_the_weighings(self) -> None:
+        """Thirsty is a decision about the plant; dry is usually what the scale said."""
         plant_id = self.call("POST", "/api/plants", {"display_name": "Golden"})["plant_id"]
         path = f"/api/plants/{plant_id}/weight"
 
@@ -1301,11 +1307,12 @@ class PlantApiTests(unittest.TestCase):
         self.assertIsNone(plant["weight"]["dry"])
         self.assertIsNone(plant["weight"]["held_grams"])
 
-        # One weighing is the lightest there has been, so it is the floor,
-        # and a pot sitting on its own floor is as dry as it is known to get.
+        # One weighing is the lightest there has been, so it is the dry
+        # figure. The water scale does not stand on it: this pot has
+        # never been let near dry and its owner waters it at 1450 g,
+        # so at 1944 g it is holding half of what it can, not none.
         weight = self.call("POST", path, {"grams": 1944, "kind": "reading"})
         self.assertEqual(weight["dry"]["grams"], 1944)
-        self.assertEqual(weight["water_percent"], 0)
         self.assertEqual(weight["remaining_percent"], 50)
 
         # A lighter one takes the floor down with it; the pot is then known
@@ -1319,30 +1326,40 @@ class PlantApiTests(unittest.TestCase):
         # pot has been that light, and that does not stop being true.
         weight = self.call("POST", path, {"grams": 1944, "kind": "reading"})
         self.assertEqual(weight["dry"]["grams"], 1080)
-        # Half the watering interval is spent and the pot is still 64% wet,
-        # which is the number a person means by "how wet is it".
-        self.assertEqual(weight["water_percent"], 64)
-        self.assertEqual(weight["remaining_percent"], 50)
+        # The pot is 64% wet, which is the number a person means by "how
+        # wet is it". How much of the watering interval that leaves is a
+        # different question, answered in grams by capacity_grams.
+        self.assertEqual(weight["remaining_percent"], 64)
+        self.assertEqual(weight["thirsty_percent"], 27)
 
-        # At the thirsty weight the interval is spent and the pot is not.
+        # At the thirsty weight the interval is spent and the pot is not:
+        # it still holds 27% of what it can, which is the mark above.
         weight = self.call("POST", path, {"grams": 1450, "kind": "reading"})
-        self.assertEqual(weight["remaining_percent"], 0)
-        self.assertEqual(weight["water_percent"], 27)
+        self.assertEqual(weight["remaining_percent"], 27)
+        self.assertEqual(weight["thirsty_percent"], 27)
+
+        # Until somebody states one, the floor is read off the weighings.
+        self.assertFalse(self.call("GET", f"/api/plants/{plant_id}")["weight"]["dry_stated"])
 
         # Set deliberately, a dry weight outranks the lightest weighing:
         # somebody who has weighed the pot empty knows better than the log.
         weight = self.call("POST", path, {"grams": 1000, "kind": "dry", "observed": False})
         self.assertEqual(weight["dry"]["grams"], 1000)
         self.assertEqual(weight["held_grams"], 1438)
+        self.assertTrue(weight["dry_stated"])
+        # The lightest weighing is still reported beside it, so a pot that
+        # has been lighter than its stated dry weight can say so rather
+        # than have the claim quietly overruled.
+        self.assertEqual(weight["lightest"]["grams"], 1080)
 
         with self.assertRaises(HTTPError) as refused:
             self.call("POST", path, {"grams": 1000, "kind": "damp"})
         self.assertEqual(refused.exception.code, 400)
 
-        # Nothing to fill in: the floor is read off the weighings, and the
-        # chart paints full-to-dry with thirsty marked between them.
+        # It can be filled in, beside the other two and sharing their Set.
         page = self.call_text("/")
-        self.assertNotIn('id="plant-weight-dry"', page)
+        self.assertIn('id="plant-weight-dry"', page)
+        self.assertEqual(page.count('id="plant-weight-set-anchors"'), 1)
         script = self.call_text("/app.js")
         self.assertIn("trend-dry-label", script)
         self.assertIn("trend-reserve", script)
@@ -1446,15 +1463,67 @@ class PlantApiTests(unittest.TestCase):
 
         default = self.call("GET", path)
         self.assertEqual(default["plant_id"], plant["plant_id"])
-        self.assertFalse(default["schedule_saved"])
+        self.assertEqual(default["light_ids"], [])
 
-        saved = self.call("PUT", path, {
-            "light_ids": [],
-            "schedule": {"enabled": True, "on": "07:00", "off": "19:30"},
-        })
-        self.assertTrue(saved["schedule_saved"])
-        self.assertEqual(saved["schedule"]["off"], "19:30")
-        self.assertEqual(self.call("GET", path)["schedule"]["on"], "07:00")
+        saved = self.call("PUT", path, {"light_ids": [], "ppfd": {}})
+        self.assertEqual(saved["light_ids"], [])
+        # When a lamp is lit is the lamp's own business, not asked here.
+        self.assertNotIn("schedule", saved)
+        self.assertNotIn("schedule", self.call("GET", path))
+
+    def test_no_two_scripts_define_the_same_function(self) -> None:
+        """The three scripts share one global namespace.
+
+        They are plain <script> tags, so a function declared twice is the
+        later one silently replacing the earlier -- no error, nothing in
+        the console. It has happened twice: refreshRooms took over the one
+        that filled the room pickers, so every picker said "no rooms yet";
+        and a second describeAge turned "Measured 3 minutes ago" into
+        "Measured 1049 years old ago" by reading seconds as months.
+
+        Nothing in JavaScript catches this, so it is caught here.
+        """
+        static = Path(__file__).resolve().parents[1] / "src/open_plant_pulse_hub/static"
+        seen: dict = {}
+        clashes = []
+        for name in ("onboarding.js", "lights.js", "app.js"):
+            source = (static / name).read_text(encoding="utf-8")
+            for function in re.findall(r"^(?:async )?function ([A-Za-z0-9_$]+)",
+                                       source, re.M):
+                if function in seen:
+                    clashes.append(f"{function} in both {seen[function]} and {name}")
+                else:
+                    seen[function] = name
+        self.assertEqual(clashes, [], "a later definition silently wins: " + str(clashes))
+
+    def test_every_section_of_the_page_can_be_reordered(self) -> None:
+        """A section the hub has not heard of cannot be arranged at all.
+
+        The saved order is validated against PLANT_SECTIONS, so a section
+        added to the page and not to that tuple is refused -- and refused
+        for the whole arrangement, not just itself. It then reappears at
+        the bottom on every reload, which looks like the save failing
+        rather than like a name nobody registered.
+        """
+        from open_plant_pulse_hub.application.store import PLANT_SECTIONS
+
+        static = Path(__file__).resolve().parents[1] / "src/open_plant_pulse_hub/static"
+        page = (static / "index.html").read_text(encoding="utf-8")
+        on_page = re.findall(r'data-section="([a-z-]+)"', page)
+        self.assertEqual(
+            [name for name in on_page if name not in PLANT_SECTIONS], [],
+            "a section on the page is missing from PLANT_SECTIONS",
+        )
+        self.assertEqual(
+            [name for name in PLANT_SECTIONS if name not in on_page], [],
+            "PLANT_SECTIONS names a section the page does not build",
+        )
+        # And the whole arrangement survives a round trip.
+        self.assertEqual(
+            self.call("PUT", "/api/settings/sections",
+                      {"order": list(reversed(on_page))})["plant_section_order"],
+            list(reversed(on_page)),
+        )
 
     def test_the_configuration_page_asks_the_plant_its_own_questions(self) -> None:
         page = self.call_text("/")
@@ -1470,7 +1539,9 @@ class PlantApiTests(unittest.TestCase):
         plant_fields = (
             "plant-config-display-name", "plant-config-room", "plant-config-profile",
             "plant-config-variety", "plant-config-acquired", "plant-config-watering-days",
-            "lighting-enabled", "lighting-on", "lighting-off",
+            # Which lamps it stands under. When they are lit belongs to the
+            # lamp, and is asked on the light's own form in Settings.
+            "lighting-light-choices",
         )
         panel = page[page.index('id="plant-config-title"'):page.index('id="sensor-settings-panel"')]
         for field in plant_fields:
@@ -1987,20 +2058,42 @@ class ZigbeeWeightFilingTests(unittest.TestCase):
         self.assertIsNotNone(fresh)
         self.assertEqual(fresh["values"]["grams"], 15800)
 
-    def test_reports_are_kept_for_a_week_and_no_longer(self) -> None:
+    def test_reports_are_kept_for_ever_unless_a_window_is_chosen(self) -> None:
+        """The default keeps everything.
+
+        A week's window was deleting the history somebody then wanted to
+        chart, and no setting anywhere said it would.
+        """
         inside = (datetime.now(timezone.utc) - timedelta(days=6)).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
         outside = (datetime.now(timezone.utc) - timedelta(days=8)).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
         self.store.record_zigbee_report(self.eui, {"grams": 1}, at=inside)
         self.store.record_zigbee_report(self.eui, {"grams": 2}, at=outside)
+
+        self.assertEqual(self.store.prune_zigbee_reports(), 0)
         self.assertEqual(len(self.store.zigbee_reports(eui=self.eui)), 2)
 
-        dropped = self.store.prune_zigbee_reports()
+    def test_choosing_a_window_prunes_to_it_at_once(self) -> None:
+        """Asking for less history and still seeing it reads as a failure."""
+        inside = (datetime.now(timezone.utc) - timedelta(days=6)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        outside = (datetime.now(timezone.utc) - timedelta(days=8)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_zigbee_report(self.eui, {"grams": 1}, at=inside)
+        self.store.record_zigbee_report(self.eui, {"grams": 2}, at=outside)
 
-        self.assertEqual(dropped, 1)
+        settings = self.store.set_zigbee_report_keep_days(7)
+
+        self.assertEqual(settings["zigbee_report_keep_days"], 7)
         left = self.store.zigbee_reports(eui=self.eui)
         self.assertEqual([r["values"]["grams"] for r in left], [1])
+
+    def test_the_summary_says_how_much_is_being_kept(self) -> None:
+        self.store.record_zigbee_report(self.eui, {"grams": 1})
+        summary = self.store.zigbee_report_summary()
+        self.assertEqual(summary["reports"], 1)
+        self.assertIsNotNone(summary["oldest_at"])
 
 
 class ZigbeeLatenessTests(unittest.TestCase):
@@ -2039,8 +2132,8 @@ class ProbeOnlySectionTests(unittest.TestCase):
     def test_the_soil_sections_declare_the_sensor_they_need(self) -> None:
         """A plant that is weighed but not probed had four dead panels.
 
-        Soil moisture, the health conclusion drawn from it, the drainage
-        response and the chemistry all come from a probe. On the eight
+        Soil moisture, the assessment drawn from it -- the plant's verdict
+        and the pot's -- and the chemistry all come from a probe. On the eight
         plants here with no probe they each sat saying "waiting for a
         reading" about a reading that was never coming.
 
@@ -2049,10 +2142,17 @@ class ProbeOnlySectionTests(unittest.TestCase):
         """
         static = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
                   / "static" / "index.html").read_text()
-        for section in ("readings", "assessment", "drainage", "chemistry"):
-            marker = f'data-section="{section}" data-sensor-kind="bthome"'
+        # The drainage verdict is part of the assessment section now: both
+        # are conclusions from the same probe, so they stand or fall together.
+        needs = {
+            "readings": "bthome soil",
+            "assessment": "bthome soil",
+            "chemistry": "bthome",
+        }
+        for section, kinds in needs.items():
+            marker = f'data-section="{section}" data-sensor-kind="{kinds}"'
             self.assertIn(marker, static,
-                          f"{section} should need a probe to be shown")
+                          f"{section} should say which probes can fill it")
 
     def test_what_stands_without_a_probe_is_left_alone(self) -> None:
         """Weight, care, photos and the room's air need no probe.
@@ -2064,9 +2164,296 @@ class ProbeOnlySectionTests(unittest.TestCase):
         static = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
                   / "static" / "index.html").read_text()
         import re
+        # Lighting is no longer a section of this page: a lamp on a
+        # schedule needs no switch where the plant is read, so the live
+        # block and its controls sit on the configuration page, and the
+        # plant page keeps one line saying which lamps are over it.
         for section in ("weight", "calendar", "photos", "care-log", "air",
-                        "journey", "lighting"):
+                        "journey"):
             match = re.search(rf'data-section="{section}"[^>]*>', static)
             self.assertIsNotNone(match, f"{section} is missing")
             self.assertNotIn("data-sensor-kind", match.group(0),
                              f"{section} should not need a sensor")
+
+
+class RoomAirSourceTests(unittest.TestCase):
+    """Which devices get to say what the air in a room is doing."""
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.room = self.store.create_room("living")["room_id"]
+
+    def _sensor(self, eui: str, kind: str, name: str) -> str:
+        sensor = self.store.seen_zigbee_device(eui, kind)
+        self.store.enroll_zigbee_device(eui, name)
+        self.store.set_sensor_room(sensor["sensor_id"], self.room)
+        return sensor["sensor_id"]
+
+    def test_a_thermometer_answers_for_the_room(self) -> None:
+        sensor_id = self._sensor("aaaa000000000001", "thermometer", "Air")
+        self.store.record_air_reading(sensor_id, 21.0, 50.0)
+        names = [s["sensor_name"] for s in self.store.room_air_sources(self.room)]
+        self.assertEqual(names, ["Air"])
+
+    def test_a_soil_probe_does_not(self) -> None:
+        """Even when old rows say it once measured the air.
+
+        A probe misfiled as a thermometer for an hour wrote readings
+        shaped like air. The rows outlive the mistake, so the rule has
+        to be about what the device is, not what it once filed.
+        """
+        sensor_id = self._sensor("aaaa000000000002", "soil", "Pot probe")
+        self.store.record_air_reading(sensor_id, 24.0, 60.0)
+        self.assertEqual(self.store.room_air_sources(self.room), [])
+        self.assertIsNone(self.store.room_air(self.room))
+
+
+class SoilReadingsAreFiledWholeTests(unittest.TestCase):
+    """A reading describes the soil, not one frame of it.
+
+    A Zigbee probe sends temperature and moisture minutes apart. Filed
+    as they arrive, every row held half a reading -- and the plant page
+    read a row as the current state of the pot, showing no moisture and
+    a verdict computed from its absence.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        sensor = self.store.seen_zigbee_device("aaaa000000000009", "soil")
+        self.sensor_id = sensor["sensor_id"]
+        self.store.enroll_zigbee_device("aaaa000000000009", "Pot probe")
+
+    def test_the_other_measurement_is_carried_forward(self) -> None:
+        self.store.record_soil_reading(self.sensor_id, 22.3, None)
+        self.store.record_soil_reading(self.sensor_id, None, 62.0)
+        reading = self.store.latest(self.sensor_id)["reading"]
+        self.assertEqual(reading["moisture_percent"], 62.0)
+        self.assertEqual(reading["soil_temperature_c"], 22.3)
+
+    def test_a_measurement_from_the_last_report_is_still_carried(self) -> None:
+        """These probes report each measurement about every half hour.
+
+        The window was exactly thirty minutes, so a temperature frame
+        arriving eight seconds late lost the moisture that came with
+        the previous one, and the plant page said "Waiting for a
+        reading" while the device's own page showed both.
+        """
+        earlier = (datetime.now(timezone.utc) - timedelta(minutes=35)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_soil_reading(self.sensor_id, None, 62.0, observed_at=earlier)
+        self.store.record_soil_reading(self.sensor_id, 22.3, None)
+        reading = self.store.latest(self.sensor_id)["reading"]
+        self.assertEqual(reading["moisture_percent"], 62.0)
+
+    def test_a_stale_measurement_is_not_carried(self) -> None:
+        """A day on, the other half is no longer a reading of now."""
+        old = (datetime.now(timezone.utc) - timedelta(hours=9)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_soil_reading(self.sensor_id, 22.3, None, observed_at=old)
+        self.store.record_soil_reading(self.sensor_id, None, 62.0)
+        reading = self.store.latest(self.sensor_id)["reading"]
+        self.assertEqual(reading["moisture_percent"], 62.0)
+        self.assertIsNone(reading["soil_temperature_c"])
+
+    def test_a_complete_reading_is_left_alone(self) -> None:
+        self.store.record_soil_reading(self.sensor_id, 19.0, 40.0)
+        reading = self.store.latest(self.sensor_id)["reading"]
+        self.assertEqual((reading["soil_temperature_c"], reading["moisture_percent"]),
+                         (19.0, 40.0))
+
+
+class DailyLightIsPpfdTimesHoursTests(unittest.TestCase):
+    """DLI is the plant's PPFD over the hours it is lit. Nothing else.
+
+    This was once replayed from every switching event the hub had
+    recorded, with unconfirmed commands counted as "unsure" hours. A
+    plant under a lamp that had been lit all day then reported 0.3
+    mol/m2/day because the lamp's Wi-Fi dropped a few times: a figure
+    about the network rather than about the plant.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Begonia")["plant_id"]
+
+    def _light(self, light_id: str, on: str, off: str) -> None:
+        self.store.create_light(light_id, light_id, "timer", {})
+        self.store.set_light_schedule(light_id, {"enabled": True, "on": on, "off": off})
+
+    def _ppfd(self, ppfd=None, hours=None) -> None:
+        plant = self.store.plant(self.plant)
+        self.store.update_plant(
+            self.plant, plant["display_name"], plant["room_id"],
+            plant["expected_watering_days"], plant["profile_id"], plant["variety"],
+            plant["acquired_at"], plant["purchase_price_cents"], plant["purchase_place"],
+            ppfd, hours, plant["started_at"])
+
+    def test_the_hours_come_from_the_lamps_schedule(self) -> None:
+        self._light("bar", "08:00", "20:00")
+        self.store.set_plant_lighting_of(self.plant, ["bar"])
+        self._ppfd(ppfd=200.0)
+        day = self.store.plant_light_days(self.plant)[0]
+        self.assertEqual(day["lit_hours"], 12.0)
+        self.assertEqual(day["dli"], round(200 * 12 * 3600 / 1e6, 2))
+
+    def test_two_lamps_on_one_window_are_not_counted_twice(self) -> None:
+        """The PPFD at the leaves already has both lamps in it."""
+        self._light("one", "08:00", "20:00")
+        self._light("two", "08:00", "20:00")
+        self.store.set_plant_lighting_of(self.plant, ["one", "two"])
+        self._ppfd(ppfd=200.0)
+        self.assertEqual(self.store.plant_light_days(self.plant)[0]["lit_hours"], 12.0)
+
+    def test_a_plant_with_no_lamp_uses_the_hours_it_was_given(self) -> None:
+        self._ppfd(ppfd=150.0, hours=10.0)
+        day = self.store.plant_light_days(self.plant)[0]
+        self.assertEqual(day["lit_hours"], 10.0)
+        self.assertEqual(day["dli"], round(150 * 10 * 3600 / 1e6, 2))
+
+    def test_no_ppfd_means_no_figure_rather_than_a_zero(self) -> None:
+        self._ppfd(hours=10.0)
+        self.assertEqual(self.store.plant_light_days(self.plant), [])
+
+
+class DryingRateSkipsRefillsTests(unittest.TestCase):
+    """One drying rate, and it is not cancelled by a watering.
+
+    The headline took the oldest weighing against the newest, which is
+    a drying rate only if nobody watered in between. Four waterings
+    recorded as plain weighings cancelled eleven days of drying down to
+    sixteen grams, and the page offered "about 124.8 days of water
+    left" beside a forecast of five.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Monstera")["plant_id"]
+
+    def _weigh(self, grams: int, days_ago: float, kind: str = "reading") -> None:
+        at = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_plant_weight(self.plant, grams, kind=kind, at=at)
+
+    def test_an_untagged_watering_does_not_flatten_the_rate(self) -> None:
+        self._weigh(434, 10, kind="dry")
+        self._weigh(530, 9, kind="thirsty")
+        self._weigh(760, 8)        # watered, but recorded as a plain weighing
+        self._weigh(700, 6)
+        self._weigh(640, 4)
+        self._weigh(760, 3)        # watered again, again untagged
+        self._weigh(700, 1)
+        status = self.store.plant_weight_status(self.plant)
+        # Each drying gap is about 30 g a day; end to end it would be nil.
+        self.assertGreater(status["daily_grams"], 20)
+        self.assertLess(status["days_left"], 20)
+
+    def test_a_pot_that_only_gains_has_no_rate(self) -> None:
+        """Nothing to average is no answer, not a zero."""
+        self._weigh(500, 4)
+        self._weigh(600, 2)
+        status = self.store.plant_weight_status(self.plant)
+        self.assertIsNone(status["daily_grams"])
+        self.assertIsNone(status["days_left"])
+
+
+class ASuddenGainIsAWateringTests(unittest.TestCase):
+    """A pot does not gain a quarter of a litre on its own.
+
+    The tick said so, and four waterings out of five went in without
+    it, which left the hub measuring an eleven day drying cycle through
+    three refills.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Monstera")["plant_id"]
+
+    def _weigh(self, grams: int, minutes_ago: int, source: str = "manual") -> None:
+        at = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_plant_weight(self.plant, grams, at=at, source=source)
+
+    def _kinds(self):
+        return [row["kind"] for row in self.store.plant_weights(self.plant)]
+
+    def test_a_big_gain_is_recorded_as_a_watering(self) -> None:
+        self._weigh(700, 300)
+        self._weigh(540, 200)
+        self._weigh(760, 100)
+        self.assertEqual(self._kinds()[0], "watered")
+
+    def test_the_watering_reaches_the_care_log(self) -> None:
+        self._weigh(700, 300)
+        self._weigh(540, 200)
+        self._weigh(760, 100)
+        kinds = [event["kind"] for event in self.store.care_log(20, plant_id=self.plant)]
+        self.assertIn("watering", kinds)
+
+    def test_ordinary_drift_is_left_alone(self) -> None:
+        """Scales wander. A few grams is not a watering can."""
+        self._weigh(700, 300)
+        self._weigh(712, 200)
+        self.assertEqual(self._kinds()[0], "reading")
+
+    def test_a_scales_own_reading_is_never_promoted(self) -> None:
+        """A pot put back on the scale gains its whole weight at once.
+
+        That is the biggest jump of all and not a drop of water, which
+        is why only a weighing somebody took can be promoted.
+        """
+        self._weigh(700, 300, source="scale")
+        self._weigh(100, 200, source="scale")
+        self._weigh(700, 100, source="scale")
+        self.assertEqual(self._kinds()[0], "reading")
+
+
+class WaterLeftIsMeasuredFromDryTests(unittest.TestCase):
+    """One percentage, on the same scale as the millilitres beside it.
+
+    "Water left" was measured from the thirsty weight, so a pot still
+    holding 16 g of water read 0% -- the thirsty mark is where somebody
+    decided to water, not where the water runs out. It sat beside
+    "Water used 97 ml", counted from full, and the two did not add up.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Begonia")["plant_id"]
+
+    def _anchors(self, full: int, thirsty: int, dry: int) -> None:
+        self.store.record_plant_weight(self.plant, full, "watered", observed=False)
+        self.store.record_plant_weight(self.plant, thirsty, "thirsty", observed=False)
+        self.store.record_plant_weight(self.plant, dry, "dry", observed=False)
+
+    def test_a_pot_at_its_thirsty_mark_is_not_empty(self) -> None:
+        self._anchors(464, 370, 351)
+        self.store.record_plant_weight(self.plant, 367)
+        weight = self.store.plant_weight_status(self.plant)
+        # 16 g of water above dry, of the 113 g the pot holds.
+        self.assertEqual(weight["remaining_percent"], 14)
+        self.assertEqual(weight["thirsty_percent"], 17)
+
+    def test_used_and_left_are_on_the_same_scale(self) -> None:
+        """97 used of 113 held should leave 14%, not 0%."""
+        self._anchors(464, 370, 351)
+        self.store.record_plant_weight(self.plant, 367)
+        weight = self.store.plant_weight_status(self.plant)
+        used, held = weight["used_grams"], weight["held_grams"]
+        self.assertEqual(round((held - used) / held * 100), weight["remaining_percent"])
+
+    def test_empty_means_dry(self) -> None:
+        self._anchors(464, 370, 351)
+        self.store.record_plant_weight(self.plant, 351)
+        self.assertEqual(
+            self.store.plant_weight_status(self.plant)["remaining_percent"], 0)
+
+    def test_a_pot_never_let_near_dry_stands_on_its_thirsty_mark(self) -> None:
+        """Dry is inferred from the lightest weighing when nobody states
+        one. A pot whose owner waters it well above anything it has ever
+        weighed would otherwise read empty at its own lightest."""
+        self.store.record_plant_weight(self.plant, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant, 2_000, "thirsty", observed=False)
+        self.store.record_plant_weight(self.plant, 2_585)
+        weight = self.store.plant_weight_status(self.plant)
+        self.assertEqual(weight["dry"]["grams"], 2_585)
+        self.assertGreater(weight["remaining_percent"], 50)

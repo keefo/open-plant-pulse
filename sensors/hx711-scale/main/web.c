@@ -521,10 +521,19 @@ bool remote_wifi_enabled(void)
     return s_wifi_on;
 }
 
+const char *remote_sta_ip(void)
+{
+    return s_sta_ip;
+}
+
 const char *remote_hostname(void)
 {
     return s_host;
 }
+
+#if CONFIG_SCALE_ZIGBEE
+void zigbee_share_radio_with_wifi(bool wifi_on);
+#endif
 
 void remote_set_wifi(bool on)
 {
@@ -534,6 +543,9 @@ void remote_set_wifi(bool on)
     }
     s_wifi_on = on;
     wifi_pref_save(on);
+#if CONFIG_SCALE_ZIGBEE
+    zigbee_share_radio_with_wifi(on);
+#endif
     if (on) {
         if (!s_wifi_inited) {
             wifi_start();

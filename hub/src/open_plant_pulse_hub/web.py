@@ -122,7 +122,8 @@ def create_server(
             elif path == "/api/plant-profiles":
                 self._send_json(public_plant_profiles())
             elif path == "/api/settings":
-                self._send_json(store.hub_settings())
+                self._send_json({**store.hub_settings(),
+                                 "zigbee_reports": store.zigbee_report_summary()})
             elif path == "/api/settings/timezones":
                 # The menu's contents, from the tzdata this machine has
                 # rather than a list baked into the page that goes stale.
@@ -138,6 +139,18 @@ def create_server(
                 self._send_json({"items": store.rooms()})
             elif path == "/api/rooms/overview":
                 self._send_json({"items": store.rooms_overview()})
+            elif path.startswith("/api/rooms/"):
+                # One room, with what is in it: the room's own page.
+                try:
+                    room_id = int(path[len("/api/rooms/") :])
+                except ValueError:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                room = store.room_detail(room_id)
+                if room is None:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                self._send_json(room)
             elif path == "/api/plants":
                 self._send_json({"items": store.plants()})
             elif path.startswith("/api/zigbee/") and path.endswith("/update"):
@@ -179,7 +192,7 @@ def create_server(
                 row = next((s for s in store.zigbee_sensors()
                             if str(s.get("identity_value", "")) == eui), None)
                 if row is None:
-                    self.send_error(HTTPStatus.NOT_FOUND, "No such Zigbee device")
+                    self._send_json({"eui": eui, "days": span, "points": []})
                     return
                 since = datetime.now(timezone.utc) - timedelta(days=span)
                 self._send_json({
@@ -268,7 +281,7 @@ def create_server(
                 path
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
                         "/api/settings/sections", "/api/settings/care-log",
-                        "/api/settings/timezone")
+                        "/api/settings/timezone", "/api/settings/zigbee-reports")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
@@ -280,7 +293,14 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path == "/api/settings/care-log":
+                if path == "/api/settings/zigbee-reports":
+                    # None keeps every report there has ever been, which
+                    # is the default and what most people want from a
+                    # record this small.
+                    days = payload.get("keep_days")
+                    result = store.set_zigbee_report_keep_days(
+                        None if days in (None, "", "forever") else int(days))
+                elif path == "/api/settings/care-log":
                     result = store.set_care_log_hidden_kinds(payload.get("hidden", []))
                 elif path == "/api/settings/sections":
                     result = store.set_plant_section_order(payload.get("order", []))
@@ -302,11 +322,7 @@ def create_server(
                         )
                 elif path.startswith("/api/plants/") and path.endswith("/lighting"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/lighting")])
-                    store.set_plant_lighting_of(
-                        plant_id,
-                        payload.get("light_ids", []),
-                        payload.get("schedule", {}),
-                    )
+                    store.set_plant_lighting_of(plant_id, payload.get("light_ids", []))
                     if lights is not None:
                         lights.lighting_changed()
                     result = self._plant_lighting_of(plant_id)
@@ -321,12 +337,20 @@ def create_server(
                         self._optional_str(payload.get("acquired_at")),
                         self._optional_int(payload.get("purchase_price_cents")),
                         self._optional_str(payload.get("purchase_place")),
+                        # How much light reaches it where it stands, which
+                        # is a fact about the spot rather than about a lamp.
+                        self._optional_float(payload.get("ppfd_umol_m2s")),
+                        self._optional_float(payload.get("light_hours_per_day")),
+                        self._optional_str(payload.get("started_at")),
                     )
                 elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(
                         unquote(path[len("/api/lights/") :]),
                         str(payload.get("display_name", "")),
                         payload.get("config", {}),
+                        # When this lamp is lit, which belongs to the lamp
+                        # rather than to any one plant beneath it.
+                        payload.get("schedule"),
                     )
                 elif path.startswith("/api/sensors/") and path.endswith("/scale/interval"):
                     sensor_id = unquote(
@@ -372,9 +396,7 @@ def create_server(
                     )
                 elif path.startswith("/api/sensors/") and path.endswith("/lighting"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/lighting")])
-                    store.set_plant_lighting(
-                        sensor_id, payload.get("light_ids", []), payload.get("schedule")
-                    )
+                    store.set_plant_lighting(sensor_id, payload.get("light_ids", []))
                     if lights is not None:
                         lights.lighting_changed()
                     result = self._plant_lighting(sensor_id)
@@ -644,8 +666,7 @@ def create_server(
                         return
                     zigbee.rename(eui, name)
                     result = {"eui": eui, "name": name}
-                elif path in ("/api/zigbee/remove", "/api/zigbee/accept",
-                              "/api/zigbee/ignore"):
+                elif path in ("/api/zigbee/remove", "/api/zigbee/accept"):
                     if not zigbee:
                         self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
                         return
@@ -654,13 +675,31 @@ def create_server(
                         self.send_error(HTTPStatus.BAD_REQUEST, "eui is required")
                         return
                     action = path.rsplit("/", 1)[-1]
-                    # Accept and ignore decide whether a device that joined
-                    # the radio becomes a sensor here. Remove gets rid of one
-                    # either way: it asks the device to leave so a powered one
-                    # does not rejoin, and drops it locally regardless, since
-                    # the user should not have to know whether it can hear.
+                    # Accept lets a device that joined the radio become a
+                    # sensor here. Remove is the only way out: it asks the
+                    # device to leave so a powered one does not rejoin, and
+                    # drops it locally regardless, since the user should not
+                    # have to know whether it can hear. There was once a
+                    # third, "ignore", which archived the row to stop asking
+                    # -- two verbs for one situation, and the archived state
+                    # could not then be told from a removal.
                     getattr(zigbee, action)(eui)
                     result = {"eui": eui, "action": action}
+                elif path == "/api/zigbee/reporting":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    if not eui:
+                        self.send_error(HTTPStatus.BAD_REQUEST, "eui is required")
+                        return
+                    # Null for either means "the hub's default", which is
+                    # a real answer and not a missing one.
+                    seconds = payload.get("max_seconds")
+                    result = zigbee.set_reporting(
+                        eui,
+                        None if seconds in (None, "", "default") else int(seconds),
+                        payload.get("sensitivity") or None)
                 elif path == "/api/zigbee/command":
                     if not zigbee:
                         self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
@@ -673,7 +712,7 @@ def create_server(
                     # Addressed by EUI-64 and nothing else. There is no
                     # "current device" to fall back on, by design.
                     result = {
-                        "id": zigbee.command(eui, command.encode()),
+                        "id": zigbee.command(eui, command),
                         "eui": eui,
                         "command": command,
                     }
@@ -1027,8 +1066,12 @@ def create_server(
             )
             plant["weight"] = store.plant_weight_status(plant_id)
             plant["scale"] = store.plant_scale(plant_id)
+            # A day at a time, worked out from when its lamps were lit.
+            plant["light_days"] = store.plant_light_days(plant_id)
             # The air of the room it is in, whoever is measuring it.
             plant["room_air"] = store.room_air(plant["room_id"])
+            plant["air_sources"] = store.room_air_sources(plant["room_id"])
+            plant["soil_sources"] = store.plant_soil_sources(plant["plant_id"])
             plant["forecast"] = store.watering_forecast(plant_id)
             plant["water_use"] = {
                 **store.water_use(plant_id),

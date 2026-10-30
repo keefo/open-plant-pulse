@@ -424,7 +424,8 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertNotIn(b"Global reporting interval", detail_page)
         self.assertNotIn(b"Moisture alert below", detail_page)
         self.assertNotIn(b"Conductivity alert above", detail_page)
-        self.assertIn(b"SHT45 \xc2\xb7 LIVE HISTORY", detail_page)
+        self.assertIn(b'id="climate-history-eyebrow"', detail_page)
+        self.assertIn(b"Air conditions", detail_page)
         self.assertIn(b'data-history-range="live" aria-pressed="true">Live', detail_page)
         self.assertIn(b'data-history-range="30d"', detail_page)
         self.assertIn(b"Relative humidity", detail_page)
@@ -585,12 +586,11 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("function renderRawReports(items)", app)
         self.assertIn('if (wateringCalendarRequestKey === requestKey) return;', app)
         self.assertIn('wateringCalendarRequestKey = requestKey;', app)
-        self.assertIn('latestReadingAt,', app)
         self.assertIn('profileId', app)
         self.assertIn('if (historyRequestKey === requestKey) return;', app)
         self.assertIn('refreshClimateHistory()', app)
         self.assertIn('svgElement("polyline", {', app)
-        self.assertIn('class: "history-line",', app)
+        self.assertIn('class: `history-line series-${entry.colour}`,', app)
         self.assertIn('"history-point latest-point"', app)
         self.assertIn('"live": { label: "Live (up to 24 hours)", milliseconds: 24 * 60 * 60 * 1000, fitSamples: true }', app)
         self.assertIn('let selectedHistoryRange = "live";', app)
@@ -628,7 +628,7 @@ class SensorManagementWebTests(unittest.TestCase):
         for renderer, guard in [
             ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
             ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
-            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;"),
+            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [shown.map("),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
         ]:
             body = app[app.index(renderer):]

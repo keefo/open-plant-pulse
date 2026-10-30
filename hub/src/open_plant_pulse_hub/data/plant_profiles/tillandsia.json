@@ -5,39 +5,181 @@
   "name": "Air plant",
   "scientific_name": "Tillandsia spp.",
   "varieties": [
-    {"id": "ionantha", "name": "Tillandsia ionantha", "note": "The common small one: a dense spiky rosette a few centimetres across. Blushes red at the centre before flowering. Tolerant, and the easiest to start with."},
-    {"id": "caput_medusae", "name": "Tillandsia caput-medusae", "note": "Swollen hollow base with thick snaking leaves. The bulb traps water, so shake it out and dry it upside down or it rots from the inside."},
-    {"id": "bulbosa", "name": "Tillandsia bulbosa", "note": "Bulbous base, narrow twisting leaves. Wants more humidity than most, and has the same trapped-water risk as caput-medusae."},
-    {"id": "xerographica", "name": "Tillandsia xerographica", "note": "Large silver rosette with broad curling leaves. Heavily trichomed, so it is the most drought-tolerant and the easiest to overwater."},
-    {"id": "juncea", "name": "Tillandsia juncea", "note": "Upright grassy tuft. Open form, dries quickly, forgiving about soaking time."},
-    {"id": "stricta", "name": "Tillandsia stricta", "note": "Soft dense rosette, free-flowering with a pink bract. Thinner trichomes mean it dries out faster and wants watering more often."},
-    {"id": "butzii", "name": "Tillandsia butzii", "note": "Mottled purple-green bulb with wiry leaves. Prefers higher humidity and shade."},
-    {"id": "unknown", "name": "Unidentified", "note": "Sold unlabelled, as most air plants are. Treat as ionantha until it flowers, which is usually what identifies it."}
+    {
+      "id": "ionantha",
+      "name": "Tillandsia ionantha",
+      "note": "The common small one: a dense spiky rosette a few centimetres across. Blushes red at the centre before flowering. Tolerant, and the easiest to start with."
+    },
+    {
+      "id": "caput_medusae",
+      "name": "Tillandsia caput-medusae",
+      "note": "Swollen hollow base with thick snaking leaves. The bulb traps water, so shake it out and dry it upside down or it rots from the inside."
+    },
+    {
+      "id": "bulbosa",
+      "name": "Tillandsia bulbosa",
+      "note": "Bulbous base, narrow twisting leaves. Wants more humidity than most, and has the same trapped-water risk as caput-medusae."
+    },
+    {
+      "id": "xerographica",
+      "name": "Tillandsia xerographica",
+      "note": "Large silver rosette with broad curling leaves. Heavily trichomed, so it is the most drought-tolerant and the easiest to overwater."
+    },
+    {
+      "id": "juncea",
+      "name": "Tillandsia juncea",
+      "note": "Upright grassy tuft. Open form, dries quickly, forgiving about soaking time."
+    },
+    {
+      "id": "stricta",
+      "name": "Tillandsia stricta",
+      "note": "Soft dense rosette, free-flowering with a pink bract. Thinner trichomes mean it dries out faster and wants watering more often."
+    },
+    {
+      "id": "butzii",
+      "name": "Tillandsia butzii",
+      "note": "Mottled purple-green bulb with wiry leaves. Prefers higher humidity and shade."
+    },
+    {
+      "id": "unknown",
+      "name": "Unidentified",
+      "note": "Sold unlabelled, as most air plants are. Treat as ionantha until it flowers, which is usually what identifies it."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Tissue hydration (no root zone — a soil probe does not apply)", "unit": "%", "scale": [0, 100]}
+    "moisture_percent": {
+      "label": "Tissue hydration (no root zone \u2014 a soil probe does not apply)",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    }
   },
   "watering": {
     "strategy": "soak_and_dry",
-    "label": "Soak 20–30 min, then shake out and dry upside down in moving air within 4 h",
+    "label": "Soak 20\u201330 min, then shake out and dry upside down in moving air within 4 h",
     "refill_below": 45,
-    "post_water_target": [85, 98],
-    "comfortable_cycle": [45, 98],
+    "post_water_target": [
+      85,
+      98
+    ],
+    "comfortable_cycle": [
+      45,
+      98
+    ],
     "concern_below": 20,
     "concern_above": 100
   },
   "drainage": {
     "label": "No substrate. Water must leave the crown and any bulb cavity fast; standing water there is the usual cause of death",
     "preferred_response": "fast",
-    "acceptable_responses": ["fast"],
+    "acceptable_responses": [
+      "fast"
+    ],
     "maximum_settle_minutes": 240
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [15, 29], "scale": [0, 40]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [50, 70], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        15,
+        29
+      ],
+      "scale": [
+        0,
+        40
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        50,
+        70
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        8,
+        15
+      ],
+      "scale": [
+        0,
+        28
+      ],
+      "bands": [
+        {
+          "upto": 4,
+          "name": "too little",
+          "effects": {
+            "established": [
+              "Too dark. It stretches, loses its blush, and will not flower.",
+              "Dim. Colour stays flat green and growth almost stops.",
+              "A little short. It holds, but slowly and without colouring up."
+            ]
+          }
+        },
+        {
+          "upto": 8,
+          "name": "getting by"
+        },
+        {
+          "upto": 15,
+          "name": "healthy"
+        },
+        {
+          "upto": 22,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "established": [
+              "Burning. Leaves bleach to straw-white and dry from the tips.",
+              "Too much. With no roots to buffer it, damage shows quickly.",
+              "Far too much. The plant dries out faster than misting can answer."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 24
+    }
   },
   "chemistry": {
-    "water_ph": {"label": "Soak water pH", "unit": "", "ideal": [5.5, 7.0], "scale": [4.0, 9.0]},
-    "water_conductivity_us_cm": {"label": "Soak water EC", "unit": "µS/cm", "ideal": [50, 400], "scale": [0, 1200]}
+    "water_ph": {
+      "label": "Soak water pH",
+      "unit": "",
+      "ideal": [
+        5.5,
+        7.0
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "water_conductivity_us_cm": {
+      "label": "Soak water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        50,
+        400
+      ],
+      "scale": [
+        0,
+        1200
+      ]
+    }
   }
 }
