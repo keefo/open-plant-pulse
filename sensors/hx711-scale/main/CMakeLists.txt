@@ -7,6 +7,11 @@ elseif(CONFIG_SCALE_LINK_USB)
 else()
     list(APPEND srcs "web.c")
     list(APPEND embed "index.html")
+    # Zigbee runs alongside Wi-Fi, not instead of it: the scale stays reachable
+    # for over-the-air updates while the Zigbee side is being proven.
+    if(CONFIG_SCALE_ZIGBEE)
+        list(APPEND srcs "zigbee.c")
+    endif()
 endif()
 
 # Requirements are resolved before the config is read, so they cover both links.

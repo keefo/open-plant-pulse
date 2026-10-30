@@ -12,6 +12,10 @@ license = { text = "MIT" }
 authors = [{ name = "Open Plant Pulse contributors" }]
 dependencies = [
     "bleak>=0.22,<3",
+    # The Zigbee stack. It used to run on an ESP32-C6 that did the work on
+    # the board; the hub now drives a radio directly, so the stack is here.
+    "zigpy>=0.60,<3",
+    "bellows>=0.38,<2",
 ]
 
 [project.scripts]

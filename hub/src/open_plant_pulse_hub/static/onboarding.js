@@ -15,7 +15,12 @@ const ONBOARDING_STEPS = ["find", "pair", "details", "done"];
 
 function renderSettingsTab() {
   const tab = settingsTabFromLocation();
-  ["sensors", "rooms", "lights", "wifi", "firmware"].forEach((name) => {
+  // Remembered as it is shown, so arriving at a bare /settings next
+  // time lands back where the work was left. Written here rather than
+  // on the click, so a tab reached by typing its address or following
+  // a link is remembered too.
+  rememberSettingsTab(tab);
+  SETTINGS_TABS.forEach((name) => {
     setHidden(document.getElementById("settings-" + name + "-panel"), tab !== name);
     setClass(document.getElementById("settings-tab-" + name), "active", tab === name);
   });
@@ -54,6 +59,11 @@ async function refreshRooms() {
   renderPlantChoices();
 }
 
+function tally(howMany, thing) {
+  const count = howMany || 0;
+  return `${count} ${thing}${count === 1 ? "" : "s"}`;
+}
+
 function renderRooms() {
   const list = document.getElementById("room-list");
   if (list === null) return;
@@ -77,8 +87,8 @@ function renderRooms() {
     const name = document.createElement("strong");
     setText(name, room.name);
     const count = document.createElement("small");
-    setText(count,
-      room.sensor_count === 1 ? "1 sensor" : room.sensor_count + " sensors");
+    setText(count, [tally(room.sensor_count, "sensor"),
+                    tally(room.plant_count, "plant")].join(" \u00b7 "));
     heading.append(name, count);
 
     const detail = document.createElement("code");
@@ -93,20 +103,24 @@ function renderRooms() {
 
     const actions = document.createElement("div");
     actions.className = "inline-control";
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "edit-room";
-    setData(edit, "roomId", room.room_id);
+    const edit = document.createElement("a");
+    edit.className = "open-room";
+    edit.href = `/rooms/${room.room_id}`;
     setText(edit, "Edit");
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "danger delete-room";
     setData(remove, "roomId", room.room_id);
     setText(remove, "Delete");
-    // A room still holding sensors cannot be deleted, and saying so before the
-    // click is kinder than refusing after it.
-    setDisabled(remove, room.sensor_count > 0);
-    remove.title = room.sensor_count > 0 ? "Move its sensors out first" : "";
+    // Plants as well as sensors: both hold a room in place, and saying
+    // so before the click is kinder than refusing after it.
+    const holding = [room.plant_count ? tally(room.plant_count, "plant") : null,
+                     room.sensor_count ? tally(room.sensor_count, "sensor") : null]
+      .filter(Boolean);
+    setDisabled(remove, holding.length > 0);
+    remove.title = holding.length
+      ? `Move its ${holding.join(" and ")} out first`
+      : "";
     actions.append(edit, remove);
     card.append(actions);
     list.append(card);
@@ -192,62 +206,19 @@ function renderRoomChoices() {
 }
 
 
-function startRoomEdit(roomId) {
-  const room = rooms.find((candidate) => candidate.room_id === roomId);
-  if (!room) return;
-  document.getElementById("room-id").value = room.room_id;
-  document.getElementById("room-name").value = room.name;
-  document.getElementById("room-aspect").value = room.aspect;
-  document.getElementById("room-light").value = room.light;
-  document.getElementById("room-notes").value = room.notes || "";
-  setText(document.getElementById("room-form-title"), "Edit " + room.name);
-  setText(document.getElementById("save-room"), "Save room");
-  setHidden(document.getElementById("cancel-room-edit"), false);
-  setText(document.getElementById("room-message"), "");
-}
-
-function clearRoomForm() {
-  document.getElementById("room-id").value = "";
-  document.getElementById("room-name").value = "";
-  document.getElementById("room-aspect").value = "unknown";
-  document.getElementById("room-light").value = "unknown";
-  document.getElementById("room-notes").value = "";
-  setText(document.getElementById("room-form-title"), "Add a room");
-  setText(document.getElementById("save-room"), "Add room");
-  setHidden(document.getElementById("cancel-room-edit"), true);
-}
-
-async function saveRoom(event) {
-  event.preventDefault();
+async function deleteRoom(roomId) {
   const message = document.getElementById("room-message");
-  const roomId = document.getElementById("room-id").value;
-  const body = JSON.stringify({
-    name: document.getElementById("room-name").value.trim(),
-    aspect: document.getElementById("room-aspect").value,
-    light: document.getElementById("room-light").value,
-    notes: document.getElementById("room-notes").value.trim(),
-  });
-  const response = await fetch(roomId ? "/api/rooms/" + roomId : "/api/rooms", {
-    method: roomId ? "PUT" : "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    setText(message, payload.error || "Could not save the room");
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch("/api/rooms/" + roomId, { method: "DELETE" });
+  } catch (_error) {
+    setText(message, "The hub could not be reached. The room was not deleted.");
     return;
   }
-  clearRoomForm();
-  setText(message, "Saved.");
-  await refreshRooms();
-}
-
-async function deleteRoom(roomId) {
-  const response = await fetch("/api/rooms/" + roomId, { method: "DELETE" });
   if (!response.ok) {
-    const payload = await response.json();
-    setText(document.getElementById("room-message"),
-      payload.error || "Could not delete the room");
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "Could not delete the room");
     return;
   }
   await refreshRooms();
@@ -276,7 +247,15 @@ function renderSettingsSensors() {
    * two sensors reporting every few seconds swapped places under the
    * pointer. This list is "the sensors you have", so it is alphabetical,
    * with the id to break ties so the order never depends on timing. */
-  const listed = [...fleetSensors].sort((a, b) =>
+  /* Zigbee devices are not listed here.
+   *
+   * They are sensor rows like any other -- that is what gives them names,
+   * plants and rooms -- but they are administered on the Zigbee page,
+   * because what you can do with one depends on the gateway being there.
+   * This list is for the devices this project builds and reaches directly. */
+  const listed = [...fleetSensors]
+    .filter((sensor) => !String(sensor.transport || "").startsWith("zigbee"))
+    .sort((a, b) =>
     (a.display_name || a.sensor_id).localeCompare(b.display_name || b.sensor_id)
     || a.sensor_id.localeCompare(b.sensor_id));
   const renderKey = JSON.stringify(
@@ -590,7 +569,7 @@ function renderOnboardingCandidates() {
     setText(identity, sensor.sensor_id);
     const signal = document.createElement("span");
     setText(signal,
-      describeSignal(sensor.latest_rssi) + " \u00b7 " + describeLastHeard(sensor.seen_age_seconds));
+      describeRssi(sensor.latest_rssi) + " \u00b7 " + describeLastHeard(sensor.seen_age_seconds));
     choice.append(name, identity, signal);
     container.append(choice);
   });
@@ -598,7 +577,7 @@ function renderOnboardingCandidates() {
 
 // Proximity is not proof of ownership, so the wording says what the signal
 // suggests rather than asserting whose sensor it is.
-function describeSignal(rssi) {
+function describeRssi(rssi) {
   if (rssi === null || rssi === undefined) return "signal unknown";
   if (rssi >= -60) return "close by";
   return "far away — possibly a neighbour's";

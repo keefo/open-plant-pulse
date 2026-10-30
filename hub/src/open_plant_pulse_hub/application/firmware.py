@@ -18,7 +18,12 @@ from typing import Any, Dict, List, Optional
 # Layout of an ESP-IDF application image: a 24-byte image header, an 8-byte
 # segment header, then esp_app_desc_t.
 IMAGE_MAGIC = 0xE9
+# The soil probe is a C3; the scale and the Zigbee gateway are C6. An
+# image names its chip, so the library can hold both and refuse to send
+# one to the wrong board rather than refusing to store it at all.
 ESP32C3_CHIP_ID = 5
+ESP32C6_CHIP_ID = 13
+CHIP_NAMES = {ESP32C3_CHIP_ID: "esp32c3", ESP32C6_CHIP_ID: "esp32c6"}
 APP_DESCRIPTOR_OFFSET = 0x20
 APP_DESCRIPTOR_MAGIC = 0xABCD5432
 VERSION_OFFSET = APP_DESCRIPTOR_OFFSET + 0x10
@@ -26,7 +31,12 @@ PROJECT_OFFSET = APP_DESCRIPTOR_OFFSET + 0x30
 TIME_OFFSET = APP_DESCRIPTOR_OFFSET + 0x50
 DATE_OFFSET = APP_DESCRIPTOR_OFFSET + 0x60
 IDF_VERSION_OFFSET = APP_DESCRIPTOR_OFFSET + 0x70
+# The projects this household builds. One name was enough while the soil
+# probe was the only board; the scale and the Zigbee gateway are their
+# own projects, and an image that says which it is can be kept for the
+# right device rather than refused at the door.
 PROJECT_NAME = "open_plant_pulse"
+KNOWN_PROJECTS = {PROJECT_NAME, "hx711_scale", "zigbee_gateway"}
 # Two OTA slots of 1600 KiB each. An image larger than a slot cannot be
 # installed, and finding that out on the sensor would waste the whole download.
 MAX_IMAGE_BYTES = 0x190000
@@ -38,6 +48,7 @@ class FirmwareImage:
     digest: str
     version: str
     project: str
+    chip: str
     idf_version: str
     size_bytes: int
     built_at: str
@@ -54,15 +65,19 @@ def parse_firmware_image(data: bytes) -> FirmwareImage:
     if data[0] != IMAGE_MAGIC:
         raise ValueError("file is not an ESP-IDF firmware image")
     chip_id = int.from_bytes(data[12:14], "little")
-    if chip_id != ESP32C3_CHIP_ID:
-        raise ValueError(f"firmware image was built for chip {chip_id}, not the ESP32-C3")
+    if chip_id not in CHIP_NAMES:
+        raise ValueError(
+            f"firmware image was built for chip {chip_id}, which is not one"
+            " of the boards this hub knows")
     if int.from_bytes(data[APP_DESCRIPTOR_OFFSET : APP_DESCRIPTOR_OFFSET + 4], "little") != (
         APP_DESCRIPTOR_MAGIC
     ):
         raise ValueError("firmware image carries no application descriptor")
     project = _descriptor_text(data, PROJECT_OFFSET, 32)
-    if project != PROJECT_NAME:
-        raise ValueError(f"firmware image belongs to project '{project}', not {PROJECT_NAME}")
+    if project not in KNOWN_PROJECTS:
+        raise ValueError(
+            f"firmware image belongs to project '{project}', which is not"
+            " one this hub builds")
     version = _descriptor_text(data, VERSION_OFFSET, 32)
     if not version:
         raise ValueError("firmware image carries no version")
@@ -78,6 +93,7 @@ def parse_firmware_image(data: bytes) -> FirmwareImage:
         digest=hashlib.sha256(data).hexdigest(),
         version=version,
         project=project,
+        chip=CHIP_NAMES[chip_id],
         idf_version=_descriptor_text(data, IDF_VERSION_OFFSET, 32),
         size_bytes=len(data),
         built_at=built_at,

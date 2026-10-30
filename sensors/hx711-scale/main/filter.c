@@ -51,7 +51,28 @@ float filter_add(filter_t *f, int32_t raw, float step_counts)
             lo = fminf(lo, f->recent[i]);
             hi = fmaxf(hi, f->recent[i]);
         }
-        f->stable = hi - lo < step_counts;
+        f->spread = hi - lo;
+        f->stable = f->spread < step_counts;
+    }
+
+    // One sample a second into the drift window, which therefore covers the
+    // last half minute.
+    if (++f->dn >= FILTER_STABLE_N) {
+        f->dn = 0;
+        f->drift[f->dnext] = f->value;
+        f->dnext = (f->dnext + 1) % FILTER_DRIFT_N;
+        if (f->dcount < FILTER_DRIFT_N) f->dcount++;
     }
     return f->value;
+}
+
+float filter_drift(const filter_t *f)
+{
+    if (f->dcount < 3) return 0;      // not enough yet to say
+    float lo = f->drift[0], hi = f->drift[0];
+    for (int i = 1; i < f->dcount; i++) {
+        lo = fminf(lo, f->drift[i]);
+        hi = fmaxf(hi, f->drift[i]);
+    }
+    return hi - lo;
 }

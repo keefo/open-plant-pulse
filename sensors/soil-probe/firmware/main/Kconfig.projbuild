@@ -339,6 +339,53 @@ config OPP_SOIL_PROBE_SAMPLE_INTERVAL_SECONDS
 
 endif
 
+config OPP_LOAD_SCALE_ENABLED
+    bool "Weigh the pot with an HX711 load cell"
+    default n
+    help
+        Read an HX711 under the pot. Weight tracks the water the pot holds
+        without the substrate calibration a dielectric probe needs, and the
+        bridge keeps no state across a power cut, so the chip stays powered
+        down between wake cycles.
+
+if OPP_LOAD_SCALE_ENABLED
+
+config OPP_LOAD_SCALE_DT_GPIO
+    int "HX711 DOUT GPIO"
+    range 0 21
+    default 2
+    help
+        GPIO2 is D0, the only free ADC1 pin, used here as a plain input.
+
+config OPP_LOAD_SCALE_SCK_GPIO
+    int "HX711 PD_SCK GPIO"
+    range 0 21
+    default 21
+    help
+        GPIO21 is D6, UART0 TX on the XIAO. The console runs over USB serial
+        so the pin is free. Holding it high powers the HX711 and the bridge
+        excitation down.
+
+config OPP_LOAD_SCALE_DISCARDED_SAMPLES
+    int "Conversions to discard after power-up"
+    range 0 10
+    default 2
+    help
+        The datasheet gives 400 ms to the first conversion after power-up.
+        Waiting for DOUT covers the delay, but the first conversions still
+        settle, so they are thrown away.
+
+config OPP_LOAD_SCALE_SAMPLES
+    int "Conversions to average per reading"
+    range 1 64
+    default 10
+    help
+        At 10 SPS ten conversions take about a second. Averaging trades that
+        second for the noise that decides whether a 3 kg watering shows up
+        cleanly against a drifting zero.
+
+endif
+
 config OPP_SAMPLE_INTERVAL_MINUTES
     int "Sampling interval in minutes"
     range 5 1440

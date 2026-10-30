@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 40
+DATABASE_SCHEMA_VERSION = 57
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -852,7 +852,8 @@ MIGRATIONS: Dict[int, str] = {
            For a pot, mass is the only measure of water with no soil-type
            assumption and no calibration: the probe reads two centimetres
            around its needles, the scale reads the whole pot. Grams, because
-           that is what a scale measures; kilograms are an entry convenience.
+           that is what a scale measures, and the only unit the page
+           ever offered after kilograms were dropped.
 
            kind says what the weighing was for. 'watered' is the ceiling, set
            once drainage stops; 'thirsty' is the floor, set when the plant
@@ -1109,6 +1110,316 @@ MIGRATIONS: Dict[int, str] = {
            the next, and every request costs the radio a wake. */
         ALTER TABLE sensors ADD COLUMN scale_battery_volts REAL;
         ALTER TABLE sensors ADD COLUMN scale_battery_percent INTEGER;
+    """,
+    41: """
+        /* Which Zigbee devices have been let in.
+
+           A device that joins the radio network is not thereby adopted: it
+           has announced itself, nothing more. Keeping the accepted ones here
+           means an unexpected arrival stays visible and inert until somebody
+           says yes, rather than quietly appearing among the working sensors.
+
+           A JSON list of EUI-64s, the only identifier a Zigbee device keeps
+           across rejoins. */
+        ALTER TABLE hub_settings ADD COLUMN zigbee_accepted TEXT;
+    """,
+    42: """
+        /* Zigbee devices are sensors, not a species of their own.
+
+           Version 41 kept the accepted ones in a list here, which was a
+           second sensor registry standing next to the first: no names, no
+           plants, no rooms, no archiving, because none of the machinery for
+           those knew such a thing existed. The sensors table already has
+           every column it needs -- a stable identity, an enrollment status
+           that includes "unclaimed", a plant and a room -- so a device that
+           joins the radio becomes a row there like anything else. */
+        ALTER TABLE hub_settings DROP COLUMN zigbee_accepted;
+    """,
+    43: """
+        /* When a scale's weight is worth writing down.
+
+           Until now this was only an interval: keep one reading every so
+           many seconds. That gives a dense drying curve, which is what the
+           forecast wants, and it makes two days hard to compare, because
+           each day's weights were taken at whatever time the clock happened
+           to land on.
+
+           A time of day is the other useful answer: one weight a day, taken
+           at the same hour, so a week of them is a week of like for like.
+           Null means the interval is in charge, which is what every scale
+           has done so far. */
+        ALTER TABLE sensors ADD COLUMN scale_keep_at_hour INTEGER;
+    """,
+    44: """
+        /* A battery's charge over time, so how fast it drains is visible.
+
+           One row an hour per sensor, not one per reading. A scale
+           reporting every ten seconds would otherwise write three million
+           rows a year to describe a curve that moves a few percent a day,
+           and a chart covering a year cannot draw them anyway. An hour is
+           finer than anything a battery does and keeps a decade under a
+           hundred thousand rows.
+
+           The hour is the key, so a second reading in the same hour
+           replaces the first rather than accumulating. Last writer wins:
+           the most recent sample in an hour is the one worth keeping. */
+        CREATE TABLE battery_history (
+            sensor_id   TEXT NOT NULL,
+            hour        TEXT NOT NULL,   /* YYYY-MM-DDTHH:00:00Z */
+            percent     INTEGER,
+            volts       REAL,
+            PRIMARY KEY (sensor_id, hour)
+        );
+        CREATE INDEX battery_history_by_time ON battery_history (sensor_id, hour DESC);
+    """,
+    45: """
+        /* Which board an image was built for.
+
+           The soil probe is an ESP32-C3 and the scale and gateway are C6.
+           Until now the library refused anything that was not a C3, so the
+           scale's firmware could not be stored at all -- and once it can
+           be, the hub has to know which board each image belongs to so it
+           never offers a C3 image to a C6. */
+        ALTER TABLE firmware_images ADD COLUMN chip TEXT NOT NULL DEFAULT 'esp32c3';
+    """,
+    46: """
+        /* The name a Zigbee device answers to when its Wi-Fi is on.
+
+           The device announces this over Zigbee when it joins and every
+           ten minutes after, and the hub kept it in memory -- so a hub
+           restart lost it until the next announcement. That was merely
+           untidy while Wi-Fi was always on, and became a blocker once it
+           normally is not: an update has to switch Wi-Fi on and then know
+           where to send the image, and waiting up to ten minutes to be
+           told a name the hub has known for months is not a plan. */
+        ALTER TABLE sensors ADD COLUMN zigbee_host TEXT;
+    """,
+    49: """
+        /* When the Zigbee gateway started, and why.
+
+           A coordinator that restarts loses the children it relays for,
+           and until its device table was persisted that meant silently
+           discarding every reading from a device it could no longer
+           place. The restarts themselves were invisible: nothing recorded
+           them, so three evenings of silence looked like three separate
+           mysteries rather than one cause.
+
+           Kept in the database rather than in memory because the thing
+           that used to restart the gateway was the hub restarting, which
+           would have wiped the evidence along with it. */
+        CREATE TABLE gateway_restarts (
+            restart_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at         TEXT NOT NULL,
+            reason     TEXT,
+            ran_for_s  INTEGER
+        );
+        CREATE INDEX gateway_restarts_by_time ON gateway_restarts (at DESC);
+    """,
+    47: """
+        /* What every Zigbee device said, kept for a week.
+
+           Until now a report was judged the instant it arrived and then
+           thrown away: only the last one survived, in memory, for the
+           control panel to display. That left no room to be clever and
+           none to be wrong. A weight wanted at six in the morning had to
+           wait for the device to speak at six in the morning, because
+           there was nothing to look back at; a hub restarted at midnight
+           knew nothing until the next report; and a reading judged wrongly
+           was judged wrongly forever, with no record to re-read.
+
+           So the raw report is kept as the device sent it -- its own
+           values, under its own names, with the signal it arrived on --
+           and the judging happens over that. A week is enough to answer
+           every question anybody has asked of it so far and small enough
+           that nobody has to think about the size: a device reporting
+           every half hour leaves under four hundred rows.
+
+           The values are stored as the device's own JSON rather than
+           split into columns, because the next device will have different
+           ones and a schema change per device model is not a plan. */
+        CREATE TABLE zigbee_reports (
+            report_id INTEGER PRIMARY KEY,
+            eui TEXT NOT NULL,
+            at TEXT NOT NULL,
+            kind TEXT,
+            values_json TEXT NOT NULL,
+            lqi INTEGER,
+            rssi INTEGER
+        );
+        CREATE INDEX zigbee_reports_by_device ON zigbee_reports(eui, at DESC);
+        CREATE INDEX zigbee_reports_by_age ON zigbee_reports(at);
+    """,
+    50: """
+        /* How much light this fixture lands on its plant.
+
+           PPFD -- photosynthetic photon flux density, micromoles of light
+           in the 400-700 nm band per square metre per second -- measured
+           once at the leaf, because a fixed lamp at a fixed height
+           delivers a fixed amount. Everything else about a day's light is
+           then arithmetic over the switching log the hub already keeps:
+
+               DLI = ppfd * seconds lit / 1e6
+
+           Kept as one number per light rather than multiplied into each
+           day, so a better measurement later corrects the whole history
+           instead of only the days after it. A rough figure is still
+           useful: it scales every day equally, so the comparison between
+           this week and last is right even when the absolute is not. */
+        ALTER TABLE lights ADD COLUMN ppfd_umol_m2s REAL;
+    """,
+    51: """
+        /* Light reaching a plant belongs to the pair, not the fixture.
+
+           One panel can cover a bench of plants, and what each one
+           receives depends on where it stands under it -- directly
+           beneath at 30 cm, or off to the side at 80. Hung on the light,
+           a single PPFD claimed they all get the same, which is the one
+           thing that is certainly untrue.
+
+           So the figure moves onto plant_lights, and that table stops
+           being one-light-one-plant: its key becomes the pair. A light
+           keeps only what a light does, which is switch on and off. */
+        CREATE TABLE plant_lights_rebuilt (
+            light_id TEXT NOT NULL REFERENCES lights(light_id) ON DELETE CASCADE,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+            ppfd_umol_m2s REAL,
+            PRIMARY KEY (light_id, plant_id)
+        );
+        INSERT INTO plant_lights_rebuilt (light_id, plant_id, ppfd_umol_m2s)
+            SELECT plant_lights.light_id, plant_lights.plant_id, lights.ppfd_umol_m2s
+            FROM plant_lights
+            JOIN lights ON lights.light_id = plant_lights.light_id;
+        DROP TABLE plant_lights;
+        ALTER TABLE plant_lights_rebuilt RENAME TO plant_lights;
+        CREATE INDEX plant_lights_by_plant ON plant_lights(plant_id);
+        ALTER TABLE lights DROP COLUMN ppfd_umol_m2s;
+    """,
+    52: """
+        /* The hours belong to the lamp, not to the plant.
+
+           A light is one switch. When a panel covers several plants, their
+           schedules were separate rows that could disagree, and nothing
+           physical could honour both -- the hub picked one and said
+           nothing. Hung on the light, the question cannot be asked twice.
+
+           A plant now records only which lamps it stands under, and how
+           much of each reaches it. Schedules carry over by way of
+           plant_lights; where several plants shared one lamp the earliest
+           plant's window wins, which is exactly the one the hub was
+           already following. */
+        CREATE TABLE light_schedules (
+            light_id TEXT PRIMARY KEY REFERENCES lights(light_id) ON DELETE CASCADE,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            on_time TEXT NOT NULL,
+            off_time TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (on_time != off_time)
+        );
+        INSERT INTO light_schedules (light_id, enabled, on_time, off_time, updated_at)
+            SELECT plant_lights.light_id,
+                   plant_light_schedules.enabled,
+                   plant_light_schedules.on_time,
+                   plant_light_schedules.off_time,
+                   plant_light_schedules.updated_at
+            FROM plant_lights
+            JOIN plant_light_schedules
+                ON plant_light_schedules.plant_id = plant_lights.plant_id
+            WHERE plant_lights.plant_id = (
+                SELECT MIN(inner_pair.plant_id) FROM plant_lights AS inner_pair
+                WHERE inner_pair.light_id = plant_lights.light_id
+            );
+        DROP TABLE plant_light_schedules;
+    """,
+    53: """
+        /* Light reaching a plant is the plant's, because that is what a
+           meter reads.
+
+           Held on the plant-light pair it asked for a figure nobody can
+           take: a PAR meter at the leaf measures everything arriving at
+           once, and cannot say how much of it came from which lamp. The
+           number a person can actually produce is one per plant, measured
+           where it stands.
+
+           It is kept whether or not a lamp is linked -- a plant's spot has
+           a brightness before the hub switches anything -- while the daily
+           total still needs a lamp, since only a switching log says for
+           how long. */
+        ALTER TABLE plants ADD COLUMN ppfd_umol_m2s REAL;
+        UPDATE plants SET ppfd_umol_m2s = (
+            SELECT MAX(plant_lights.ppfd_umol_m2s) FROM plant_lights
+            WHERE plant_lights.plant_id = plants.plant_id
+        );
+        ALTER TABLE plant_lights DROP COLUMN ppfd_umol_m2s;
+    """,
+    54: """
+        /* How long a plant is lit, where nothing the hub switches can say.
+
+           A lamp on a mechanical timer, or a bright window, lights a plant
+           just as a hub-controlled panel does -- there is simply no
+           switching log to read the hours from. Without them the daily
+           total cannot be worked out at all, and a measured PPFD sat on
+           the plant doing nothing.
+
+           Typed hours are a standing assumption rather than an
+           observation: they do not know about the day the blinds stayed
+           shut. So they are kept apart from the logged ones and the page
+           says which it is showing, rather than letting a figure somebody
+           typed look like a figure something measured. */
+        ALTER TABLE plants ADD COLUMN light_hours_per_day REAL;
+    """,
+    57: """
+        -- How often a Zigbee device is asked to report, per device.
+        -- NULL means the hub's default, so a device nobody has opinions
+        -- about keeps working and a row written before this existed
+        -- means "whatever the default is now" rather than "never".
+        ALTER TABLE sensors ADD COLUMN zigbee_report_max_seconds INTEGER;
+        ALTER TABLE sensors ADD COLUMN zigbee_report_sensitivity TEXT;
+    """,
+    56: """
+        -- How long raw Zigbee reports are kept. NULL means for ever,
+        -- which is the default: the reports are small, disk is cheap,
+        -- and a week's window had already thrown away the history
+        -- somebody wanted to chart. Anyone who would rather not keep
+        -- them can set a number of days and the hub will prune to it.
+        ALTER TABLE hub_settings ADD COLUMN zigbee_report_keep_days INTEGER;
+    """,
+    55: """
+        /* How old a plant is, as the date it started rather than a number
+           of months.
+
+           Age decides what its symptoms mean. A young monstera makes
+           entire leaves because it is young, not because it is dark, and
+           a page that reads that as too little light tells somebody to
+           move a perfectly happy plant. The same goes for a strelitzia
+           that has not flowered and a jasmine that has not bloomed.
+
+           A date rather than an age because an age is wrong the day after
+           it is typed, and nobody comes back to correct it. This is when
+           the plant began -- sown, propagated, or its best guess -- and
+           is not acquired_at, which is when it came here: a plant bought
+           mature is old and newly arrived. */
+        ALTER TABLE plants ADD COLUMN started_at TEXT;
+    """,
+    48: """
+        /* The hub's own time zone, named rather than inferred.
+
+           Until now anything that needed a wall clock -- the hour a scale
+           writes the day's weight, the day a watering belongs to -- read it
+           off whatever the machine believed, and the scale schedule did not
+           even do that: it read the hour off UTC, so six in the morning
+           meant eleven the night before in Vancouver.
+
+           Reading the machine's zone instead would have fixed that one and
+           left the setting invisible, which is the wrong trade for a hub
+           somebody may reach from a phone in another country, or run on a
+           server that keeps UTC because servers do. So it is written down,
+           as an IANA name, and everything that needs an hour of the day
+           asks for it.
+
+           NULL means the machine's own zone, which is the right default for
+           a hub running on the kitchen computer and the only answer
+           available before anybody has chosen. */
+        ALTER TABLE hub_settings ADD COLUMN timezone TEXT;
     """,
 }
 

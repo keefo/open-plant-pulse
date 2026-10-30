@@ -1,2 +1,25 @@
 # C6 boards like the XIAO and SuperMini only have the chip's own USB port, so use it for the console.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Zigbee alongside Wi-Fi: one radio, shared by agreement between the two stacks.
+CONFIG_SCALE_ZIGBEE=y
+CONFIG_ZB_ENABLED=y
+CONFIG_ZB_ZED=y
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# --- keeping evidence when the firmware stops ---
+#
+# A panic writes a backtrace to its own flash partition, so the cause
+# survives the power cycle that is everybody's first move. Without this the
+# log is in RAM and the reset reason is overwritten by the next reset.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=32
+
+# A hang that trips no watchdog simply sits there, which is what happened
+# twice. Panicking turns a silent hang into a backtrace plus a reboot.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_ESP_TASK_WDT_PANIC=y

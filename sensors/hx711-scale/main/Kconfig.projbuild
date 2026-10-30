@@ -12,6 +12,39 @@ menu "HX711 scale"
             bool "USB only, no radio: Chrome page on the Mac (mac/scale.html)"
     endchoice
 
+    config SCALE_ZIGBEE
+        bool "Also speak Zigbee, alongside Wi-Fi"
+        depends on SCALE_LINK_WIFI
+        default n
+        help
+            Joins a Zigbee coordinator and sends every reading to it, while
+            keeping Wi-Fi up so the scale stays reachable for over-the-air
+            updates. The two share one radio and take turns.
+
+    config SCALE_ZIGBEE_MIN_GAP_SECONDS
+        int "Floor on the gap between Zigbee reports, in seconds"
+        depends on SCALE_ZIGBEE
+        range 1 3600
+        default 30
+        help
+            Zigbee reports at whatever the sampling interval is set to, so
+            there is one rate to configure and it can be changed at runtime
+            with "i <seconds>".
+
+            This is only a guard for continuous mode, where the scale samples
+            ten times a second for a live display: relaying all of that keeps
+            the shared radio busy enough to push Wi-Fi off the air.
+
+    config SCALE_ZIGBEE_CHANNEL
+        int "Zigbee channel to look for the coordinator on"
+        depends on SCALE_ZIGBEE
+        range 0 26
+        default 15
+        help
+            Must match the channel the coordinator formed its network on.
+            Searching every channel instead keeps the shared radio busy long
+            enough to stop Wi-Fi associating.
+
     config SCALE_HOME_WIFI_SSID
         string "Home Wi-Fi name to join on a first boot"
         default ""

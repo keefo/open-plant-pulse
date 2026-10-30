@@ -7,10 +7,12 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.application.scales import ScaleService
+from open_plant_pulse_hub.application.zigbee import EzspGateway, ZigbeeService
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
 from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
 from open_plant_pulse_hub.lighting.service import DRIVERS, SIMULATED_DRIVERS, LightService
+from open_plant_pulse_hub.lighting.zigbee_plug import use_zigbee
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -106,6 +108,14 @@ def main() -> None:
     # on the next pass without a restart.
     scales = ScaleService(store)
     scales.start()
+    # Zigbee, always. The dongle finds its own port and a hub with none
+    # plugged in says so and carries on, so there is nothing here to turn
+    # off and no port worth naming on the command line.
+    zigbee = ZigbeeService(store, EzspGateway())
+    zigbee.start()
+    # Lent to the lighting side, where a light switched by a Zigbee plug
+    # needs a radio it cannot reach from its own settings.
+    use_zigbee(zigbee)
     lights = None
     if not args.no_lights:
         lights = LightService(store, SIMULATED_DRIVERS if args.simulated_lights else DRIVERS)
@@ -119,6 +129,7 @@ def main() -> None:
         allow_network=args.allow_network,
         lights=lights,
         photos=photos,
+        zigbee=zigbee,
     )
     host, port = server_address(server)
     shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host

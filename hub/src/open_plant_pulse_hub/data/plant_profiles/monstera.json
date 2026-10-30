@@ -5,40 +5,237 @@
   "name": "Monstera",
   "scientific_name": "Monstera deliciosa",
   "varieties": [
-    {"id": "deliciosa", "name": "Deliciosa", "note": "The usual one: plain green, large fenestrated leaves once mature."},
-    {"id": "borsigiana", "name": "Borsigiana", "note": "Smaller leaves, closer internodes, quicker to climb. Treated the same in every other way."},
-    {"id": "albo", "name": "Albo Variegata", "note": "White sectors, unstable: a shoot that reverts to green will outgrow the rest, and an all-white leaf feeds the plant nothing. Slower, and less tolerant of a dark corner."},
-    {"id": "thai_constellation", "name": "Thai Constellation", "note": "Cream speckling, stable because it is a tissue-culture cultivar. Slower than plain green but far less temperamental than Albo."},
-    {"id": "aurea", "name": "Aurea Variegata", "note": "Yellow sectors rather than white, and as unstable as Albo."}
+    {
+      "id": "deliciosa",
+      "name": "Deliciosa",
+      "note": "The usual one: plain green, large fenestrated leaves once mature."
+    },
+    {
+      "id": "borsigiana",
+      "name": "Borsigiana",
+      "note": "Smaller leaves, closer internodes, quicker to climb. Treated the same in every other way."
+    },
+    {
+      "id": "albo",
+      "name": "Albo Variegata",
+      "note": "White sectors, unstable: a shoot that reverts to green will outgrow the rest, and an all-white leaf feeds the plant nothing. Slower, and less tolerant of a dark corner."
+    },
+    {
+      "id": "thai_constellation",
+      "name": "Thai Constellation",
+      "note": "Cream speckling, stable because it is a tissue-culture cultivar. Slower than plain green but far less temperamental than Albo."
+    },
+    {
+      "id": "aurea",
+      "name": "Aurea Variegata",
+      "note": "Yellow sectors rather than white, and as unstable as Albo."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
-    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        27
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        500,
+        1500
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
   },
   "watering": {
     "strategy": "partial_dry_back",
     "label": "Keep lightly moist, then partly dry",
     "refill_below": 40,
-    "post_water_target": [60, 75],
-    "comfortable_cycle": [40, 75],
+    "post_water_target": [
+      60,
+      75
+    ],
+    "comfortable_cycle": [
+      40,
+      75
+    ],
     "concern_below": 25,
     "concern_above": 85
   },
   "drainage": {
     "label": "Airy mix that drains freely without drying immediately",
     "preferred_response": "balanced",
-    "acceptable_responses": ["fast", "balanced"],
+    "acceptable_responses": [
+      "fast",
+      "balanced"
+    ],
     "maximum_settle_minutes": 20
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 30], "scale": [10, 35]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [50, 70], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        30
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        50,
+        70
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        8,
+        14
+      ],
+      "scale": [
+        0,
+        26
+      ],
+      "bands": [
+        {
+          "upto": 4,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark even for a juvenile. Leaves stay tiny and the stem reaches badly.",
+              "Dim. A young plant makes entire leaves anyway, so watch size and spacing, not splits.",
+              "A little short for its age. Growth is slow but the plant is not in trouble."
+            ],
+            "established": [
+              "Too dark. An established plant reverts to small entire leaves and reaches for the window.",
+              "Dim. It will grow, but new leaves come in solid when they should be splitting.",
+              "A little short. Fenestration comes slowly and on fewer leaves."
+            ]
+          }
+        },
+        {
+          "upto": 8,
+          "name": "getting by"
+        },
+        {
+          "upto": 14,
+          "name": "healthy",
+          "effects": {
+            "young": [
+              "Comfortable for a young plant. Expect size before splits; fenestration waits on age.",
+              "Where a juvenile does well. Entire leaves now are its age, not its light.",
+              "Generously lit for its age. Strong growth, and it will drink harder for it."
+            ],
+            "established": [
+              "Comfortable. Steady growth and new leaves splitting as they should.",
+              "Where this kind is happiest. Leaves come regularly, large and well fenestrated.",
+              "Generously lit. Strong growth, and it will drink and feed noticeably harder."
+            ]
+          }
+        },
+        {
+          "upto": 20,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Burning, and a juvenile burns sooner: thin leaves and little root to keep water up.",
+              "Far too much for a young plant. Expect bleaching within a day or two.",
+              "Damaging. A plant this young will not grow out of the marks quickly."
+            ],
+            "established": [
+              "Burning. Pale yellow blanching between the veins, then dry brown patches.",
+              "Too much. Leaves wash out and the thin tissue around the holes dies back first.",
+              "Far too much. Direct light at this level marks the leaves permanently."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 24
+    }
   },
   "chemistry": {
-    "soil_ph": {"label": "pH", "unit": "", "ideal": [5.5, 7.0], "scale": [4.0, 9.0]},
-    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [70, 130], "scale": [0, 200]},
-    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [30, 70], "scale": [0, 140]},
-    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [90, 170], "scale": [0, 240]}
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        5.5,
+        7.0
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        70,
+        130
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        30,
+        70
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        90,
+        170
+      ],
+      "scale": [
+        0,
+        240
+      ]
+    }
   }
 }

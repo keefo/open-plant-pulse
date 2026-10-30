@@ -1,0 +1,10 @@
+# Matches the layout Espressif's own Zigbee examples use. Version 2 of the
+# SDK keeps the network, keys and bindings in the ordinary nvs partition --
+# the separate zb_storage partition the 1.x examples show is gone, and
+# declaring one makes ezb_plat_datasets_init abort at every boot.
+# Name,     Type, SubType, Offset,  Size
+nvs,        data, nvs,     ,        0x6000
+otadata,    data, ota,     ,        0x2000
+phy_init,   data, phy,     ,        0x1000
+factory,    app,  factory, ,        1500K
+zb_fct,     data, fat,     ,        1K

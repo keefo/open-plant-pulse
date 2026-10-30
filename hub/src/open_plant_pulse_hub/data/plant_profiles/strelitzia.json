@@ -5,38 +5,215 @@
   "name": "Bird of paradise",
   "scientific_name": "Strelitzia spp.",
   "varieties": [
-    {"id": "nicolai", "name": "Giant white (S. nicolai)", "note": "The big indoor one: trunk-forming, leaves to two metres, white and blue flowers outdoors."},
-    {"id": "reginae", "name": "Bird of paradise (S. reginae)", "note": "Clumping and smaller, with the orange and blue flower. Wants more direct sun than nicolai to bloom."},
-    {"id": "juncea", "name": "Narrow-leaf (S. juncea)", "note": "Rolled, rush-like leaves with almost no blade. Slower and more drought-tolerant than the others."}
+    {
+      "id": "nicolai",
+      "name": "Giant white (S. nicolai)",
+      "note": "The big indoor one: trunk-forming, leaves to two metres, white and blue flowers outdoors."
+    },
+    {
+      "id": "reginae",
+      "name": "Bird of paradise (S. reginae)",
+      "note": "Clumping and smaller, with the orange and blue flower. Wants more direct sun than nicolai to bloom."
+    },
+    {
+      "id": "juncea",
+      "name": "Narrow-leaf (S. juncea)",
+      "note": "Rolled, rush-like leaves with almost no blade. Slower and more drought-tolerant than the others."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
-    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [18, 27], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [500, 1500], "scale": [0, 3000]}
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        27
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        500,
+        1500
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
   },
   "watering": {
     "strategy": "partial_dry_back",
     "label": "Let the soil dry well between waterings",
     "refill_below": 18,
-    "post_water_target": [35, 55],
-    "comfortable_cycle": [18, 55],
+    "post_water_target": [
+      35,
+      55
+    ],
+    "comfortable_cycle": [
+      18,
+      55
+    ],
     "concern_below": 10,
     "concern_above": 65
   },
   "drainage": {
     "label": "Free draining with moderate moisture retention",
     "preferred_response": "balanced",
-    "acceptable_responses": ["fast", "balanced"],
+    "acceptable_responses": [
+      "fast",
+      "balanced"
+    ],
     "maximum_settle_minutes": 20
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [18, 29], "scale": [10, 35]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 60], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        18,
+        29
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        40,
+        60
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        12,
+        20
+      ],
+      "scale": [
+        0,
+        35
+      ],
+      "bands": [
+        {
+          "upto": 6,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark. Leaves come narrow on long stems; flowering is years away regardless.",
+              "Dim. A young plant should be building leaf, and at this level it barely does.",
+              "A little short for its age, though it will keep growing."
+            ],
+            "established": [
+              "Too dark. It will not flower, and leaves come narrow on long stems.",
+              "Dim. Enough to hold the plant, not to bring a bloom.",
+              "A little short. Growth is steady but flowering stays unlikely."
+            ]
+          }
+        },
+        {
+          "upto": 12,
+          "name": "getting by"
+        },
+        {
+          "upto": 20,
+          "name": "healthy"
+        },
+        {
+          "upto": 28,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Burning, and sooner than on a mature plant: less root behind each leaf.",
+              "Far too much for its age. The soft young leaves bleach quickly.",
+              "Damaging. Expect marks that stay for the life of the leaf."
+            ],
+            "established": [
+              "Burning. Leaves wash out to yellow-white and the edges brown and curl.",
+              "Too much. Pale bleached bands appear where the light falls hardest.",
+              "Far too much. The big flat leaves cook at this level, especially in dry air."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 48
+    }
   },
   "chemistry": {
-    "soil_ph": {"label": "pH", "unit": "", "ideal": [5.5, 7.0], "scale": [4.0, 9.0]},
-    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [60, 120], "scale": [0, 200]},
-    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [30, 70], "scale": [0, 140]},
-    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [80, 160], "scale": [0, 240]}
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        5.5,
+        7.0
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        60,
+        120
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        30,
+        70
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        80,
+        160
+      ],
+      "scale": [
+        0,
+        240
+      ]
+    }
   }
 }

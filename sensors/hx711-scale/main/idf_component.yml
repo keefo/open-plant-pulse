@@ -1,2 +1,4 @@
 dependencies:
   espressif/mdns: "^1.4.0"
+  espressif/esp-zigbee-lib: "*"
+  espressif/esp-zboss-lib: "*"

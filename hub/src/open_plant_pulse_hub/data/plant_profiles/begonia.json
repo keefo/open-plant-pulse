@@ -1,0 +1,226 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "begonia",
+  "name": "Begonia",
+  "scientific_name": "Begonia spp.",
+  "varieties": [
+    {
+      "id": "black_swan",
+      "name": "Black Swan",
+      "note": "Rex type. Near-black leaves with a faint silver overlay. The darkest foliage needs the most light to stay compact, but burns as readily as the rest: bright shade, never sun."
+    },
+    {
+      "id": "dark_mambo",
+      "name": "Dark Mambo",
+      "note": "Rex type. Deep purple-black with a silver spiral. Grown for the colour, which washes out towards green in a dim corner."
+    },
+    {
+      "id": "escargot",
+      "name": "Escargot",
+      "note": "Rex type. Spiralled leaf in silver and bronze. The tight whorl holds water in its centre, so water the soil and not the plant."
+    },
+    {
+      "id": "fireworks",
+      "name": "Fireworks",
+      "note": "Rex type. Silver leaves with purple veining. Slower than most, and the thin leaves crisp first when the air dries."
+    },
+    {
+      "id": "maculata",
+      "name": "Maculata",
+      "note": "Cane type, the spotted angel wing. Taller, thirstier and happy in brighter light than the rex begonias these ranges are set for."
+    }
+  ],
+  "root_zone": {
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "°C",
+      "ideal": [
+        18,
+        26
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "µS/cm",
+      "ideal": [
+        400,
+        1100
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
+  },
+  "watering": {
+    "strategy": "evenly_moist",
+    "label": "Keep evenly moist; let only the top settle before watering again",
+    "refill_below": 38,
+    "post_water_target": [
+      58,
+      72
+    ],
+    "comfortable_cycle": [
+      38,
+      72
+    ],
+    "concern_below": 25,
+    "concern_above": 85
+  },
+  "drainage": {
+    "label": "Open, airy mix. The rhizome sits on the surface and rots if it stays wet",
+    "preferred_response": "fast",
+    "acceptable_responses": [
+      "fast",
+      "balanced"
+    ],
+    "maximum_settle_minutes": 15
+  },
+  "climate": {
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "°C",
+      "ideal": [
+        18,
+        26
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        55,
+        75
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m²/day",
+      "ideal": [
+        3,
+        7
+      ],
+      "scale": [
+        0,
+        20
+      ],
+      "bands": [
+        {
+          "upto": 1.5,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark for a young plant. It stalls rather than grows, and the first leaves stay small.",
+              "Dim. A cutting or a fresh division will sulk here instead of rooting away."
+            ],
+            "established": [
+              "Too dark. The colour washes towards plain green and the leaf stalks stretch.",
+              "Dim. New leaves come smaller than the old ones and the silver dulls.",
+              "A little short. It holds, but puts out less each time."
+            ]
+          }
+        },
+        {
+          "upto": 3,
+          "name": "getting by"
+        },
+        {
+          "upto": 7,
+          "name": "healthy"
+        },
+        {
+          "upto": 10,
+          "name": "bright"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Far too much for a young plant. Thin new leaves bleach and crisp within a day."
+            ],
+            "established": [
+              "Burning. The dark pigment absorbs the heat and the leaf goes papery in patches.",
+              "Too much. Colour bleaches to a flat bronze and the edges curl.",
+              "Far too much. These are forest-floor plants; direct sun scorches them through."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 10
+    }
+  },
+  "chemistry": {
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        5.5,
+        6.5
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        50,
+        100
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        20,
+        55
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        60,
+        140
+      ],
+      "scale": [
+        0,
+        300
+      ]
+    }
+  }
+}

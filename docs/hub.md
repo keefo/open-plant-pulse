@@ -89,6 +89,21 @@ pytest hub/tests
 The current contract and hub tests need no installation:
 
 ```sh
+python3 hub/tests/run.py
+```
+
+One process per test file, in parallel: about thirteen seconds, against the
+three minutes the serial run used to take. A single file, or anything whose
+name matches:
+
+```sh
+python3 hub/tests/run.py plants
+```
+
+The plain runner still works, and is what to reach for when a failure needs
+reading in order:
+
+```sh
 PYTHONPATH=hub/src python3 -m unittest discover -s hub/tests
 ```
 

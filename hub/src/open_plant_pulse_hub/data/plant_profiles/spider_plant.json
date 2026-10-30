@@ -5,41 +5,220 @@
   "name": "Spider plant",
   "scientific_name": "Chlorophytum comosum",
   "varieties": [
-    {"id": "vittatum", "name": "Vittatum", "note": "The common one: a cream stripe down the middle of each leaf, green margins."},
-    {"id": "variegatum", "name": "Variegatum", "note": "The reverse: green centre, cream margins. A little slower than Vittatum."},
-    {"id": "bonnie", "name": "Bonnie", "note": "Curled leaves on a compact plant. The same stripe as Vittatum, in less room."},
-    {"id": "ocean", "name": "Ocean", "note": "Short, broad leaves with cream margins. Stays small and clumping."},
-    {"id": "hawaiian", "name": "Hawaiian", "note": "New leaves come up champagne-toned and mature to green. Needs good light to show it."},
-    {"id": "green", "name": "Plain green", "note": "No variegation. The toughest of them, and the least fussy about light."}
+    {
+      "id": "vittatum",
+      "name": "Vittatum",
+      "note": "The common one: a cream stripe down the middle of each leaf, green margins."
+    },
+    {
+      "id": "variegatum",
+      "name": "Variegatum",
+      "note": "The reverse: green centre, cream margins. A little slower than Vittatum."
+    },
+    {
+      "id": "bonnie",
+      "name": "Bonnie",
+      "note": "Curled leaves on a compact plant. The same stripe as Vittatum, in less room."
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean",
+      "note": "Short, broad leaves with cream margins. Stays small and clumping."
+    },
+    {
+      "id": "hawaiian",
+      "name": "Hawaiian",
+      "note": "New leaves come up champagne-toned and mature to green. Needs good light to show it."
+    },
+    {
+      "id": "green",
+      "name": "Plain green",
+      "note": "No variegation. The toughest of them, and the least fussy about light."
+    }
   ],
   "root_zone": {
-    "moisture_percent": {"label": "Soil moisture", "unit": "%", "scale": [0, 100]},
-    "soil_temperature_c": {"label": "Soil temperature", "unit": "°C", "ideal": [16, 27], "scale": [10, 35]},
-    "conductivity_us_cm": {"label": "Pore-water EC", "unit": "µS/cm", "ideal": [400, 1100], "scale": [0, 3000]}
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [
+        0,
+        100
+      ]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        16,
+        27
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "\u00b5S/cm",
+      "ideal": [
+        400,
+        1100
+      ],
+      "scale": [
+        0,
+        3000
+      ]
+    }
   },
   "watering": {
     "strategy": "partial_dry_back",
     "label": "Water once the top of the pot dries; the roots carry a reserve",
     "refill_below": 35,
-    "post_water_target": [58, 72],
-    "comfortable_cycle": [35, 72],
+    "post_water_target": [
+      58,
+      72
+    ],
+    "comfortable_cycle": [
+      35,
+      72
+    ],
     "concern_below": 18,
     "concern_above": 88
   },
   "drainage": {
     "label": "Free-draining mix; the tuberous roots fill the pot and hold water themselves",
     "preferred_response": "balanced",
-    "acceptable_responses": ["fast", "balanced"],
+    "acceptable_responses": [
+      "fast",
+      "balanced"
+    ],
     "maximum_settle_minutes": 20
   },
   "climate": {
-    "air_temperature_c": {"label": "Air temperature", "unit": "°C", "ideal": [16, 27], "scale": [10, 35]},
-    "air_humidity_percent": {"label": "Air humidity", "unit": "%", "ideal": [40, 65], "scale": [20, 90]}
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "\u00b0C",
+      "ideal": [
+        16,
+        27
+      ],
+      "scale": [
+        10,
+        35
+      ]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [
+        40,
+        65
+      ],
+      "scale": [
+        20,
+        90
+      ]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m\u00b2/day",
+      "ideal": [
+        6,
+        12
+      ],
+      "scale": [
+        0,
+        24
+      ],
+      "bands": [
+        {
+          "upto": 3,
+          "name": "too little",
+          "effects": {
+            "established": [
+              "Too dark. The white stripes dull toward green and runners stop coming.",
+              "Dim. It survives and sends few, if any, plantlets.",
+              "A little short. Growth is thin and the arching habit goes floppy."
+            ]
+          }
+        },
+        {
+          "upto": 6,
+          "name": "getting by"
+        },
+        {
+          "upto": 12,
+          "name": "healthy"
+        },
+        {
+          "upto": 18,
+          "name": "vigorous"
+        },
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "established": [
+              "Burning. Tips and edges brown and go crisp, with pale streaks along the blade.",
+              "Too much. Leaves bleach to straw and the browning runs further down.",
+              "Far too much. Expect damage within days, worst on the outer leaves."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 12
+    }
   },
   "chemistry": {
-    "soil_ph": {"label": "pH", "unit": "", "ideal": [6.0, 7.2], "scale": [4.0, 9.0]},
-    "nitrogen_mg_kg": {"label": "Nitrogen", "unit": "mg/kg", "ideal": [50, 110], "scale": [0, 200]},
-    "phosphorus_mg_kg": {"label": "Phosphorus", "unit": "mg/kg", "ideal": [25, 60], "scale": [0, 140]},
-    "potassium_mg_kg": {"label": "Potassium", "unit": "mg/kg", "ideal": [70, 150], "scale": [0, 240]}
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [
+        6.0,
+        7.2
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [
+        50,
+        110
+      ],
+      "scale": [
+        0,
+        200
+      ]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [
+        25,
+        60
+      ],
+      "scale": [
+        0,
+        140
+      ]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [
+        70,
+        150
+      ],
+      "scale": [
+        0,
+        240
+      ]
+    }
   }
 }

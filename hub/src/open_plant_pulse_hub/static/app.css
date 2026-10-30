@@ -95,7 +95,7 @@ body {
 /* Soon enough to act on reads warm; further off reads like any other fact. */
 .fleet-card small.fleet-card-due { text-transform: none; }
 .fleet-card small[data-state="later"] { color: #2a754a; background: #e5f1e8; }
-.fleet-card small[data-state="soon"] { color: #8a4a12; background: #f8ecd9; }
+.fleet-card small[data-state="now"] { color: #8a4a12; background: #f8ecd9; }
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
 /* A pot with water left reads as well as a sensor reporting in; one nearly
@@ -112,6 +112,12 @@ body {
    with it -- the forms went back to browser buttons for a few minutes. */
 button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; font: inherit; cursor: pointer; }
 .settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+/* The five-column neighbours table held this whole page at 399px on every
+   phone width: a table will not shrink below its columns, and as a grid item
+   of this panel its min-content became the panel's floor. It scrolls inside
+   .raw-report-scroll now, the way the raw report log already does. A
+   `min-width: 0` on the panel's children changed nothing measurable once the
+   table was boxed, so it is deliberately not here. */
 /* One treatment for a form control, wherever the form is.
  *
  * The settings forms were left on the browser's own inputs while the plant
@@ -129,7 +135,10 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; c
 .settings-panel small, .settings-panel output { color: var(--muted); }
 .inline-control { display: flex; align-items: center; gap: 10px; }
 .inline-control input { width: 100px; }
-.inline-control input { padding: 9px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+/* Both controls, not just the one that happened to be here first. A select
+   added beside an input inherited nothing and kept the browser's own look. */
+.inline-control input,
+.inline-control select { padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .inline-control button { color: white; background: var(--leaf); border-color: var(--leaf); }
 .empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--line); color: var(--muted); text-align: center; background: white; }
 dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0; box-shadow: 0 20px 80px #17211b55; }
@@ -154,7 +163,7 @@ h2 { font-size: 24px; }
 /* The gauge carries its own layout. It was scoped to the connection block
    in the sensor-as-plant topbar, so when the battery moved to the sensor's
    own page it lost its shape and drew as bare text. */
-.battery { --battery-level: var(--leaf); display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.battery { --battery-level: var(--leaf); display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .battery[data-level="low"] { --battery-level: var(--sun); }
 .battery[data-level="critical"] { --battery-level: var(--coral); }
 .battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: 3px; }
@@ -167,8 +176,18 @@ h2 { font-size: 24px; }
    cuts the bolt shape would clip a shadow drawn on the bolt itself. */
 .battery-bolt { position: absolute; top: -1px; left: 50%; width: 7px; height: 10px; transform: translateX(-50%); filter: drop-shadow(0.75px 0 0 currentColor) drop-shadow(-0.75px 0 0 currentColor) drop-shadow(0 0.75px 0 currentColor) drop-shadow(0 -0.75px 0 currentColor); }
 .battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--panel); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
+/* The voltage is one thing, so it breaks before the separator or not at
+   all. In a narrow figure card it was wrapping between the number and its
+   unit, leaving a line ending "4.05" and the next beginning "V". */
+.battery-voltage { white-space: nowrap; }
 .battery-voltage::before { content: "\00b7"; margin-right: 5px; }
 main { padding: 32px 0 60px; display: grid; gap: 28px; }
+/* Every page is a grid item of <main>, and a grid item's default
+   `min-width: auto` lets its min-content width beat the track: one row inside
+   that will not wrap is enough to drag the whole page off the right edge of a
+   phone. Saying it once here rather than per page, because this has now been
+   fixed twice in two sections and would be fixed a third time otherwise. */
+main > * { min-width: 0; }
 /* Standing beside the pot's response, the two conclusions the hub draws read
    as a pair: same rule above and below, same tinted ground, and this one
    keeps the larger type because it is the answer to the bigger question. */
@@ -293,11 +312,18 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 /* The reserve below thirsty is painted by a gradient defined per chart, so it
    carries no fill here; only the floor it runs down to is drawn. */
 .history-chart .trend-dry { stroke: #a33a2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Filled where the scale called the reading settled, hollow where it did
+   not. A scale that never settles is the thing being looked for, so those
+   points are shown rather than dropped. */
+.history-chart .weight-point.settled { fill: #2a754a; }
+.history-chart .weight-point.unsettled { fill: #ffffff; stroke: #b46e18; stroke-width: 1.2; }
 .history-chart .trend-dry-label { fill: #8a2f23; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 #plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
-.care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight, .climate-history, .raw-report-log, .plant-lighting-summary { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
+.care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight,
+.climate-history, .raw-report-log, .plant-lighting-summary, .plant-verdicts,
+.plant-light, .plant-photos { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
 .climate-history-heading { align-items: center; }
 .history-range-selector { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #edf2ec; }
 .history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -319,12 +345,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .history-chart .ideal-band-label { fill: #214b34; font: 700 11px "Avenir Next", "Gill Sans", sans-serif; }
 .history-range-status { margin-top: 10px; }
 .history-chart .axis-label { fill: var(--muted); font: 11px "Avenir Next", "Gill Sans", sans-serif; }
-.history-chart .history-line { fill: none; stroke: var(--water); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-#humidity-history-chart .history-line { stroke: #5196a8; }
+.history-chart .history-line { fill: none; stroke: var(--water); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .history-chart .history-point { fill: var(--water); stroke: none; }
-.history-chart .latest-point { fill: white; stroke: var(--water); stroke-width: 3; }
-#humidity-history-chart .history-point { fill: #5196a8; }
-#humidity-history-chart .latest-point { fill: white; stroke: #5196a8; }
+.history-chart .latest-point { fill: white; stroke: var(--water); stroke-width: 2; }
 .history-chart-empty { min-height: 170px; margin: 10px 0 0; display: grid; place-items: center; color: var(--muted); text-align: center; }
 .drainage-assessment { min-height: 104px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--line); background: #f7fafb; }
 .drainage-assessment > div { padding-left: 16px; border-left: 5px solid var(--sun); }
@@ -442,6 +465,7 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
 .sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
+.sensor-settings-form output { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
 .sensor-settings-form input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
 .settings-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
@@ -468,7 +492,9 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
   .metric strong { font-size: 1.1em; }
   .moisture-heading strong { font-size: 36px; }
   .moisture-vessel { min-height: 220px; }
-  .care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight, .climate-history, .raw-report-log, .fleet-overview, .sensor-settings { padding: 16px; }
+  .care-log, .chemistry, .watering-calendar, .plant-journey, .plant-weight,
+  .climate-history, .raw-report-log, .fleet-overview, .sensor-settings,
+  .plant-verdicts, .plant-light, .plant-photos { padding: 16px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
   .history-range-selector { width: 100%; }
   .history-range-selector button { flex: 1; padding-inline: 4px; }
@@ -525,8 +551,11 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .secondary-action { padding: 10px 17px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; text-align: center; white-space: nowrap; }
 .secondary-action:hover { border-color: var(--leaf); color: var(--leaf); }
 .secondary-action:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
-.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; gap: 6px; border-bottom: 1px solid var(--line); }
-.settings-tab { padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; }
+/* The bar scrolls on its own rather than widening the page: on a phone seven
+   tabs do not fit, and a flex row that cannot shrink pushes every panel below
+   it off the right edge of the screen. */
+.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
+.settings-tab { flex: 0 0 auto; padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .settings-tab:hover { background: #e5f1e8; }
 .settings-tab.active { color: white; background: var(--leaf); }
 .settings-panel-group { display: grid; gap: 14px; }
@@ -537,7 +566,10 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .settings-sensor-heading strong { font-size: 20px; }
 .settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
 .settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.settings-sensor-actions { flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
+/* flex-shrink: 0 keeps the buttons their own size; wrap and min-width: 0 are
+   what let the row admit it is out of room and break onto a second line,
+   instead of its 346px min-content widening the page around it. */
+.settings-sensor-actions { flex-shrink: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .settings-sensor-actions .danger { padding: 10px 17px; font-weight: 700; }
 @media (max-width: 720px) {
   .settings-sensor { align-items: stretch; flex-direction: column; gap: 12px; }
@@ -580,11 +612,31 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 .plant-weight-anchors label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .plant-weight-anchors output { color: var(--muted); font-size: 13px; }
 
+/* A plant whose weight arrives by itself. The manual form stays on the
+   page rather than vanishing: somebody will still lift the pot onto a
+   kitchen scale now and then, and a form that disappears cannot be argued
+   with. It is dimmed and inert until asked for. */
+.plant-weight-scale { margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.plant-weight-scale-who { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
+.plant-weight-scale-who a { color: var(--leaf); font-weight: 700; }
+.plant-weight-scale .inline-control { margin-bottom: 8px; }
+.plant-weight-scale label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.plant-weight-scale output { color: var(--muted); font-size: 13px; }
+.plant-weight-scale-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.plant-weight-scale-actions { margin-bottom: 10px; }
+.plant-weight-scale-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
+.plant-weight-scale-actions output { color: var(--muted); font-size: 13px; }
+/* A pot with a scale under it is not weighed by hand, so the form for
+   doing so is put away rather than dimmed: a greyed-out form still
+   asks to be read before it can be dismissed. "Weigh by hand anyway",
+   inside the scale panel just above, brings it back. */
+.plant-weight-entry.is-automatic { display: none; }
+
 .plant-weight-entry { flex-wrap: wrap; margin-bottom: 16px; }
 .plant-weight-entry label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .plant-weight-entry button { color: white; background: var(--leaf); border-color: var(--leaf); }
 .plant-weight-entry output { color: var(--muted); font-size: 13px; }
-.settings-note { margin: 0; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
+.settings-note { margin: 0 0 18px; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
 .onboarding-card { max-width: 820px; margin-inline: auto; padding: 26px 30px; display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .onboarding-header { display: flex; align-items: baseline; gap: 14px; }
@@ -679,7 +731,6 @@ main { padding: 32px 0 60px; display: grid; gap: 28px; }
 /* Photographs of a plant. The tiles are a fixed shape and the pictures are
    cropped into them, because a row of different aspect ratios reads as a
    mess however good the photographs are. */
-.plant-photos { padding: 24px; margin-bottom: 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
 .photo-tile { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .photo-tile[data-cover="true"] { border-color: var(--leaf); box-shadow: 0 0 0 1px var(--leaf); }
@@ -766,10 +817,14 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 
 /* pH calibration: the figures first, then the one number to type. */
 .ph-explainer { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
-.ph-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 0 0 16px; }
-.ph-figures div { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
+.ph-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); grid-auto-rows: 1fr; gap: 12px; margin: 0 0 16px; }
+.ph-figures div { display: flex; flex-direction: column; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
 .ph-figures dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.ph-figures dd { margin: 0; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ph-figures dd { margin: 0; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: none; }
+/* A phrase in a figure is still a phrase: it wraps between its words
+   and is set smaller, because "battery · end device" at twenty pixels
+   is shouting a detail. Numbers keep the larger size. */
+.ph-figures dd:not(:has(code)) { line-height: 1.25; }
 /* A correction found at one conductivity is not promised at another. */
 .ph-caution { margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: #faf4e6; color: var(--ink); font-size: 13px; line-height: 1.6; }
 
@@ -792,7 +847,12 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .sensor-attach { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
 .sensor-attach label { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; font-weight: 700; }
 .sensor-attach-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.sensor-attach-row select { flex: 1 1 220px; min-width: 0; }
+/* The input is listed as well as the select. This block held only a select
+   and a button until a name field was added to it, and nothing in the
+   cascade reached the new control: the rules that style inputs elsewhere
+   are scoped to ancestors this block does not have. */
+.sensor-attach-row select,
+.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
 .sensor-attach-row button { flex: 0 0 auto; }
 
 /* The battery sits in a figure box on the sensor page, so it is sized to
@@ -806,7 +866,436 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* The readout that follows the pointer across a chart's dots. The targets
    draw nothing: they exist so a 2.5px dot can be hit by a hand. */
 .point-target { fill: transparent; cursor: pointer; }
+.point-sheet { fill: transparent; cursor: crosshair; }
 .point-readout { pointer-events: none; transition: opacity .12s ease; }
 .point-readout-bubble { fill: var(--ink); opacity: .92; }
 .point-readout-value { fill: white; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .point-readout-when { fill: #cfd8d1; font-size: 10px; }
+
+
+/* The scan for new devices.
+ *
+ * There is nothing to show while the network is open and nobody is pairing,
+ * and a button that goes quiet reads as a button that did nothing. The sweep
+ * says the hub is still listening. */
+.zigbee-radar {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin: 14px 0 4px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background:
+    radial-gradient(circle, transparent 0 32%, color-mix(in srgb, currentColor 10%, transparent) 32% 33%, transparent 33%),
+    radial-gradient(circle, transparent 0 65%, color-mix(in srgb, currentColor 10%, transparent) 65% 66%, transparent 66%);
+  overflow: hidden;
+}
+
+.zigbee-radar::before,
+.zigbee-radar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(color-mix(in srgb, currentColor 12%, transparent), color-mix(in srgb, currentColor 12%, transparent));
+  background-size: 100% 1px, 1px 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.zigbee-radar::after {
+  background-size: 1px 100%;
+}
+
+.zigbee-radar-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--accent, #1f7a4d) 55%, transparent) 0deg,
+    transparent 55deg,
+    transparent 360deg
+  );
+  animation: zigbee-sweep 2.4s linear infinite;
+}
+
+@keyframes zigbee-sweep {
+  to { transform: rotate(360deg); }
+}
+
+/* Honoured rather than ignored: a sweeping wedge is exactly the kind of
+   motion that people turn this setting off for. */
+@media (prefers-reduced-motion: reduce) {
+  .zigbee-radar-sweep { animation: none; opacity: 0.5; }
+}
+
+
+/* Buttons in the Zigbee panel.
+ *
+ * These were written with class="row", borrowed from the scale firmware's
+ * own page, where that class exists. It does not exist here, so they had no
+ * layout at all: no flex, no gap, no wrapping. */
+.zigbee-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.zigbee-actions .spacer { margin-left: auto; }
+.zigbee-waiting { border-left: 3px solid var(--leaf); padding-left: 10px; }
+.zigbee-device-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+
+
+/* The Zigbee scale's page echoes the scale's own, so the same device does
+   not feel like two machines depending on which address you opened. */
+.row-between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.zigbee-big .unit { font-size: .3em; color: var(--muted); font-weight: 400; margin-left: .12em; }
+.zigbee-stats div { display: flex; flex-direction: column; color: var(--muted); font-size: 13px; }
+.zigbee-stats b { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+
+/* A select in a flex row stretches to fill it, which made the sampling rate
+   look like an empty bar rather than a control. */
+.zigbee-actions select { flex: 0 0 auto; width: auto; min-width: 170px; }
+
+
+/* Links that act as buttons.
+ *
+ * .nav-button was used in markup with no rule behind it, so the Control
+ * link rendered as plain underlined text. Matched to the button element's
+ * own styling above, because the two sit side by side in a row. */
+.nav-button {
+  display: inline-block;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: white;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+.nav-button:hover { border-color: var(--leaf); }
+
+/* A page of panels needs the same spacing a settings group gets; without it
+   the panels sit flush against each other with only their borders between. */
+
+/* The neighbour table. Rows of key facts read better as a table than as
+   lines of text, which is what they were. */
+.zigbee-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.zigbee-table th { text-align: left; padding: 6px 10px 6px 0; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.zigbee-table td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.zigbee-table td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.section-subheading { margin: 18px 0 0; font-size: 13px; font-weight: 700; }
+
+/* The weight is why the page exists, so it gets a card of its own rather
+   than a cell among the housekeeping figures. Built from the same border,
+   radius and background as those figures so it belongs to the same page. */
+.zigbee-reading { padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; text-align: center; }
+.zigbee-reading-number { margin: 0; font-size: clamp(48px, 10vw, 80px); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.zigbee-reading-unit { margin-left: .1em; font-size: .3em; color: var(--muted); font-weight: 400; }
+.zigbee-reading-state { margin: 8px 0 0; line-height: 1.4; min-height: 1.4em; color: var(--muted); font-size: 13px; }
+
+/* Its own class, not the household's.
+   Borrowing .fleet-overview put a second element with that class earlier in
+   the document, and a test that reaches for the household's sort row with
+   querySelector(".fleet-overview") found this page instead. Two sections
+   that happen to look alike are still two different things. */
+/* A room's own page: a form and the lists of what is in the room.
+   Laid out like Settings, because it is the same kind of work and the
+   eye should not have to learn a second shape for it. */
+.room-page { padding: 30px; display: grid; gap: 14px; border: 1px solid var(--line); background: #f8faf6; }
+.room-page h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
+.room-page .section-heading p:last-child { margin: 0; color: var(--muted); }
+.room-page .section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.room-page .settings-sensor-heading a { color: var(--ink); font-weight: 700; text-decoration: none; }
+.room-page .settings-sensor-heading a:hover { color: var(--leaf); text-decoration: underline; }
+.open-room { padding: 7px 14px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; }
+.open-room:hover { border-color: var(--leaf); color: var(--leaf); }
+.open-room:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+/* A room's name on the overview is the way into its page. */
+.room-card-heading h2 a { color: inherit; text-decoration: none; }
+.room-card-heading h2 a:hover { color: var(--leaf); text-decoration: underline; }
+
+.rooms-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
+.rooms-overview h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
+.rooms-overview .section-heading p:last-child { margin: 0; color: var(--muted); }
+
+/* Rooms, side by side. A room is a smaller thing than a plant page, so the
+   cards are narrower and the chart inside one is a glance rather than a
+   study -- the detail lives on the plant that cares about it. */
+/* One room per row. Rooms are read down the page rather than compared
+   across it, and a full width card gives the air chart room to be
+   worth looking at. Each card is still sized by its own content, so a
+   room with no sensor stays short. */
+.rooms-grid { display: grid; grid-template-columns: 1fr; align-items: start; gap: 16px; }
+.room-card { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.room-card-heading h2 { margin: 0 0 2px; font-size: 20px; }
+.room-card-heading { margin-bottom: 12px; }
+.room-figures { margin: 0 0 10px; }
+
+
+/* How much of a lamp reaches one plant, sat beside that lamp's checkbox:
+   the same panel is a different number for each plant under it. */
+/* The figure sits with the lamp it belongs to. Pushed to the far end of a
+   full-width row it read as a stray box with no subject. */
+.sensor-settings-form label.lighting-choice { flex-wrap: wrap; row-gap: 4px; }
+
+/* A lamp's window, on the lamp's own form. */
+.light-window { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+.light-window label { min-width: 0; }
+.light-window input { width: 100%; box-sizing: border-box; }
+
+/* A plant's daily light against what its kind wants. The track is the
+   climate gauge's; what is added is the banding behind it, because "too
+   little" and "scorching" are different kinds of wrong and one ideal
+   range cannot tell them apart. */
+.plant-light-gauge { margin-top: 10px; }
+.plant-light-gauge .range-track { position: relative; }
+.light-bands { position: absolute; inset: 0; display: flex; border-radius: inherit; overflow: hidden; }
+.light-band { display: block; height: 100%; }
+.light-band[data-band="too-little"] { background: #d8dbd5; }
+.light-band[data-band="getting-by"] { background: #e6dfc0; }
+.light-band[data-band="healthy"] { background: #cfe3c4; }
+.light-band[data-band="vigorous"] { background: #f0dca8; }
+.light-band[data-band="scorching"] { background: #eec6b4; }
+
+/* Next watering and water use are parts of the pot's weight rather than
+   subjects of their own: one pot, one question, asked three ways. */
+.plant-weight-part { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.plant-weight-part-heading h3 { margin: 0; font: 500 20px Georgia, "Times New Roman", serif; }
+
+/* A figure wears its unit: small, muted, sitting on the baseline at the
+   bottom right of the number, so the quantity reads first and the unit
+   answers the question it raises without competing with it.
+
+   Drawn by CSS from data-unit rather than typed beside each number, so a
+   value and its unit cannot drift apart, and so a label need not carry
+   "(ml/d)" in brackets to make up for a bare figure. A placeholder has
+   data-unit-hidden set by setText: "-- ml" would read as a measurement
+   that failed rather than one not taken. */
+.measure::after {
+  content: attr(data-unit);
+  margin-left: 0.16em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.34em;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.measure[data-unit-hidden]::after { content: none; }
+
+/* Which lamps are over this plant, in the plant page's status block. An
+   answer, not a control: the switches are on the configuration page,
+   because a lamp on a schedule is switched by its schedule. */
+.plant-page-lighting { color: var(--muted); font-size: 12px; text-decoration: none; }
+.plant-page-lighting:hover { color: var(--ink); text-decoration: underline; }
+
+/* The plant's verdict and the pot's, side by side: both are what the hub
+   concludes rather than what it measured, and either alone invites the
+   wrong question -- a thriving plant in a pot that drains badly is a
+   thing worth seeing in one glance. */
+.plant-verdicts-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.verdict-of { margin: 0 0 2px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.plant-verdicts .plant-assessment strong { font-size: 32px; }
+
+/* Boxed like the photographs panel, because the two verdicts belong to
+   each other: read loose on the page they looked like two unrelated
+   pronouncements rather than one answer with two halves. */
+.plant-verdicts .section-heading { margin-bottom: 18px; }
+
+/* A button that is a picture. The word survives as the accessible label
+   and the tooltip; only its width is given up. Sized to the 24px pointer
+   target a finger needs, which is larger than the glyph inside it. */
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.icon-button svg { width: 15px; height: 15px; }
+.icon-button:hover { color: var(--ink); background: white; border-color: var(--line); }
+.icon-button:focus-visible { outline: 2px solid var(--water); outline-offset: 1px; }
+/* Throwing a photograph away is the one action here that cannot be undone,
+   so it colours like one when reached for. */
+.icon-button[data-danger]:hover { color: var(--coral); border-color: var(--coral); }
+.photo-actions { display: flex; align-items: center; gap: 2px; }
+.photo-actions strong { font-size: 11px; font-weight: 700; color: var(--leaf); }
+
+/* The filled star marks the photograph that is the cover. Gold, because
+   it is the one good thing on the tile and the bin beside it is the one
+   dangerous one; they should not look alike. */
+.icon-glyph { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; color: var(--muted); }
+.icon-glyph svg { width: 15px; height: 15px; }
+.icon-glyph[data-filled] { color: var(--sun); }
+
+/* Reading the light bar with a pointer: a hairline where the cursor is,
+   and a sentence under it saying what a day of that much light does. */
+.light-probe { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; pointer-events: none; }
+.plant-light-gauge .range-track { cursor: crosshair; }
+.light-hint { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font-size: 12px; line-height: 1.5; }
+
+/* The lamp's own switch, sitting with Edit and Remove. Pushed left of
+   them so the thing that changes the lamp is not next to the thing that
+   deletes it. */
+.light-power { display: inline-flex; align-items: center; margin-right: auto; }
+.light-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+.light-working { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+/* The age a date works out to, beside the field that sets it. */
+.field-note { color: var(--muted); font-size: 11px; font-weight: 400; }
+/* A field's name and a note about it, on one line: the label is a grid,
+   so two children would be two rows and the input below would stop
+   lining up with the field beside it. */
+.field-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.field-head .field-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The photographs collapse to the newest one on a phone, where the grid
+   is a single column and a year of pictures pushes every other section
+   off the screen. Wider than this they sit side by side and all show,
+   so the button is not offered at all. */
+.photo-more { display: none; margin-top: 12px; }
+@media (max-width: 560px) {
+  .photo-grid.is-collapsed > .photo-tile:nth-of-type(n + 2) { display: none; }
+  .photo-more { display: inline-block; width: 100%; text-align: center; }
+}
+/* The two things that may have happened at the pot, kept together: the
+   row around them wraps, and split across two lines they stop reading as
+   one question about this weighing. */
+.weight-ticks { display: flex; align-items: center; gap: 14px; }
+
+/* Looking through a plant's photographs. Dark, because the pictures are
+   the point and a pale frame around them competes; fixed, because the
+   page behind keeps its scroll position for when the viewer closes. */
+.photo-viewer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(16, 22, 16, 0.92); }
+.photo-viewer[hidden] { display: none; }
+.photo-viewer-frame { position: relative; max-width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; }
+.photo-viewer img { max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; border-radius: 6px; background: #0b0f0b; }
+/* The date sits on the picture rather than under it: scrolling through a
+   year, the eye stays in one place and only the date changes. */
+.photo-viewer-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 12px; color: #e8efe6; }
+.photo-viewer-bar strong { font: 500 20px Georgia, "Times New Roman", serif; }
+.photo-viewer-bar span { color: #9fb09c; font-size: 13px; }
+#photo-viewer-since { margin-left: 8px; }
+.photo-viewer-step, .photo-viewer-close { position: absolute; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid rgba(232, 239, 230, 0.25); border-radius: 50%; background: rgba(16, 22, 16, 0.6); color: #e8efe6; font-size: 20px; cursor: pointer; }
+.photo-viewer-step:hover, .photo-viewer-close:hover { background: rgba(232, 239, 230, 0.16); }
+.photo-viewer-step:disabled { opacity: 0.25; cursor: default; }
+.photo-viewer-step[data-step="newer"] { top: 16px; left: 50%; transform: translateX(-50%); }
+.photo-viewer-step[data-step="older"] { bottom: 16px; left: 50%; transform: translateX(-50%); }
+.photo-viewer-close { top: 16px; right: 16px; }
+@media (max-width: 560px) {
+  .photo-viewer { padding: 12px; }
+  .photo-viewer img { max-height: calc(100vh - 170px); }
+}
+/* Zooming a photograph. No transition on the pan, which follows a finger
+   and would lag behind it; the zoom itself is worth easing. */
+.photo-viewer img { transition: transform 160ms ease-out; cursor: zoom-in; touch-action: none; }
+.photo-viewer img[data-zoomed] { cursor: grab; transition: none; }
+.photo-viewer img[data-zoomed]:active { cursor: grabbing; }
+
+/* The scrubber: every photograph at its date along the whole span, so
+   distance on it means elapsed time rather than position in a list. */
+.photo-track { position: relative; height: 34px; margin-top: 10px; cursor: pointer; touch-action: none; }
+.photo-track:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; border-radius: 4px; }
+.photo-track-line { position: absolute; left: 0; right: 0; top: 16px; height: 2px; background: rgba(232, 239, 230, 0.22); }
+.photo-track-ticks { position: absolute; inset: 0; }
+/* A tick is a date, not a slot. Several on the same day overlap, which is
+   the honest picture of having photographed a plant three times that
+   afternoon. */
+.photo-track-tick { position: absolute; top: 9px; width: 2px; height: 16px; margin-left: -1px; background: rgba(232, 239, 230, 0.45); border-radius: 1px; }
+.photo-track-tick[data-current] { top: 3px; width: 3px; height: 28px; margin-left: -1.5px; background: #e8efe6; }
+.photo-track-ends { display: flex; justify-content: space-between; color: #7e8f7c; font-size: 11px; }
+/* A stretch of time with no photographs, drawn where the track was
+   squeezed, so the compression is declared rather than hidden. */
+.photo-track-gap { position: absolute; top: 15px; width: 14px; height: 4px; margin-left: -7px; background: repeating-linear-gradient(90deg, rgba(232,239,230,0.5) 0 2px, transparent 2px 4px); }
+
+/* A long note folded to its first line, with a caret to say it opens.
+   Clamped rather than hidden, so the subject stays readable and the
+   page does not change height much when one is opened. */
+.settings-note[data-foldable] { position: relative; cursor: pointer; padding-right: 38px; }
+.settings-note[data-foldable]::after { content: "\25be"; position: absolute; top: 14px; right: 16px; color: var(--muted); transition: transform 120ms ease-out; }
+.settings-note[data-folded] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.settings-note[data-folded]::after { transform: rotate(-90deg); }
+.settings-note[data-foldable]:hover { border-color: var(--muted); }
+.settings-note[data-foldable]:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+/* Devices found on the radio but not added, under the scan button. Set
+   apart from the list above it because they are a question, not a state. */
+.zigbee-found { margin-top: 12px; }
+.zigbee-found:empty { display: none; }
+
+/* A Zigbee device row, read top down: what you called it, what it is,
+   how it is, and the address last for when you go looking. Four lines
+   at one size and one colour is a list with no answer in it -- the eye
+   has nowhere to land, which is what made this panel hard to read. */
+.zigbee-row { gap: 4px; }
+.zigbee-row-name { color: var(--ink); font-size: 17px; font-weight: 650; }
+.zigbee-row-what { color: var(--muted); font-size: 13px; }
+.zigbee-row-status { display: flex; align-items: center; gap: 7px; color: var(--leaf); font-size: 13px; }
+/* The dot takes the line's own colour, so health is legible at a glance
+   and still spelt out for anyone who does not see the difference. */
+.zigbee-row-status::before { content: ""; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.zigbee-row-status.is-silent { color: var(--coral); }
+.zigbee-row-eui { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+
+/* A found device is a question, so it looks like one rather than like a
+   device in use that happens to sit lower down the page. */
+.zigbee-waiting { border-color: #e4cf92; background: #fffdf4; }
+
+/* The plug's switch. Big enough to be the point of the page, because
+   for a device whose whole job is to be on or off, the control is the
+   reading. */
+.zigbee-plug { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 4px 0 14px; }
+.zigbee-switch { display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); cursor: pointer; font: inherit; }
+.zigbee-switch-track { position: relative; width: 52px; height: 30px; border-radius: 999px; background: #d3dbd4; transition: background .18s ease; }
+.zigbee-switch-knob { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0003; transition: transform .18s ease; }
+.zigbee-switch[aria-checked="true"] .zigbee-switch-track { background: var(--leaf); }
+.zigbee-switch[aria-checked="true"] .zigbee-switch-knob { transform: translateX(22px); }
+.zigbee-switch-label { min-width: 2.4em; font-size: 16px; font-weight: 650; }
+/* Unknown is not off. A plug the hub has not heard from is drawn
+   neither way, so the page never claims a state it was not told. */
+.zigbee-switch[aria-checked="mixed"] .zigbee-switch-track { background: repeating-linear-gradient(135deg, #d3dbd4, #d3dbd4 5px, #c2ccc3 5px, #c2ccc3 10px); }
+.zigbee-switch[aria-checked="mixed"] .zigbee-switch-knob { transform: translateX(11px); }
+.zigbee-switch[disabled] { opacity: .55; cursor: not-allowed; }
+.zigbee-plug-note { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.zigbee-plug-note p { margin: 0; }
+
+/* The thermometer's two numbers, side by side: neither is the headline. */
+.zigbee-air { display: flex; flex-wrap: wrap; gap: 32px; align-items: baseline; }
+.zigbee-air .zigbee-reading-number { margin: 0; }
+
+/* An address among the figures: it is a fact, so it is set like the
+   others, but kept monospaced because every character of it matters. */
+.ph-figures dd code { display: inline-block; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* Which sensor the charts below belong to. Shown only where a room has
+   more than one, because naming the only sensor in a room is noise. */
+
+/* One colour per sensor, used by its line, its dots and its legend
+   entry, so a reader matches them without a caption. Chosen to stay
+   apart for the common kinds of colour blindness rather than to look
+   like a palette. */
+.history-line.series-0, .history-line.series-1, .history-line.series-2,
+.history-line.series-3, .history-line.series-4, .history-line.series-5 { stroke: var(--series); }
+.history-point.series-0, .history-point.series-1, .history-point.series-2,
+.history-point.series-3, .history-point.series-4, .history-point.series-5 { fill: var(--series); }
+/* The newest reading stays hollow so it reads as the live end of the
+   line, but in its own sensor's colour. */
+.latest-point.series-0, .latest-point.series-1, .latest-point.series-2,
+.latest-point.series-3, .latest-point.series-4, .latest-point.series-5 { fill: white; stroke: var(--series); }
+
+/* The legend, which is also the switch. Hidden when there is only one
+   sensor: naming the only line is noise. */
+.chart-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.chart-legend-entry { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 13px; }
+.chart-legend-entry b { color: var(--muted); font-weight: 650; }
+.chart-legend-swatch { width: 11px; height: 11px; border-radius: 50%; background: var(--series); }
+/* Switched off: the line is gone from the chart and the entry says so
+   by going grey, rather than by disappearing and leaving no way back. */
+.chart-legend-entry[aria-pressed="false"] { color: var(--muted); background: #f1f4f0; }
+.chart-legend-entry[aria-pressed="false"] .chart-legend-swatch { background: var(--line); }
+
+/* A leak sensor's one answer, large enough to read from the doorway.
+   Dry is the quiet state and looks it; wet has to interrupt. */
+.zigbee-leak-state { margin: 4px 0 10px; font-size: 30px; font-weight: 700; color: var(--leaf); }
+.zigbee-leak-state[data-wet="true"] { color: var(--coral); }
+.zigbee-leak-state[data-wet="unknown"] { color: var(--muted); font-size: 20px; }
+
+/* A button nobody can press should look like one.
+ *
+ * There was no rule for this, so each component that disabled a button
+ * had to remember to style it, and the ones that forgot -- Delete on a
+ * room holding twelve plants -- stayed solid green and looked
+ * pressable. It sits at the end because up beside the base `button`
+ * rule it tied with `.inline-control button` on specificity and lost
+ * on order. A component wanting its own disabled look is more specific
+ * and still wins. */
+button:disabled { color: var(--muted); background: #eef2ed; border-color: var(--line); cursor: not-allowed; }

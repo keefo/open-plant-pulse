@@ -19,16 +19,19 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Type
 
-from .driver import FakeLight, LightDriver, LightState, PowerResult
+from .driver import FakeLight, LightDriver, LightState, PowerResult, TimerLight
 from .neewer_gl1c import NeewerGL1C
 from .schedule import in_window
 from .wemo_switch import WemoSwitch
+from .zigbee_plug import ZigbeePlugLight, available_plugs
 
 
 LOG = logging.getLogger(__name__)
 DRIVERS: Dict[str, Type[LightDriver]] = {
     NeewerGL1C.kind: NeewerGL1C,
     WemoSwitch.kind: WemoSwitch,
+    ZigbeePlugLight.kind: ZigbeePlugLight,
+    TimerLight.kind: TimerLight,
 }
 SIMULATED_DRIVERS: Dict[str, Type[LightDriver]] = {**DRIVERS, FakeLight.kind: FakeLight}
 TICK_SECONDS = 10.0
@@ -91,7 +94,21 @@ class LightService:
 
     # --- what the API asks ------------------------------------------------
     def driver_kinds(self) -> List[Dict[str, Any]]:
-        return [driver.describe() for driver in self._drivers.values()]
+        """Every kind of light, with the choices a form needs filled in.
+
+        A field that picks a device the hub already owns cannot list its
+        options from the class: what plugs exist is a fact about this
+        hub right now. So the options are attached here, where the
+        question is being asked, rather than baked into the driver.
+        """
+        kinds = []
+        for driver in self._drivers.values():
+            described = driver.describe()
+            for field in described["fields"]:
+                if field["kind"] == "zigbee-plug":
+                    field["options"] = available_plugs()
+            kinds.append(described)
+        return kinds
 
     def lights(self) -> List[Dict[str, Any]]:
         assignments = self._store.light_assignments()
@@ -111,7 +128,8 @@ class LightService:
         self._launch(light_id, driver, clean)
         return self.light(light_id)
 
-    def update_light(self, light_id: str, display_name: str, config: Any) -> Dict[str, Any]:
+    def update_light(self, light_id: str, display_name: str, config: Any,
+                     schedule: Any = None) -> Dict[str, Any]:
         stored = self._store.light(light_id)
         if stored is None:
             raise LookupError("light not found")
@@ -123,6 +141,19 @@ class LightService:
             if name not in clean and name in stored["config"]:
                 clean[name] = stored["config"][name]
         self._store.update_light(light_id, display_name, clean)
+        if schedule is not None:
+            # A lamp's hours are the lamp's: one switch cannot keep two.
+            self._store.set_light_schedule(light_id, schedule)
+            # Setting the hours outranks an earlier flip of the switch.
+            # Somebody who has just said when this light should be on has
+            # said it more deliberately than whoever last pressed a
+            # button, and the hour of grace a manual switch earns should
+            # not be spent ignoring the instruction that replaced it.
+            with self._lock:
+                running = self._lights.get(light_id)
+            if running is not None:
+                running.override_until = 0.0
+            self.lighting_changed()
         if clean != stored["config"]:
             with self._lock:
                 old = self._lights.pop(light_id, None)
@@ -279,6 +310,7 @@ class LightService:
 
     @staticmethod
     def _active_schedule(assignment: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """The lamp's own hours, where it still lights something living."""
         if assignment is None or assignment["archived"]:
             return None
         schedule = assignment["schedule"]
@@ -300,14 +332,21 @@ class LightService:
                 state = LightState(False, None, f"driver error: {error}")
             alert = light.alert
             override_left = max(0, int(light.override_until - self._clock()))
-        schedule = self._active_schedule(assignment)
+        schedule = self._store.light_schedule(stored["light_id"])["schedule"]
         return {
             **stored,
+            # Whether the scheduler will act on those hours: a lamp over
+            # nothing living is left alone, but it keeps its window.
+            "scheduled": self._active_schedule(assignment) is not None,
             "driver_label": driver_class.label if driver_class else stored["driver"],
             "capabilities": list(driver_class.capabilities) if driver_class else [],
             "state": {"online": state.online, "power": state.power, "detail": state.detail},
             "alert": alert,
             "override_seconds_left": override_left,
+            # Every plant under this lamp, not just the headline one: a
+            # panel over a bench is one light serving several, and a card
+            # that names one of them invites the others to be forgotten.
+            "plants": (assignment or {}).get("plants", []),
             "schedule": (
                 {
                     **schedule,

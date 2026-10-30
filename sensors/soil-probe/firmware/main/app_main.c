@@ -18,6 +18,7 @@
 #include "device_identity.h"
 #include "firmware_update.h"
 #include "force_report.h"
+#include "load_scale.h"
 #include "report_delivery.h"
 #include "report_id.h"
 #include "sht45.h"
@@ -311,6 +312,12 @@ static bool acquire_soil_sample(opp_bthome_report_t *report)
 
 static void enter_deep_sleep(void)
 {
+    /* PD_SCK high stops the HX711 and the bridge excitation with it. Three
+     * parallel cells draw about 13 mA while excited, which is twenty times the
+     * whole sleep budget, so this runs before every sleep whether or not a
+     * reading was taken this cycle. */
+    opp_load_scale_power_down();
+
     opp_device_config_t config;
     opp_device_config_store_get(&config);
     const uint64_t sleep_us =

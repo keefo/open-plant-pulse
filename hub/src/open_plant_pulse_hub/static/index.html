@@ -11,6 +11,7 @@
     <a class="brand" href="/">Open Plant Pulse</a>
     <div class="primary-links">
       <a id="fleet-link" class="nav-link" href="/">Plants</a>
+      <a id="rooms-link" class="nav-link" href="/rooms">Rooms</a>
       <a id="settings-link" class="nav-link" href="/settings">Settings</a>
     </div>
   </nav>
@@ -27,6 +28,10 @@
         <div class="connection-copy">
           <strong id="plant-page-state">Nothing recorded yet</strong>
           <span id="plant-page-watered">Never watered</span>
+          <!-- Which lamp is over this plant, and whether it is on. The
+               switches live on the configuration page; what belongs here
+               is the answer, not the controls. -->
+          <a id="plant-page-lighting" class="plant-page-lighting" href="#" hidden></a>
         </div>
       </div>
       <button class="secondary-action arrange-sections" type="button">Arrange</button>
@@ -56,6 +61,100 @@
         <button id="arrange-save" type="button">Save order</button>
       </div>
     </div>
+    <!-- Rooms, because air belongs to a room rather than to a plant.
+         One thermometer answers for everything on that windowsill, and
+         reading them side by side is how a room that is too dry or too
+         cold becomes obvious. Cards are built by script from the rooms
+         the hub knows, so adding a room adds a card. -->
+    <section class="rooms-overview" data-page="rooms" aria-labelledby="rooms-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">HOUSEHOLD</p>
+          <h1 id="rooms-title">Rooms</h1>
+          <p>What the air is doing in each room, and what is growing in it.</p>
+        </div>
+      </div>
+      <div id="rooms-grid" class="rooms-grid"></div>
+      <p id="rooms-empty" class="history-chart-empty" hidden>
+        No rooms yet. Rooms are added when a plant or sensor is given one.
+      </p>
+    </section>
+
+    <!-- A room's own page. Editing a room used to live in Settings, where
+         the form could say what a room was called but not what was in it;
+         what is in a room is what decides whether it can be deleted, so
+         the two belong on the same page. -->
+    <section class="room-page" data-page="room" aria-labelledby="room-page-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ROOMS</p>
+          <h1 id="room-page-title">Room</h1>
+          <p id="room-page-summary"></p>
+        </div>
+        <a id="room-page-back" class="secondary-action" href="/settings/rooms">All rooms</a>
+      </div>
+
+      <form id="room-page-form" class="settings-panel">
+        <h2 id="room-page-details-title">Details</h2>
+        <input type="hidden" id="room-page-id" value="">
+        <label for="room-page-name">Name</label>
+        <input id="room-page-name" maxlength="80" required placeholder="Living room">
+        <label for="room-page-aspect">Windows face</label>
+        <select id="room-page-aspect">
+          <option value="unknown">Not sure</option>
+          <option value="north">North</option>
+          <option value="north_east">North-east</option>
+          <option value="east">East</option>
+          <option value="south_east">South-east</option>
+          <option value="south">South</option>
+          <option value="south_west">South-west</option>
+          <option value="west">West</option>
+          <option value="north_west">North-west</option>
+          <option value="several">Several directions</option>
+          <option value="none">No windows</option>
+        </select>
+        <label for="room-page-light">Daylight</label>
+        <select id="room-page-light">
+          <option value="unknown">Not sure</option>
+          <option value="low">Low &middot; small or shaded windows</option>
+          <option value="medium">Medium</option>
+          <option value="bright">Bright &middot; direct sun for part of the day</option>
+        </select>
+        <label for="room-page-notes">Anything else</label>
+        <textarea id="room-page-notes" maxlength="500" rows="2" placeholder="Draughty in winter, radiator under the sill"></textarea>
+        <div class="inline-control">
+          <button id="room-page-save" type="submit">Save</button>
+          <output id="room-page-message" aria-live="polite"></output>
+        </div>
+      </form>
+
+      <!-- data-own-visibility: these three describe a room that exists.
+           renderPage shows every section of the page it switches to, so
+           without this they flashed up on /rooms/new and were taken away
+           again at the first refresh. -->
+      <section id="room-page-plants-section" class="settings-panel"
+               data-own-visibility="true" aria-labelledby="room-page-plants-title" hidden>
+        <h2 id="room-page-plants-title">Plants</h2>
+        <div id="room-page-plants" class="settings-sensor-list"></div>
+      </section>
+
+      <section id="room-page-sensors-section" class="settings-panel"
+               data-own-visibility="true" aria-labelledby="room-page-sensors-title" hidden>
+        <h2 id="room-page-sensors-title">Sensors</h2>
+        <div id="room-page-sensors" class="settings-sensor-list"></div>
+      </section>
+
+      <section id="room-page-danger-section" class="settings-panel"
+               data-own-visibility="true" aria-labelledby="room-page-danger-title" hidden>
+        <h2 id="room-page-danger-title">Delete this room</h2>
+        <p id="room-page-delete-note">A room is deleted once nothing is in it.</p>
+        <div class="inline-control">
+          <button id="room-page-delete" class="danger" type="button">Delete room</button>
+          <output id="room-page-delete-message" aria-live="polite"></output>
+        </div>
+      </section>
+    </section>
+
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
       <div class="section-heading">
         <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
@@ -66,6 +165,7 @@
               <option value="thirst">Thirstiest first</option>
               <option value="watered">Longest since watering</option>
               <option value="room">Room</option>
+              <option value="profile">Kind of plant</option>
             </select>
           </label>
           <button id="add-plant" class="secondary-action" type="button">Add a plant</button>
@@ -79,11 +179,13 @@
         <a class="primary-action" href="/onboarding">Add a sensor</a>
       </div>
       <div class="settings-tabs" role="tablist">
-        <a id="settings-tab-sensors" class="settings-tab" href="/settings" role="tab">Sensors</a>
+        <a id="settings-tab-sensors" class="settings-tab" href="/settings/sensors" role="tab">Sensors</a>
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
+        <a id="settings-tab-time" class="settings-tab" href="/settings/time" role="tab">Time</a>
         <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
+        <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
       </div>
 
       <div id="settings-sensors-panel" class="settings-panel-group">
@@ -91,55 +193,134 @@
         <p class="settings-note">A sensor belongs to one hub. To move one to a different hub, forget it here, or power-cycle it five times if this hub is unreachable. Either way it returns to onboarding and must be added again.</p>
       </div>
 
+
+      <div id="settings-zigbee-panel" class="settings-panel-group" hidden>
+        <!-- Devices first. The gateway's own numbers are diagnostics, and
+             putting them at the top made the page read as a protocol
+             inspector rather than a list of the things in the house. -->
+        <div class="settings-panel">
+          <div class="row-between">
+            <h2>Devices</h2>
+            <span id="zigbee-gateway-brief" class="note mute"></span>
+          </div>
+          <!-- The devices in use. Anything that has merely joined the
+               radio is not one of them: it waits under the scan button
+               with the decision it needs. -->
+          <div id="zigbee-devices" class="settings-sensor-list"></div>
+          <div class="zigbee-actions" style="margin-top:12px">
+            <button id="zigbee-permit" type="button">Scan for new devices</button>
+            <span id="zigbee-permit-state" class="note mute"></span>
+            <div id="zigbee-radar" class="zigbee-radar" hidden aria-hidden="true">
+              <div class="zigbee-radar-sweep"></div>
+            </div>
+          </div>
+          <div id="zigbee-found" class="settings-sensor-list zigbee-found"></div>
+        </div>
+
+        <!-- Every frame any device sends is written down, and kept. The
+             reports are the only record of what a device actually said,
+             and a window that quietly deleted them took the history
+             somebody then wanted to chart. -->
+        <div class="settings-panel">
+          <div class="row-between">
+            <h2>Report history</h2>
+            <span id="zigbee-reports-count" class="note mute"></span>
+          </div>
+          <form id="zigbee-reports-form" class="sensor-settings-form">
+            <label>Keep raw reports
+              <select id="zigbee-reports-keep">
+                <option value="forever">For ever</option>
+                <option value="365">1 year</option>
+                <option value="180">6 months</option>
+                <option value="90">3 months</option>
+                <option value="30">30 days</option>
+                <option value="7">7 days</option>
+              </select>
+              <small>Every reading every device sends, kept as it arrived. Choosing a
+                window deletes anything older straight away, and keeps deleting.</small>
+            </label>
+            <output id="zigbee-reports-state" aria-live="polite"></output>
+          </form>
+          <p class="settings-note">Scanning opens the network to devices that have never joined. Put the new device into pairing first; nothing visible happens until one answers. Whatever joins is listed just above and does nothing at all until you add it &mdash; joining the radio and being used by the hub are separate things, and the hub will not decide the second for you. Devices already here are unaffected.</p>
+        </div>
+
+        <div class="settings-panel" id="zigbee-advanced">
+          <h2>Dongle and troubleshooting</h2>
+          <dl class="ph-figures" style="margin-top:12px">
+            <div><dt>Dongle</dt><dd id="zigbee-gw-state">--</dd></div>
+            <div><dt>Network</dt><dd id="zigbee-gw-pan">--</dd></div>
+            <div><dt>Channel</dt><dd id="zigbee-gw-channel">--</dd></div>
+            <div><dt>Devices known</dt><dd id="zigbee-gw-count">--</dd></div>
+            <div><dt>Running for</dt><dd id="zigbee-gw-uptime">--</dd></div>
+          </dl>
+          <h3 class="section-subheading">Restarts</h3>
+          <p class="ph-explainer">A coordinator that restarts loses the
+            children it relays for, so a device can go on reporting into
+            nothing while both ends look healthy. Kept in the database, so
+            a hub restart does not take the evidence with it.</p>
+          <div class="raw-report-scroll" tabindex="0" aria-label="Dongle restarts">
+            <table class="zigbee-table" id="zigbee-gw-restarts">
+              <thead><tr><th>When</th><th>Reason</th><th>Previous run</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="zigbee-gw-restarts-none" class="history-chart-empty">
+            No restarts recorded. That is the state to want.</p>
+          <h3 class="section-subheading">Radio neighbours</h3>
+          <p class="ph-explainer">The stack's own view of what it can hear, which is a different thing from the list above: it shows what each device negotiated and how well the two radios reach each other.</p>
+          <div class="raw-report-scroll" tabindex="0" aria-label="Radio neighbours">
+            <table class="zigbee-table" id="zigbee-neighbours">
+              <thead><tr><th>Device</th><th>Role</th><th>Receiver</th><th>Signal</th><th>Link quality</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="zigbee-neighbours-empty" class="ph-explainer" hidden>Nothing in range.</p>
+          <div class="zigbee-actions" style="margin-top:14px">
+            <button id="zigbee-release" type="button">Release the dongle</button>
+          </div>
+          <p class="ph-explainer">A serial port belongs to one program at a time, so the hub has to let go before the dongle can be flashed or watched from a terminal. Releasing it clears what the hub knows; it comes back on reconnect.</p>
+        </div>
+      </div>
+
       <div id="settings-rooms-panel" class="settings-panel-group" hidden>
-        <form id="room-form" class="settings-panel">
-          <h2 id="room-form-title">Add a room</h2>
-          <p>Where a plant lives shapes what it needs. What you record here is used when judging its readings.</p>
-          <input type="hidden" id="room-id" value="">
-          <label for="room-name">Name</label>
-          <input id="room-name" maxlength="80" required placeholder="Living room">
-          <label for="room-aspect">Windows face</label>
-          <select id="room-aspect">
-            <option value="unknown">Not sure</option>
-            <option value="north">North</option>
-            <option value="north_east">North-east</option>
-            <option value="east">East</option>
-            <option value="south_east">South-east</option>
-            <option value="south">South</option>
-            <option value="south_west">South-west</option>
-            <option value="west">West</option>
-            <option value="north_west">North-west</option>
-            <option value="several">Several directions</option>
-            <option value="none">No windows</option>
-          </select>
-          <label for="room-light">Daylight</label>
-          <select id="room-light">
-            <option value="unknown">Not sure</option>
-            <option value="low">Low · small or shaded windows</option>
-            <option value="medium">Medium</option>
-            <option value="bright">Bright · direct sun for part of the day</option>
-          </select>
-          <label for="room-notes">Anything else</label>
-          <textarea id="room-notes" maxlength="500" rows="2" placeholder="Draughty in winter, radiator under the sill"></textarea>
+        <div class="settings-panel">
+          <h2>Rooms</h2>
+          <p>Where a plant lives shapes what it needs. What you record about a room is used when judging its readings.</p>
           <div class="inline-control">
-            <button id="save-room" type="submit">Add room</button>
-            <button id="cancel-room-edit" type="button" hidden>Cancel</button>
+            <a class="primary-action" href="/rooms/new">Add a room</a>
             <output id="room-message" aria-live="polite"></output>
           </div>
-        </form>
+        </div>
         <div id="room-list" class="settings-sensor-list"></div>
       </div>
 
       <div id="settings-lights-panel" class="settings-panel-group" hidden>
         <form id="light-form" class="settings-panel">
           <h2 id="light-form-title">Add a light</h2>
-          <p>The hub switches each light in whatever way its type needs. Which plant a light serves, and when it is lit, is set on that plant's configuration page.</p>
+          <p>The hub switches each light in whatever way its type needs, on the hours set here.
+            Which plants stand under a light, and how much of it reaches each of them, is set
+            on those plants' configuration pages.</p>
           <input type="hidden" id="light-id" value="">
           <label for="light-name">Name</label>
           <input id="light-name" maxlength="80" required placeholder="Grow panel">
           <label for="light-driver">Type</label>
           <select id="light-driver" required></select>
           <div id="light-fields" class="light-fields"></div>
+          <label class="switch-row" for="light-schedule-enabled">
+            <input id="light-schedule-enabled" class="switch" type="checkbox" checked>
+            <div>
+              <strong>Follow a daily schedule</strong>
+              <small>When off, this light is only switched by hand.</small>
+            </div>
+          </label>
+          <div class="light-window">
+            <label>Lights on<input id="light-schedule-on" type="time" value="08:00"></label>
+            <label>Lights off<input id="light-schedule-off" type="time" value="21:30"></label>
+          </div>
+          <p class="ph-explainer">A light is one switch, so its hours belong to it
+            rather than to any one plant beneath it &mdash; a panel over a bench keeps
+            the same window for everything under it. Times are this hub&rsquo;s local
+            time, and a window may run past midnight.</p>
           <div class="inline-control">
             <button id="save-light" type="submit">Add light</button>
             <button id="cancel-light-edit" type="button" hidden>Cancel</button>
@@ -147,6 +328,22 @@
           </div>
         </form>
         <div id="light-list" class="settings-sensor-list"></div>
+      </div>
+
+      <div id="settings-time-panel" class="settings-panel-group" hidden>
+        <form id="hub-timezone-form" class="settings-panel">
+          <h2>Time zone</h2>
+          <p>Where this hub keeps time. Readings are stored in UTC whatever this says; what it decides is every hour of the day the hub reasons about &mdash; the hour a scale writes the day&rsquo;s weight, and which day an evening&rsquo;s watering is filed under.</p>
+          <label for="hub-timezone">Zone</label>
+          <select id="hub-timezone">
+            <option value="">Use this computer&rsquo;s zone</option>
+          </select>
+          <div class="inline-control">
+            <button id="save-hub-timezone" type="submit">Save</button>
+            <output id="hub-timezone-message" aria-live="polite"></output>
+          </div>
+          <small id="hub-timezone-now"></small>
+        </form>
       </div>
 
       <div id="settings-wifi-panel" class="settings-panel-group" hidden>
@@ -251,11 +448,15 @@
       </div>
     </section>
 
-    <section class="primary-grid" data-page="plant" data-section="readings" aria-label="Primary plant measurements" hidden>
+    <!-- The sections below need a soil probe, and say so by their
+         sensor kind rather than by each one testing for a sensor.
+         A plant that is weighed but not probed showed four panels of
+         "waiting for a reading" that would wait for ever. -->
+    <section class="primary-grid" data-page="plant" data-section="readings" data-sensor-kind="bthome soil" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
-          <strong><b id="moisture">--</b><small>%</small></strong>
+          <strong><b id="moisture" class="measure" data-unit="%" data-unit-hidden="true">--</b></strong>
         </div>
         <div class="moisture-pot-shell">
           <div id="moisture-vessel" class="moisture-vessel" role="img" aria-label="Waiting for soil moisture">
@@ -272,7 +473,7 @@
         </div>
       </article>
       <article class="metric soil-temp root-zone-gauge" data-metric="soil_temperature_c">
-        <span>Soil temperature</span><strong><b id="soil-temp">--</b><small>°C</small></strong>
+        <span>Soil temperature</span><strong><b id="soil-temp" class="measure" data-unit="°C" data-unit-hidden="true">--</b></strong>
         <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
         <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
         <p class="range-status">Waiting for reading</p>
@@ -287,7 +488,7 @@
 
     <section class="climate-history" data-page="plant" data-section="air" aria-labelledby="climate-history-title" hidden>
       <div class="section-heading climate-history-heading">
-        <div><p class="eyebrow" id="climate-history-eyebrow">SHT45 · LIVE HISTORY</p><h2 id="climate-history-title">Air conditions</h2></div>
+        <div><p class="eyebrow" id="climate-history-eyebrow">AIR</p><h2 id="climate-history-title">Air conditions</h2></div>
         <div class="history-range-selector" role="group" aria-label="Chart date range">
           <button type="button" data-history-range="live" aria-pressed="true">Live</button>
           <button type="button" data-history-range="24h" aria-pressed="false">24h</button>
@@ -297,15 +498,16 @@
         </div>
       </div>
       <p id="climate-history-status" class="climate-history-status" aria-live="polite">Waiting for air readings</p>
+      <div id="climate-legend" class="chart-legend" hidden></div>
       <div class="climate-chart-grid">
         <article class="climate-chart-card">
-          <header><span>Temperature</span><strong><b id="history-temperature">--</b><small>°C</small></strong></header>
+          <header><span>Temperature</span><strong><b id="history-temperature" class="measure" data-unit="°C" data-unit-hidden="true">--</b></strong></header>
           <svg id="temperature-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Air temperature history" hidden></svg>
           <p id="temperature-history-empty" class="history-chart-empty">No temperature readings in this range.</p>
           <p id="temperature-history-range" class="range-status history-range-status">Waiting for reading</p>
         </article>
         <article class="climate-chart-card">
-          <header><span>Relative humidity</span><strong><b id="history-humidity">--</b><small>% RH</small></strong></header>
+          <header><span>Relative humidity</span><strong><b id="history-humidity" class="measure" data-unit="% RH" data-unit-hidden="true">--</b></strong></header>
           <svg id="humidity-history-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Relative humidity history" hidden></svg>
           <p id="humidity-history-empty" class="history-chart-empty">No humidity readings in this range.</p>
           <p id="humidity-history-range" class="range-status history-range-status">Waiting for reading</p>
@@ -313,25 +515,66 @@
       </div>
     </section>
 
-    <section id="plant-assessment" class="plant-assessment" data-page="plant" data-section="assessment" data-level="waiting" aria-live="polite" hidden>
-      <div>
-        <p class="eyebrow">CURRENT HEALTH</p>
-        <strong id="plant-status">Waiting</strong>
+    <!-- The soil, built the same way as the air above: one chart per
+         measurement, one line per probe. A pot can hold more than one
+         probe and they disagree -- capacitive probes each read on their
+         own uncalibrated scale -- so both are drawn rather than one
+         being picked. Not tied to any kind of sensor: a Bluetooth spike
+         and a Zigbee probe measure the same soil. -->
+    <section class="climate-history" data-page="plant" data-section="soil"
+             data-own-visibility="true" aria-labelledby="soil-history-title" hidden>
+      <div class="section-heading climate-history-heading">
+        <div><p class="eyebrow">SOIL</p><h2 id="soil-history-title">Soil conditions</h2></div>
       </div>
-      <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
+      <p id="soil-history-status" class="climate-history-status" aria-live="polite"></p>
+      <div id="soil-legend" class="chart-legend" hidden></div>
+      <div class="climate-chart-grid">
+        <article class="climate-chart-card">
+          <header><span>Moisture</span><strong><b id="soil-history-moisture" class="measure" data-unit="%" data-unit-hidden="true">--</b></strong></header>
+          <svg id="soil-moisture-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Soil moisture history" hidden></svg>
+          <p id="soil-moisture-empty" class="history-chart-empty">No moisture readings in this range.</p>
+        </article>
+        <article class="climate-chart-card">
+          <header><span>Soil temperature</span><strong><b id="soil-history-temperature" class="measure" data-unit="°C" data-unit-hidden="true">--</b></strong></header>
+          <svg id="soil-temp-chart" class="history-chart" viewBox="0 0 720 220" role="img" aria-label="Soil temperature history" hidden></svg>
+          <p id="soil-temp-empty" class="history-chart-empty">No soil temperature in this range.</p>
+        </article>
+      </div>
     </section>
 
-    <section id="drainage-assessment" class="drainage-assessment" data-page="plant" data-section="drainage" data-level="learning" aria-live="polite" hidden>
-      <div>
-        <p class="eyebrow">POT RESPONSE</p>
-        <strong id="drainage-status">Learning</strong>
-        <span id="watering-interval" class="watering-interval">Learning watering rhythm</span>
+    <!-- Two verdicts, not two subjects: what the hub makes of the plant,
+         and what it makes of the pot it stands in. Both are conclusions
+         drawn from the probe rather than readings, both go quiet without
+         one, so they are read together. The ids and classes are the ones
+         the renderers already reach for; only the wrapper changed. -->
+    <section class="plant-verdicts" data-page="plant"
+             data-section="assessment" data-sensor-kind="bthome soil"
+             aria-labelledby="plant-verdicts-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">ASSESSMENT</p><h2 id="plant-verdicts-title">How it is doing</h2></div>
       </div>
-      <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
+      <div class="plant-verdicts-pair">
+        <div id="plant-assessment" class="plant-assessment" data-level="waiting" aria-live="polite">
+          <div>
+            <p class="verdict-of">Plant</p>
+            <strong id="plant-status">Waiting</strong>
+          </div>
+          <p id="plant-status-reason">A conclusion will appear after the first complete sensor reading.</p>
+        </div>
+
+        <div id="drainage-assessment" class="drainage-assessment" data-level="learning" aria-live="polite">
+          <div>
+            <p class="verdict-of">Pot</p>
+            <strong id="drainage-status">Learning</strong>
+            <span id="watering-interval" class="watering-interval">Learning watering rhythm</span>
+          </div>
+          <p id="drainage-status-reason">Three completed watering cycles are needed to assess pot suitability.</p>
+        </div>
+      </div>
     </section>
 
-    <section class="chemistry" data-page="plant" data-section="chemistry" aria-label="Soil chemistry measurements" hidden>
-      <div class="section-heading"><div><p class="eyebrow">ROOT ZONE</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
+    <section class="chemistry" data-page="plant" data-section="chemistry" data-sensor-kind="bthome" aria-label="Soil chemistry measurements" hidden>
+      <div class="section-heading"><div><p class="eyebrow">SOIL</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
       <p id="chemistry-measured" class="chemistry-measured" hidden></p>
       <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
         <div class="chemistry-value"><span>Nutrient level</span><strong><b id="nutrient-level">--</b><small id="nutrient-level-basis"></small></strong></div>
@@ -373,6 +616,44 @@
       <p id="chemistry-guidance" class="chemistry-guidance"></p>
     </section>
 
+    <!-- data-own-visibility: renderPage decides which sections belong to
+         the page being shown, but whether this one has anything to say
+         depends on the plant -- it needs lamps and a measured PPFD. Its
+         own renderer answers that, and says so here so the two do not
+         take turns setting hidden on every poll. -->
+    <section class="plant-light" data-page="plant" data-section="light"
+             data-own-visibility="true"
+             aria-labelledby="plant-light-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">LIGHT</p><h2 id="plant-light-title">Daily light</h2></div>
+        <span id="plant-light-summary"></span>
+      </div>
+      <p class="ph-explainer">The light measured at this plant, over the time its lamps
+        were lit &mdash; so it counts the hours the hub switched, not what came through
+        a window. Two lamps on together are already in the one measurement, so
+        overlapping hours count once.</p>
+      <article id="plant-light-gauge" class="metric plant-light-gauge" data-metric="dli_mol_m2_day">
+        <span id="plant-light-period">Daily light</span>
+        <!-- The sum sits on the figure's own line: it is not a second fact
+             under the first, it is where the first came from. A daily total
+             is not measured but multiplied, and showing the two numbers is
+             the difference between a reading and an assertion. -->
+        <strong><b id="plant-light-latest" class="measure"
+           data-unit="mol/m&sup2;/day" data-unit-hidden="true">--</b><small
+           id="plant-light-working" class="light-working"></small></strong>
+        <div class="range-track" id="plant-light-track">
+          <span id="plant-light-bands" class="light-bands"></span>
+          <span class="ideal-range"></span><i class="value-marker"></i>
+          <i id="plant-light-probe" class="light-probe" hidden></i>
+        </div>
+        <div class="range-labels">
+          <span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span>
+        </div>
+        <p class="range-status">Waiting for a day of light</p>
+        <p id="plant-light-hint" class="light-hint" role="status"></p>
+      </article>
+    </section>
+
     <section class="watering-calendar" data-page="plant" data-section="calendar" aria-labelledby="watering-calendar-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">CARE RHYTHM</p><h2 id="watering-calendar-title">Current year</h2></div>
@@ -389,20 +670,6 @@
       <div class="watering-calendar-legend" aria-hidden="true"><span>Moisture</span><i data-state="moisture" data-level="1"></i><i data-state="moisture" data-level="2"></i><i data-state="moisture" data-level="3"></i><span>Higher</span><i data-state="watered"></i><span>Watered</span><i data-state="drying" data-level="1"></i><span>Drying</span><i data-state="drying" data-level="2"></i><i data-state="drying" data-level="3"></i><span>Overdue</span><i data-fertilized="true"></i><span>Fertilized</span></div>
     </section>
 
-    <section id="plant-lighting-summary" class="plant-lighting-summary" data-page="plant" data-section="lighting" aria-labelledby="plant-lighting-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">GROW LIGHTS</p><h2 id="plant-lighting-title">Lighting</h2></div>
-        <div class="lighting-heading-actions">
-          <label class="lighting-all" for="plant-lighting-all">
-            <span>All lights</span>
-            <input id="plant-lighting-all" class="switch" type="checkbox">
-          </label>
-          <a id="plant-lighting-change" class="secondary-action" href="/settings">Adjust lighting</a>
-        </div>
-      </div>
-      <p id="plant-lighting-window" class="lighting-window"></p>
-      <div id="plant-lighting-lights" class="lighting-lights"></div>
-    </section>
 
 
     <section class="plant-weight" data-page="plant" data-section="weight" aria-labelledby="plant-weight-title" hidden>
@@ -411,11 +678,11 @@
         <span id="plant-weight-summary">Nothing weighed yet</span>
       </div>
       <div class="journey-stats" aria-live="polite">
-        <div><strong id="plant-weight-latest">--</strong><span id="plant-weight-latest-label">Weighs now</span></div>
-        <div><strong id="plant-weight-used">--</strong><span>Water used</span></div>
-        <div><strong id="plant-weight-remaining">--</strong><span>Water left</span></div>
-        <div><strong id="plant-weight-daily">--</strong><span>Used a day</span></div>
-        <div><strong id="plant-weight-days">--</strong><span>Days of water left</span></div>
+        <div><strong id="plant-weight-latest" class="measure" data-unit="g" data-unit-hidden="true">--</strong><span id="plant-weight-latest-label">Weighs now</span></div>
+        <div><strong id="plant-weight-used" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Water used</span></div>
+        <div><strong id="plant-weight-remaining">--</strong><span id="plant-weight-remaining-label">Water left</span></div>
+        <div><strong id="plant-weight-daily" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Used a day</span></div>
+        <div><strong id="plant-weight-days" class="measure" data-unit="d" data-unit-hidden="true">--</strong><span>Water lasts</span></div>
       </div>
       <div class="weight-trend">
         <span>Pot weight · last 30 days</span>
@@ -423,106 +690,165 @@
         <p id="plant-weight-chart-empty" class="history-chart-empty">Weigh the pot twice and its drying shows here.</p>
         <p id="plant-weight-chart-summary" class="range-status"></p>
       </div>
-      <div class="inline-control plant-weight-entry">
-        <label for="plant-weight-input">Weighs</label>
-        <input id="plant-weight-input" type="number" step="0.01" min="0" max="500">
-        <select id="plant-weight-unit" aria-label="Weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
+      <div class="plant-weight-scale" id="plant-weight-scale" hidden>
+        <p class="plant-weight-scale-who">
+          Weighed by <a id="plant-weight-scale-link" href="#"></a>
+        </p>
+        <div class="inline-control">
+          <label for="plant-weight-schedule">Record a weight</label>
+          <select id="plant-weight-schedule">
+            <!-- Each option reads on its own. A closed select shows only the
+                 chosen line, so "30 minutes" under a group heading of
+                 "Every" becomes "30 minutes" with nothing to say whether
+                 that is an interval or a time of day. -->
+            <optgroup label="At a regular interval">
+              <option value="every:1800">Every 30 minutes</option>
+              <option value="every:3600">Every hour</option>
+              <option value="every:10800">Every 3 hours</option>
+              <option value="every:21600">Every 6 hours</option>
+              <option value="every:43200">Every 12 hours</option>
+            </optgroup>
+            <optgroup label="Once a day">
+              <option value="at:0">Once a day at midnight</option>
+              <option value="at:6">Once a day at 06:00</option>
+              <option value="at:8">Once a day at 08:00</option>
+              <option value="at:10">Once a day at 10:00</option>
+              <option value="at:12">Once a day at noon</option>
+              <option value="at:18">Once a day at 18:00</option>
+              <option value="at:21">Once a day at 21:00</option>
+            </optgroup>
+          </select>
+          <output id="plant-weight-schedule-message" aria-live="polite"></output>
+        </div>
+        <p class="plant-weight-scale-note">
+          A time of day makes one day comparable with the next. An interval
+          draws the drying curve in more detail.
+        </p>
+        <div class="inline-control plant-weight-scale-actions">
+          <button id="plant-weight-now" type="button">Record a weight now</button>
+          <output id="plant-weight-now-message" aria-live="polite"></output>
+        </div>
+        <button id="plant-weight-by-hand" type="button" class="link-button">
+          Weigh by hand anyway
+        </button>
+      </div>
+      <div class="inline-control plant-weight-entry" id="plant-weight-entry">
+        <label for="plant-weight-input">Weighs (g)</label>
+        <input id="plant-weight-input" type="number" step="1" min="0" max="500000">
         <input id="plant-weight-date" type="date" aria-label="Date weighed">
-        <label class="weight-watered-check" for="plant-weight-watered">
-          <input id="plant-weight-watered" type="checkbox">
-          Just watered
-        </label>
+        <div class="weight-ticks">
+          <!-- No "just watered" tick. A pot that suddenly weighs much more
+               has been watered, and the hub records it as one, asking first
+               so a mistyped number can be cancelled. The tick went unticked
+               four times out of five, and a tick that is usually wrong is
+               worse than none: it had the hub measuring an eleven day drying
+               cycle straight through three refills. Fertilizing keeps its
+               tick -- nothing about the weight reveals it. -->
+          <label class="weight-watered-check" for="plant-weight-fed">
+            <input id="plant-weight-fed" type="checkbox">
+            Just fertilized
+          </label>
+        </div>
         <button id="plant-weight-record" type="button">Record</button>
         <output id="plant-weight-message" aria-live="polite"></output>
       </div>
+      <!-- One Set for both. They are the two ends of the same scale and are
+           usually corrected together; two buttons asked which of them you
+           meant and took a row each to do it.
+
+           Three fields, one Set. Dry is the only one that need not be
+           typed: left empty it is the lightest this pot has ever been
+           weighed, which the scale has already answered.
+
+           A stated dry weight wins even when the pot has since weighed
+           less. Taking the lower of the two would let a single weighing
+           mid-repot stand for ever; instead the chart says when the pot
+           has been lighter than its stated dry, which is a fact worth
+           seeing rather than one worth overruling.
+
+           "Dry at" was Thirsty at's own name until 2026-10-07 (abf925f).
+           They are different floors -- thirsty is when this plant wants
+           water, dry is when the soil has no more to give -- so the two
+           must stay plainly distinct on the page. -->
       <div class="inline-control plant-weight-anchors">
-        <label for="plant-weight-full">Full at</label>
-        <input id="plant-weight-full" type="number" step="0.01" min="0" placeholder="17.40">
-        <select id="plant-weight-full-unit" aria-label="Full weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
-        <button id="plant-weight-set-full" type="button">Set</button>
-        <label for="plant-weight-thirsty">Thirsty at</label>
-        <input id="plant-weight-thirsty" type="number" step="0.01" min="0" placeholder="16.20">
-        <select id="plant-weight-thirsty-unit" aria-label="Thirsty weight unit">
-          <option value="kg">kg</option>
-          <option value="g">g</option>
-        </select>
-        <button id="plant-weight-set-thirsty" type="button">Set</button>
+        <label for="plant-weight-full">Full at (g)</label>
+        <input id="plant-weight-full" type="number" step="1" min="0" max="500000" placeholder="17400">
+        <label for="plant-weight-thirsty">Thirsty at (g)</label>
+        <input id="plant-weight-thirsty" type="number" step="1" min="0" max="500000" placeholder="16200">
+        <label for="plant-weight-dry">Dry at (g)</label>
+        <input id="plant-weight-dry" type="number" step="1" min="0" max="500000" placeholder="lightest weighed">
+        <button id="plant-weight-set-anchors" type="button">Set</button>
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
       <details class="weighing-log" id="weighing-log">
         <summary id="weighing-log-summary">Weighings recorded</summary>
         <div id="weighing-log-list" class="weighing-log-list"></div>
       </details>
-      <p class="settings-note">Weigh the pot whenever you like. Tick <b>Just watered</b> when you weigh it after watering and draining: that is the full pot everything else is measured against, and it records the watering too. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last. The pot's <b>dry</b> weight is not asked for: it is the lightest this pot has ever been weighed, which is the driest it is known to get. The chart runs from full down to that, green above the thirsty weight and warming through to red below it, so a glance says how wet the pot is rather than only how much of this watering is left.</p>
-    </section>
+      <p class="settings-note">Weigh the pot whenever you like. A pot that suddenly weighs much more has been watered, so the weighing is recorded as one; the hub says so before saving, and a mistyped number can be cancelled there. Tick <b>Just fertilized</b> for the one thing the weight cannot reveal; it is written at the weighing&rsquo;s own date, so a weighing entered later is filed on the day it happened, and it does not change the weights below. <b>Thirsty at</b> is what this pot weighs when this plant wants water: high for one that should never dry out, low for one that likes to. Set it once, from the scale or from memory, and the hub can say how long the water will last. The pot's <b>dry</b> weight is not asked for: it is the lightest this pot has ever been weighed, which is the driest it is known to get. The chart runs from full down to that, green above the thirsty weight and warming through to red below it, so a glance says how wet the pot is rather than only how much of this watering is left.</p>
 
-    <section class="plant-weight forecast" data-page="plant" data-section="forecast" aria-labelledby="forecast-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">WHEN TO WATER</p><h2 id="forecast-title">Next watering</h2></div>
-        <span id="forecast-headline"></span>
+      <div class="plant-weight-part forecast">
+        <div class="section-heading plant-weight-part-heading">
+          <div><p class="eyebrow">WHEN TO WATER</p><h3 id="forecast-title">Next watering</h3></div>
+          <span id="forecast-headline"></span>
+        </div>
+        <ul id="forecast-cautions" class="forecast-missing-list forecast-cautions"></ul>
+        <div id="forecast-known" hidden>
+          <div class="journey-stats" aria-live="polite">
+            <div><strong id="forecast-days" class="measure" data-unit="d" data-unit-hidden="true">--</strong><span>From now</span></div>
+            <div><strong id="forecast-window" class="measure" data-unit="d" data-unit-hidden="true">--</strong><span>Soonest to latest</span></div>
+            <div><strong id="forecast-to-go" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Water left to use</span></div>
+            <div><strong id="forecast-rate" class="measure" data-unit="ml/d" data-unit-hidden="true">--</strong><span>Going at</span></div>
+          </div>
+          <div class="weight-trend">
+            <span>Weight from here to thirsty · the band is the fastest and slowest it has drunk</span>
+            <svg id="forecast-chart" class="history-chart" viewBox="0 0 640 190" role="img" aria-label="Projected pot weight until watering"></svg>
+          </div>
+          <p id="forecast-reason" class="settings-note"></p>
+        </div>
+        <div id="forecast-missing" hidden>
+          <p class="settings-note">The hub will not guess at this. Each thing it
+            still needs is below, with what to do about it.</p>
+          <ul id="forecast-missing-list" class="forecast-missing-list"></ul>
+        </div>
       </div>
-      <ul id="forecast-cautions" class="forecast-missing-list forecast-cautions"></ul>
-      <div id="forecast-known" hidden>
+
+      <div class="plant-weight-part water-use">
+        <div class="section-heading plant-weight-part-heading">
+          <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h3 id="water-use-title">Water use</h3></div>
+          <span id="water-use-coverage"></span>
+        </div>
         <div class="journey-stats" aria-live="polite">
-          <div><strong id="forecast-days">--</strong><span>Days from now</span></div>
-          <div><strong id="forecast-window">--</strong><span>Soonest to latest</span></div>
-          <div><strong id="forecast-to-go">--</strong><span>Water left to use</span></div>
-          <div><strong id="forecast-rate">--</strong><span>Going at (ml/d)</span></div>
+          <div><strong id="water-use-daily" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Typical a day</span></div>
+          <div><strong id="water-use-range" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Range a day</span></div>
+          <div><strong id="water-use-total" class="measure" data-unit="ml" data-unit-hidden="true">--</strong><span>Used in all</span></div>
+          <div><strong id="water-use-latest" class="measure" data-unit="ml/d" data-unit-hidden="true">--</strong><span>Most recent rate</span></div>
         </div>
         <div class="weight-trend">
-          <span>Weight from here to thirsty · the band is the fastest and slowest it has drunk</span>
-          <svg id="forecast-chart" class="history-chart" viewBox="0 0 640 190" role="img" aria-label="Projected pot weight until watering"></svg>
+          <span>Millilitres a day · each bar is one span between weighings</span>
+          <svg id="water-use-chart" class="history-chart" viewBox="0 0 640 170" role="img" aria-label="Water use between weighings" hidden></svg>
+          <p id="water-use-empty" class="history-chart-empty">Weigh the pot twice, a day or more apart, and its water use shows here.</p>
+          <p id="water-use-summary" class="range-status"></p>
         </div>
-        <p id="forecast-reason" class="settings-note"></p>
-      </div>
-      <div id="forecast-missing" hidden>
-        <p class="settings-note">The hub will not guess at this. Each thing it
-          still needs is below, with what to do about it.</p>
-        <ul id="forecast-missing-list" class="forecast-missing-list"></ul>
+        <div id="water-use-findings" class="water-use-findings"></div>
+        <p class="settings-note">What the pot loses between two weighings, with
+          nothing poured in, is water gone through the leaves and off the soil:
+          <b>evapotranspiration</b>, measured the way a weighing lysimeter
+          measures it. A gram of water is a millilitre, so the scale reads in
+          the units the watering can does. Each bar is the average over its own
+          span, because five days and 400 ml says 80 ml a day and says nothing
+          about which day was thirstiest. Spans containing a watering are left
+          out: water went in as well as out, and one weighing cannot separate
+          them.</p>
+        <p class="settings-note">Where a sensor reports the air of the room this
+          plant is in, the rates are also held against its <b>vapour pressure
+          deficit</b> — how hard the air is pulling water out of things. The same
+          plant drinks two or three times as much in warm dry air as in cool damp
+          air, so dividing that out leaves the plant's own part of the change.
+          The air belongs to the room rather than to the sensor, so one probe on
+          a windowsill speaks for every pot on it.</p>
       </div>
     </section>
 
-    <section class="plant-weight water-use" data-page="plant" data-section="water-use" aria-labelledby="water-use-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">EVAPOTRANSPIRATION</p><h2 id="water-use-title">Water use</h2></div>
-        <span id="water-use-coverage"></span>
-      </div>
-      <div class="journey-stats" aria-live="polite">
-        <div><strong id="water-use-daily">--</strong><span>Typical a day</span></div>
-        <div><strong id="water-use-range">--</strong><span>Range a day</span></div>
-        <div><strong id="water-use-total">--</strong><span>Used in all</span></div>
-        <div><strong id="water-use-latest">--</strong><span>Most recent rate</span></div>
-      </div>
-      <div class="weight-trend">
-        <span>Millilitres a day · each bar is one span between weighings</span>
-        <svg id="water-use-chart" class="history-chart" viewBox="0 0 640 170" role="img" aria-label="Water use between weighings" hidden></svg>
-        <p id="water-use-empty" class="history-chart-empty">Weigh the pot twice, a day or more apart, and its water use shows here.</p>
-        <p id="water-use-summary" class="range-status"></p>
-      </div>
-      <div id="water-use-findings" class="water-use-findings"></div>
-      <p class="settings-note">What the pot loses between two weighings, with
-        nothing poured in, is water gone through the leaves and off the soil:
-        <b>evapotranspiration</b>, measured the way a weighing lysimeter
-        measures it. A gram of water is a millilitre, so the scale reads in
-        the units the watering can does. Each bar is the average over its own
-        span, because five days and 400 ml says 80 ml a day and says nothing
-        about which day was thirstiest. Spans containing a watering are left
-        out: water went in as well as out, and one weighing cannot separate
-        them.</p>
-      <p class="settings-note">Where a sensor reports the air of the room this
-        plant is in, the rates are also held against its <b>vapour pressure
-        deficit</b> — how hard the air is pulling water out of things. The same
-        plant drinks two or three times as much in warm dry air as in cool damp
-        air, so dividing that out leaves the plant's own part of the change.
-        The air belongs to the room rather than to the sensor, so one probe on
-        a windowsill speaks for every pot on it.</p>
-    </section>
 
     <section class="plant-journey" data-page="plant" data-section="journey" aria-labelledby="plant-journey-plant-title" hidden>
       <div class="section-heading">
@@ -530,10 +856,10 @@
         <span id="plant-journey-started">Waiting for its first day</span>
       </div>
       <div class="journey-stats" aria-live="polite">
-        <div><strong id="plant-journey-days">--</strong><span>Days tracked</span></div>
+        <div><strong id="plant-journey-days" class="measure" data-unit="d" data-unit-hidden="true">--</strong><span>Tracked</span></div>
         <div><strong id="plant-journey-waterings">--</strong><span>Waterings</span></div>
         <div><strong id="plant-journey-fertilizing">--</strong><span>Fertilizations</span></div>
-        <div><strong id="plant-journey-lighting">--</strong><span>Total lighting hours</span></div>
+        <div><strong id="plant-journey-lighting" class="measure" data-unit="h" data-unit-hidden="true">--</strong><span>Total lighting</span></div>
       </div>
     </section>
 
@@ -553,9 +879,12 @@
         </div>
       </div>
       <output id="plant-photo-message" aria-live="polite"></output>
-      <div id="plant-photo-grid" class="photo-grid">
+      <div id="plant-photo-grid" class="photo-grid is-collapsed">
         <p class="care-log-empty">No photographs yet.</p>
       </div>
+      <!-- Only on a narrow screen, where the grid is one column and the
+           whole history pushes everything below it off the page. -->
+      <button id="plant-photo-more" class="secondary-action photo-more" type="button" hidden></button>
     </section>
 
     <section class="care-log" data-page="plant" data-section="care-log" aria-label="Plant care history" hidden>
@@ -618,26 +947,51 @@
           <small>Days between waterings. A watering this far overdue counts as a
             missed window in the plant's journey.</small>
         </label>
+        <label><span class="field-head">Age <span id="plant-config-age-note" class="field-note"></span></span>
+          <input id="plant-config-started" type="date">
+          <small>When the plant began &mdash; sown, propagated, or your best guess.
+            Not when it came here: a plant bought mature is old and newly arrived.
+            A young plant&rsquo;s signs are not a grown one&rsquo;s, so this decides how its
+            light is read. Leave it empty and it is read as established.</small>
+        </label>
+        <label>PPFD at this plant
+          <input id="plant-config-ppfd" type="number" min="0" max="5000" step="1"
+                 placeholder="leave empty if you have not measured it">
+          <small>Photosynthetic photon flux density, in &micro;mol/m&sup2;/s &mdash; the
+            figure a PAR meter or a phone app reads at leaf height. It is everything
+            arriving at once, whatever it comes from. A grow panel 30&nbsp;cm away is
+            usually 150&ndash;400. Once a light below is linked, this gives the plant a
+            daily total.</small>
+        </label>
+        <label>Hours of light a day
+          <input id="plant-config-light-hours" type="number" min="0" max="24" step="0.5"
+                 placeholder="only needed if no light below is linked">
+          <small>For a plant lit by something the hub does not switch &mdash; a lamp on
+            its own timer, or a window. Leave it empty when a light below is linked:
+            those hours are read from when the hub actually switched it, which is
+            better than an assumption.</small>
+        </label>
         <div class="settings-actions"><button type="submit">Save configuration</button></div>
         <output id="plant-config-message"></output>
       </form>
       <div class="section-heading section-subheading">
         <h3 id="plant-lighting-config-title">Lighting</h3>
-        <a class="secondary-action" href="/settings/lights">Manage lights</a>
+        <div class="lighting-heading-actions">
+          <label class="lighting-all" for="plant-lighting-all">
+            <span>All lights</span>
+            <input id="plant-lighting-all" class="switch" type="checkbox">
+          </label>
+          <a class="secondary-action" href="/settings/lights">Manage lights</a>
+        </div>
+      </div>
+      <div id="plant-lighting-summary" class="plant-lighting-summary">
+        <p id="plant-lighting-window" class="lighting-window"></p>
+        <div id="plant-lighting-lights" class="lighting-lights"></div>
       </div>
       <form id="plant-lighting-form" class="sensor-settings-form">
         <fieldset id="lighting-light-choices" class="lighting-choices">
           <legend>Lights for this plant</legend>
         </fieldset>
-        <label class="switch-row" for="lighting-enabled">
-          <input id="lighting-enabled" class="switch" type="checkbox">
-          <div>
-            <strong>Follow a daily schedule</strong>
-            <small>When off, this plant's lights are only switched by hand.</small>
-          </div>
-        </label>
-        <label>Lights on<input id="lighting-on" type="time" required></label>
-        <label>Lights off<input id="lighting-off" type="time" required></label>
         <p id="lighting-note" class="lighting-note"></p>
         <div class="settings-actions"><button type="submit">Save lighting</button></div>
         <output id="plant-lighting-message"></output>
@@ -660,6 +1014,279 @@
         taken out while a plant is repotted, without being set up again. Only
         a sensor this hub has already adopted can be attached — a new one is
         added under <b>Add a sensor</b>.</p>
+    </section>
+
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-device-page" aria-labelledby="zigbee-device-title" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow" id="zigbee-device-kind">ZIGBEE DEVICE</p>
+          <h2 id="zigbee-device-title">Device</h2>
+        </div>
+        <div class="sensor-identity">
+          <div class="sensor-identity-actions">
+            <a class="secondary-action" id="zigbee-device-back" href="/settings/zigbee">Back</a>
+          </div>
+        </div>
+      </div>
+      <p id="zigbee-device-health" class="ph-explainer"></p>
+      <div class="zigbee-reading" id="zigbee-reading" hidden>
+        <p class="zigbee-reading-number">
+          <span id="zigbee-scale-grams">--</span><span class="zigbee-reading-unit">g</span>
+        </p>
+        <p class="zigbee-reading-state" id="zigbee-scale-settling"></p>
+      </div>
+      <dl class="ph-figures">
+        <div id="zigbee-type-figure"><dt>Type</dt><dd id="zigbee-type">--</dd></div>
+        <div id="zigbee-make-figure"><dt>Make</dt><dd id="zigbee-make">--</dd></div>
+        <div><dt>Address</dt><dd><code id="zigbee-device-id">--</code></dd></div>
+        <div id="zigbee-power-figure"><dt>Power</dt><dd id="zigbee-power">--</dd></div>
+        <div id="zigbee-rate-figure"><dt>Reporting every</dt><dd id="zigbee-scale-rate">--</dd></div>
+        <div id="zigbee-batt-figure"><dt>Battery</dt><dd><span id="zigbee-scale-batt" class="battery" data-level="unknown" role="img" aria-label="Battery not reported"><span class="battery-glyph" aria-hidden="true"><span class="battery-fill"></span></span><span class="battery-percent">&mdash;</span></span></dd></div>
+        <div><dt>Signal</dt><dd id="zigbee-scale-signal">--</dd></div>
+        <div><dt>Last heard</dt><dd id="zigbee-scale-heard">--</dd></div>
+        <div><dt>Firmware</dt><dd id="zigbee-scale-firmware">--</dd></div>
+        <div><dt>Short address</dt><dd id="zigbee-short">--</dd></div>
+        <div><dt>Reports kept</dt><dd id="zigbee-report-count">--</dd></div>
+        <div><dt>Times joined</dt><dd id="zigbee-join-count">--</dd></div>
+        <div id="zigbee-undelivered-figure"><dt>Undelivered</dt><dd id="zigbee-undelivered">--</dd></div>
+        <div><dt>Declares</dt><dd id="zigbee-clusters">--</dd></div>
+        <div id="zigbee-own-page-figure" hidden><dt>Debug page</dt><dd><a id="zigbee-own-page" class="sensor-plant-link" href="/">--</a></dd></div>
+      </dl>
+      <p id="zigbee-device-fault" class="ph-caution" hidden></p>
+
+
+      <!-- One picker, for whatever this kind of device is about. A scale
+           attaches to a plant, a room thermometer to a room; the device
+           says which, so this markup does not have to. -->
+      <div class="sensor-attach" id="zigbee-subject" hidden>
+        <label for="zigbee-subject-choice" id="zigbee-subject-label">This device is not assigned yet</label>
+        <div class="sensor-attach-row">
+          <select id="zigbee-subject-choice" aria-label="What this device is about"></select>
+          <button id="zigbee-subject-save" type="button">Assign</button>
+        </div>
+      </div>
+
+      <!-- How often this device speaks. Per device, because identical
+           hardware in a bedroom nobody watches and under a propagator
+           lamp want different answers. -->
+      <div class="sensor-attach" id="zigbee-reporting" hidden>
+        <label for="zigbee-report-max">Reporting</label>
+        <div class="sensor-attach-row">
+          <select id="zigbee-report-max" aria-label="How often this device must report">
+            <option value="900">At least every 15 minutes</option>
+            <option value="1800">At least every 30 minutes</option>
+            <option value="3600">At least every hour</option>
+            <option value="7200">At least every 2 hours</option>
+          </select>
+          <select id="zigbee-report-sensitivity" aria-label="How small a change is worth reporting">
+            <option value="fine">Report small changes</option>
+            <option value="normal">Report ordinary changes</option>
+            <option value="coarse">Report big changes only</option>
+          </select>
+          <button id="zigbee-report-save" type="button">Apply</button>
+        </div>
+        <small id="zigbee-report-state">A shorter gap and smaller changes mean more
+          frames and a shorter battery life. The gap is also how long silence has to
+          last before the hub calls this device lost.</small>
+      </div>
+
+      <div class="sensor-attach" id="zigbee-rename">
+        <label for="zigbee-name">Name</label>
+        <div class="sensor-attach-row">
+          <input id="zigbee-name" maxlength="60" placeholder="What to call this device">
+          <button id="zigbee-name-save" type="button">Save</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Weight history, for a scale. Drawn from the device's own reports
+         rather than from the weights kept against a plant: the kept ones
+         are one every few hours by design, and the question this chart is
+         asked -- how fast is it drifting, has it settled -- needs every
+         report there is. -->
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-weight-history"
+             data-own-visibility="true" aria-labelledby="zigbee-weight-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WEIGHT</p><h2 id="zigbee-weight-title">What it has weighed</h2></div>
+        <div class="history-range-selector" role="group" aria-label="Weight chart range">
+          <button type="button" data-weight-range="1" aria-pressed="false">1 hour</button>
+          <button type="button" data-weight-range="6" aria-pressed="true">6 hours</button>
+          <button type="button" data-weight-range="24" aria-pressed="false">24 hours</button>
+          <button type="button" data-weight-range="168" aria-pressed="false">7 days</button>
+        </div>
+      </div>
+      <svg id="zigbee-weight-chart" class="history-chart" viewBox="0 0 720 220"
+           role="img" aria-label="Weight over time" hidden></svg>
+      <p id="zigbee-weight-empty" class="history-chart-empty">
+        No reports kept yet. Every report this device sends is kept for a week,
+        so a curve appears as soon as it has spoken twice.
+      </p>
+      <p id="zigbee-weight-summary" class="range-status"></p>
+    </section>
+
+    <!-- Every measurement this device has reported, whatever kind of
+         device it is. Keyed to the record rather than to the kind: a
+         chart appears because something was measured, not because
+         somebody remembered to add one for this sort of sensor. -->
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-measurements"
+             data-own-visibility="true" aria-labelledby="zigbee-measurements-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">HISTORY</p><h2 id="zigbee-measurements-title">What it has measured</h2></div>
+        <div class="history-range-selector" role="group" aria-label="History range">
+          <button type="button" data-measure-range="24" aria-pressed="true">24 hours</button>
+          <button type="button" data-measure-range="168" aria-pressed="false">7 days</button>
+          <button type="button" data-measure-range="720" aria-pressed="false">30 days</button>
+          <button type="button" data-measure-range="8760" aria-pressed="false">1 year</button>
+        </div>
+      </div>
+      <div id="zigbee-measurement-grid" class="climate-chart-grid"></div>
+    </section>
+
+    <!-- Battery history belongs to the device, not to the kind of device:
+         every battery drains, and a thermometer's chart is the same chart.
+         So this sits outside the per-kind sections below and is drawn for
+         anything that reports a charge. -->
+    <section class="sensor-settings" data-page="zigbee-device" id="zigbee-battery-history"
+             data-own-visibility="true" aria-labelledby="zigbee-battery-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">BATTERY</p><h2 id="zigbee-battery-title">Battery usage over time</h2></div>
+        <div class="history-range-selector" role="group" aria-label="Battery chart range">
+          <button type="button" data-battery-range="7" aria-pressed="false">7 days</button>
+          <button type="button" data-battery-range="30" aria-pressed="true">30 days</button>
+          <button type="button" data-battery-range="90" aria-pressed="false">3 months</button>
+          <button type="button" data-battery-range="365" aria-pressed="false">1 year</button>
+          <button type="button" data-battery-range="3660" aria-pressed="false">All</button>
+        </div>
+      </div>
+      <svg id="zigbee-battery-chart" class="history-chart" viewBox="0 0 720 220"
+           role="img" aria-label="Battery charge over time" hidden></svg>
+      <p id="zigbee-battery-empty" class="history-chart-empty">
+        No charge recorded yet. The hub keeps one reading an hour, so a curve
+        appears within a few hours.
+      </p>
+      <p id="zigbee-battery-summary" class="range-status"></p>
+    </section>
+
+    <!-- Controls are per kind, the same way the sensor pages pick a panel by
+         data-sensor-kind. A second kind of Zigbee device adds a section here
+         and changes nothing else. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="scale" id="zigbee-scale-controls" aria-labelledby="zigbee-scale-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SCALE</p><h2 id="zigbee-scale-title">Weighing</h2></div>
+      </div>
+      <form id="zigbee-scale-form" class="sensor-settings-form">
+        <label>Weigh every
+          <select id="zigbee-scale-interval">
+            <option value="0">Continuously (10 a second)</option>
+            <option value="1">1 second</option>
+            <option value="3">3 seconds</option>
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="300">5 minutes</option>
+            <option value="900">15 minutes</option>
+            <option value="1800">30 minutes</option>
+            <option value="3600">1 hour</option>
+            <option value="14400">4 hours</option>
+            <option value="43200">12 hours</option>
+          </select>
+          <small>The scale powers its amplifier down between readings, and its
+            Zigbee reports follow this same rate.</small>
+        </label>
+        <output id="zigbee-scale-interval-state" aria-live="polite"></output>
+      </form>
+      <div class="sensor-identity-actions">
+        <button type="button" id="zigbee-scale-tare" class="secondary-action">Tare</button>
+        <button type="button" id="zigbee-scale-wifi" class="secondary-action">Wi-Fi</button>
+      </div>
+      <p class="ph-explainer" id="zigbee-scale-wifi-state"></p>
+    </section>
+
+    <!-- A thermometer reports and is never told anything, so this panel
+         has no controls at all: it is the reading, said plainly. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="thermometer" id="zigbee-thermometer-panel" aria-labelledby="zigbee-thermometer-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">AIR</p><h2 id="zigbee-thermometer-title">Temperature and humidity</h2></div>
+      </div>
+      <div class="zigbee-air">
+        <p class="zigbee-reading-number">
+          <span id="zigbee-air-temp">--</span><span class="zigbee-reading-unit">&deg;C</span>
+        </p>
+        <p class="zigbee-reading-number">
+          <span id="zigbee-air-rh">--</span><span class="zigbee-reading-unit">% RH</span>
+        </p>
+      </div>
+      <p class="ph-explainer" id="zigbee-air-state" aria-live="polite"></p>
+      <p class="ph-explainer">This sensor runs on a battery, so it sleeps between readings and
+        reports when something changes rather than on a fixed clock. A gap of half an hour is
+        the sensor working, not a fault.</p>
+    </section>
+
+    <!-- A probe in a pot. Soil rather than air: the same two shapes of
+         number, measured somewhere else entirely, and the distinction
+         is the whole reason this is not the thermometer panel. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="soil" id="zigbee-soil-panel" aria-labelledby="zigbee-soil-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SOIL</p><h2 id="zigbee-soil-title">In the pot</h2></div>
+      </div>
+      <div class="zigbee-air">
+        <p class="zigbee-reading-number">
+          <span id="zigbee-soil-moisture">--</span><span class="zigbee-reading-unit">% moisture</span>
+        </p>
+        <p class="zigbee-reading-number">
+          <span id="zigbee-soil-temp">--</span><span class="zigbee-reading-unit">&deg;C</span>
+        </p>
+      </div>
+      <p class="ph-explainer" id="zigbee-soil-state" aria-live="polite"></p>
+      <p class="ph-explainer">This probe runs on a battery and sleeps between readings. It also
+        measures nothing about the air: the humidity cluster it advertises is one its maker left
+        in, and the dashes on its own display are the device agreeing.</p>
+    </section>
+
+    <!-- A leak sensor says one thing, and the page should say it from
+         across the room. Everything else about it -- when it last
+         checked in, its battery -- is reassurance that the one thing
+         can be believed. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="leak" id="zigbee-leak-panel" aria-labelledby="zigbee-leak-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">WATER</p><h2 id="zigbee-leak-title">Is it wet?</h2></div>
+      </div>
+      <p id="zigbee-leak-state" class="zigbee-leak-state" aria-live="polite">Waiting for the sensor to report.</p>
+      <p id="zigbee-leak-detail" class="ph-explainer"></p>
+      <p id="zigbee-leak-trouble" class="ph-caution" hidden></p>
+      <p class="ph-explainer">An alarm sensor speaks only when something changes, and checks in
+        now and then to say it is still there. Silence is the normal state and means dry; a sensor
+        that has stopped checking in is reported above as silent.</p>
+    </section>
+
+    <!-- A plug is the first device here that is controlled rather than
+         read. Everything above this is about what a device has told the
+         hub; this is the one panel where the hub tells the device. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="plug" id="zigbee-plug-controls" aria-labelledby="zigbee-plug-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SWITCH</p><h2 id="zigbee-plug-title">Power</h2></div>
+      </div>
+      <div class="zigbee-plug">
+        <button type="button" id="zigbee-plug-toggle" class="zigbee-switch" role="switch" aria-checked="false">
+          <span class="zigbee-switch-track" aria-hidden="true"><span class="zigbee-switch-knob"></span></span>
+          <span class="zigbee-switch-label" id="zigbee-plug-label">Off</span>
+        </button>
+        <div class="zigbee-plug-note">
+          <p id="zigbee-plug-state" class="ph-explainer" aria-live="polite">Asking the plug what it is doing.</p>
+          <button type="button" id="zigbee-plug-refresh" class="secondary-action">Ask again</button>
+        </div>
+      </div>
+      <p class="ph-explainer">Whatever is plugged in is switched at the socket. The hub asks the
+        plug what state it is in rather than assuming the last command worked, so pressing the
+        button on the plug itself shows up here too.</p>
+    </section>
+
+    <section class="sensor-settings" data-page="zigbee-device" data-device-kind="unknown" id="zigbee-unknown-controls" aria-labelledby="zigbee-unknown-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">DEVICE</p><h2 id="zigbee-unknown-title">No controls yet</h2></div>
+      </div>
+      <p class="ph-explainer">The hub does not know what kind of device this is, so it has nothing to offer beyond what the list shows. It fills in once the device reports.</p>
     </section>
 
     <section class="sensor-settings" data-page="sensor-config" id="sensor-identity-panel" aria-labelledby="sensor-identity-title" hidden>
@@ -745,6 +1372,9 @@
         <label>Weigh every
           <select id="scale-interval">
             <option value="0">Continuously (10 a second)</option>
+            <option value="1">1 second</option>
+            <option value="3">3 seconds</option>
+            <option value="5">5 seconds</option>
             <option value="10">10 seconds</option>
             <option value="30">30 seconds</option>
             <option value="60">1 minute</option>
@@ -857,6 +1487,44 @@
       </div>
     </details>
   </main>
+  <!-- Looking through a plant's photographs without leaving the page.
+       Newer is up and older is down, because that is the order they are
+       in and the question is almost always "what did it look like
+       before". Opened from any tile; closed with Escape, the backdrop,
+       or the button. -->
+  <div id="photo-viewer" class="photo-viewer" role="dialog" aria-modal="true"
+       aria-labelledby="photo-viewer-when" hidden>
+    <div class="photo-viewer-frame">
+      <img id="photo-viewer-image" alt="">
+      <div class="photo-viewer-bar">
+        <div>
+          <strong id="photo-viewer-when">--</strong>
+          <span id="photo-viewer-since"></span>
+        </div>
+        <span id="photo-viewer-count"></span>
+      </div>
+      <!-- Every photograph at its own date along the plant's whole
+           history, so the gaps are drawn as gaps: a fortnight of daily
+           pictures is a cluster, and the summer nobody photographed is
+           the empty stretch it was. -->
+      <div id="photo-track" class="photo-track" role="slider" tabindex="0"
+           aria-label="Jump to a date" aria-valuemin="0" aria-valuenow="0" aria-valuemax="0">
+        <div class="photo-track-line"></div>
+        <div id="photo-track-ticks" class="photo-track-ticks"></div>
+      </div>
+      <div class="photo-track-ends">
+        <span id="photo-track-first"></span>
+        <span id="photo-track-last"></span>
+      </div>
+    </div>
+    <button id="photo-viewer-newer" class="photo-viewer-step" data-step="newer"
+            type="button" aria-label="Newer photograph">&uarr;</button>
+    <button id="photo-viewer-older" class="photo-viewer-step" data-step="older"
+            type="button" aria-label="Older photograph">&darr;</button>
+    <button id="photo-viewer-close" class="photo-viewer-close" type="button"
+            aria-label="Close">&times;</button>
+  </div>
+
   <script src="/onboarding.js"></script>
   <script src="/lights.js"></script>
   <script src="/app.js"></script>

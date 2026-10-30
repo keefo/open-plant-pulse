@@ -316,12 +316,25 @@ class SensorManagementTests(unittest.TestCase):
         self.assertEqual(self.store.history(sensor_id), [])
 
 
+
+def _reporting_interval_markup(page: str) -> str:
+    """Just the selects that choose a reporting interval."""
+    kept = []
+    for chunk in page.split("<select")[1:]:
+        head, _, body = chunk.partition(">")
+        if "reporting-interval" in head:
+            kept.append(body.split("</select>")[0])
+    assert kept, "no reporting-interval select on the page at all"
+    return "\n".join(kept)
+
+
 class SensorManagementWebTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
         AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
         self.server = create_server(self.store, "127.0.0.1", 0)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
+                             daemon=True)
         self.thread.start()
         host, port = server_address(self.server)
         self.base_url = f"http://{host}:{port}"
@@ -411,7 +424,8 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertNotIn(b"Global reporting interval", detail_page)
         self.assertNotIn(b"Moisture alert below", detail_page)
         self.assertNotIn(b"Conductivity alert above", detail_page)
-        self.assertIn(b"SHT45 \xc2\xb7 LIVE HISTORY", detail_page)
+        self.assertIn(b'id="climate-history-eyebrow"', detail_page)
+        self.assertIn(b"Air conditions", detail_page)
         self.assertIn(b'data-history-range="live" aria-pressed="true">Live', detail_page)
         self.assertIn(b'data-history-range="30d"', detail_page)
         self.assertIn(b"Relative humidity", detail_page)
@@ -572,16 +586,19 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("function renderRawReports(items)", app)
         self.assertIn('if (wateringCalendarRequestKey === requestKey) return;', app)
         self.assertIn('wateringCalendarRequestKey = requestKey;', app)
-        self.assertIn('latestReadingAt,', app)
         self.assertIn('profileId', app)
         self.assertIn('if (historyRequestKey === requestKey) return;', app)
         self.assertIn('refreshClimateHistory()', app)
-        self.assertIn('svgElement("polyline", { class: "history-line"', app)
+        self.assertIn('svgElement("polyline", {', app)
+        self.assertIn('class: `history-line series-${entry.colour}`,', app)
         self.assertIn('"history-point latest-point"', app)
         self.assertIn('"live": { label: "Live (up to 24 hours)", milliseconds: 24 * 60 * 60 * 1000, fitSamples: true }', app)
         self.assertIn('let selectedHistoryRange = "live";', app)
         self.assertIn('chartStartTime = firstSampleTime;', app)
-        self.assertIn('chartEndTime = lastSampleTime;', app)
+        # The right hand edge is now, not the last reading: a chart that
+        # ends at the newest sample cannot show a sensor going quiet.
+        self.assertNotIn('chartEndTime = lastSampleTime;', app)
+        self.assertIn('const endTime = Math.max(newest, Date.now());', app)
         self.assertIn('(timestamp - startTime) / (endTime - startTime)', app)
         self.assertNotIn('const plotStartTime = points.length > 1', app)
         # SVG elements have no hidden property, so charts are hidden by attribute.
@@ -611,7 +628,7 @@ class SensorManagementWebTests(unittest.TestCase):
         for renderer, guard in [
             ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
             ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
-            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [points, unit, startTime, endTime, selectedHistoryRange, ideal])) return;"),
+            ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [shown.map("),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
         ]:
             body = app[app.index(renderer):]
@@ -660,8 +677,15 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn("sent when the sensor next reports", page)
         # Once each: the enroll dialog carried a second copy of this list
         # and has gone, along with the sensor inbox that opened it.
+        #
+        # Counted over the reporting-interval controls rather than the whole
+        # document. Other pickers measure other things in minutes -- how
+        # often to keep a weight, for one -- and a plain substring count
+        # over the page turned any of them into a failure here, which is a
+        # false alarm about a list that is still perfectly singular.
+        intervals = _reporting_interval_markup(page)
         for label in ("Every 30 seconds", "Every minute", "Every 30 minutes"):
-            self.assertEqual(page.count(label), 1)
+            self.assertEqual(intervals.count(label), 1)
         # Thirty seconds is the floor. Anything shorter spends the whole cycle
         # advertising and arrives no fresher, because a report carries what the
         # sensor last sampled on its own schedule.
@@ -680,6 +704,44 @@ class SensorManagementWebTests(unittest.TestCase):
         # page does read /api/settings -- that is where the section order
         # lives -- so what matters is that it never writes the interval.
         self.assertNotIn("reporting_interval_minutes:", app)
+
+    def test_the_time_zone_is_chosen_on_the_settings_page(self) -> None:
+        """A hub that reasons about hours has to be told which hours."""
+        before = json.load(self.request("/api/settings"))
+        self.assertIsNone(before["timezone"])
+        self.assertTrue(before["timezone_effective"])
+
+        # The menu comes from this machine's tzdata, so it cannot go stale.
+        offered = json.load(self.request("/api/settings/timezones"))
+        self.assertIn("America/Vancouver", offered["items"])
+        self.assertIn("Asia/Tokyo", offered["items"])
+
+        saved = json.load(self.request(
+            "/api/settings/timezone", "PUT", {"timezone": "Asia/Tokyo"},
+            origin=self.base_url))
+        self.assertEqual(saved["timezone"], "Asia/Tokyo")
+        self.assertEqual(json.load(self.request("/api/settings"))["timezone"], "Asia/Tokyo")
+
+        with self.assertRaises(HTTPError) as refused:
+            self.request("/api/settings/timezone", "PUT",
+                         {"timezone": "Mars/Olympus_Mons"}, origin=self.base_url)
+        self.assertEqual(refused.exception.code, 400)
+        self.assertEqual(json.load(self.request("/api/settings"))["timezone"], "Asia/Tokyo",
+                         "a refused zone leaves the saved one alone")
+
+        # Handed back to the machine.
+        self.assertIsNone(json.load(self.request(
+            "/api/settings/timezone", "PUT", {"timezone": None},
+            origin=self.base_url))["timezone"])
+
+        page = self.request("/").read().decode("utf-8")
+        self.assertIn('id="hub-timezone"', page)
+        self.assertIn('href="/settings/time"', page)
+        app = self.request("/app.js").read().decode("utf-8")
+        # Filled once: six hundred options rebuilt on a poll would be six
+        # hundred nodes replaced under somebody choosing from them.
+        self.assertIn("hubTimezoneFilled", app)
+        self.assertIn('dataset.edited !== "true"', app)
 
 
 if __name__ == "__main__":

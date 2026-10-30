@@ -127,6 +127,12 @@ select,input{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid va
   <p class="note mute">Letters, digits, spaces and dashes. The name also becomes the scale's address: "Kitchen Scale" is http://kitchen-scale.local</p>
 </section>
 
+<section class="card" id="zigbeecard" hidden>
+  <h2>Zigbee</h2>
+  <div id="zigbee" class="mute">—</div>
+  <p class="note mute">Zigbee reports at the sampling rate above. The floor is the one exception: relaying continuous sampling takes the shared radio away from Wi-Fi. Change it from the console with "z &lt;seconds&gt;", or "z 0" to follow the sampling rate exactly. Counters since the scale last restarted. Rejoins climbing on their own, or refused reports, point at a link that is dropping even while this page still looks fine.</p>
+</section>
+
 <section class="card">
   <h2>Wi-Fi</h2>
   <div id="wifi" class="mute">—</div>
@@ -302,6 +308,32 @@ function show(d) {
     if (![...sel.options].some(o => o.value === String(d.interval)))
       sel.add(new Option('Every ' + every(d.interval), d.interval));
     sel.value = String(d.interval);
+  }
+
+  const z = d.zigbee;
+  $('zigbeecard').hidden = !z;
+  if (z) {
+    const ago = s => s < 0 ? 'never' : s < 90 ? s + 's ago'
+      : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago';
+    const held = s => s < 0 ? '—' : s < 5400 ? Math.round(s / 60) + ' min' : Math.round(s / 3600) + ' h';
+    const zel = $('zigbee');
+    zel.innerHTML = '';
+    const line = text => { const e = document.createElement('div'); e.textContent = text; zel.appendChild(e); };
+    line(z.joined ? 'Joined ' + z.pan + ' on channel ' + z.channel + ' as ' + z.short + ', for ' + held(z.joined_for_s)
+                  : 'Not joined to a coordinator');
+    const rate = s => s === 0 ? 'as fast as it samples' : s < 90 ? 'every ' + s + 's'
+      : s < 5400 ? 'every ' + Math.round(s / 60) + ' min' : 'every ' + Math.round(s / 3600) + ' h';
+    let r = 'Reporting ' + rate(z.every_s);
+    // Say so when the floor is overriding the sampling rate, rather than
+    // letting the page show one rate and Zigbee quietly use another.
+    if (z.floor_s && z.every_s > (d.interval || 0))
+      r += ' — held back by a ' + z.floor_s + 's floor, which keeps the shared radio usable for Wi-Fi';
+    line(r);
+    line('Last reading sent: ' + ago(z.last_report_s));
+    line('Readings ' + z.reports + (z.report_fails ? ', refused ' + z.report_fails : '')
+         + ' · commands in ' + z.commands);
+    line('Joins ' + z.joins + ' · searches ' + z.searches);
+    if (z.trouble) line('Last trouble: ' + z.trouble);
   }
 
   const w = d.wifi, el = $('wifi');
