@@ -1296,3 +1296,61 @@ class PidPresetTests(unittest.TestCase):
         store = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
                  / "application" / "store.py").read_text()
         self.assertNotIn("preset", store.split("FAN_FIELDS = ")[1].split(")")[0])
+
+
+class WeightOffsetFieldTests(unittest.TestCase):
+    """What else is on the scale is one of the things stated about a
+    pot, so it sits with them and shares their Set.
+
+    It arrived with a Set button of its own, which was a second way to
+    say the same kind of thing.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.app = (here / "app.js").read_text()
+
+    def test_it_sits_in_the_anchors_row(self) -> None:
+        row = self.page.split('id="plant-weight-full"')[1].split("</div>")[0]
+        self.assertIn('id="plant-weight-offset"', row)
+        self.assertIn('id="plant-weight-set-anchors"', row)
+
+    def test_there_is_only_one_set_button_for_the_pot(self) -> None:
+        self.assertNotIn('id="plant-weight-offset-save"', self.page)
+        self.assertEqual(self.page.count('id="plant-weight-set-anchors"'), 1)
+
+    def test_that_set_saves_the_offset_as_well(self) -> None:
+        setter = self.app.split("async function setPlantAnchors()")[1]
+        self.assertIn("/weight-offset", setter.split("if (!changed.length)")[0])
+
+
+class LightDriverCatalogueTests(unittest.TestCase):
+    """The plug names live in the driver catalogue, which changes.
+
+    It was fetched once at startup, so a plug renamed on its own page
+    went on being offered under its old name until somebody reloaded
+    -- and moving to the Lights tab is not a reload.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+        self.lights = (here / "lights.js").read_text()
+
+    def test_the_lights_tab_asks_for_it_again(self) -> None:
+        self.assertIn('settingsTabFromLocation() === "lights"', self.app)
+        tab = self.app.split('settingsTabFromLocation() === "lights"')[1][:200]
+        self.assertIn("refreshLightDrivers()", tab)
+
+    def test_it_only_rebuilds_when_something_differs(self) -> None:
+        """Replacing a select once a second would fight whoever is
+        choosing from it."""
+        self.assertIn("JSON.stringify(items) === JSON.stringify(lightDrivers)",
+                      self.lights)
+
+    def test_it_leaves_a_form_being_filled_in_alone(self) -> None:
+        self.assertIn("form.contains(document.activeElement)", self.lights)
+
+    def test_the_chosen_driver_survives_a_refresh(self) -> None:
+        self.assertIn("if (chosen &&", self.lights)

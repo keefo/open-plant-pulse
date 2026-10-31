@@ -889,14 +889,6 @@
             Just fertilized
           </label>
         </div>
-        <label for="plant-weight-offset">Also on the scale (g)</label>
-        <div class="inline-control">
-          <input id="plant-weight-offset" type="number" step="1" min="0"
-                 max="100000" placeholder="0">
-          <button id="plant-weight-offset-save" type="button">Set</button>
-          <output id="plant-weight-offset-message" aria-live="polite"></output>
-        </div>
-        <p class="note mute" id="plant-weight-offset-note"></p>
         <button id="plant-weight-record" type="button">Record</button>
         <output id="plant-weight-message" aria-live="polite"></output>
       </div>
@@ -925,9 +917,12 @@
         <input id="plant-weight-thirsty" type="number" step="1" min="0" max="500000" placeholder="16200">
         <label for="plant-weight-dry">Dry at (g)</label>
         <input id="plant-weight-dry" type="number" step="1" min="0" max="500000" placeholder="lightest weighed">
+        <label for="plant-weight-offset">Also on the scale (g)</label>
+        <input id="plant-weight-offset" type="number" step="1" min="0" max="100000" placeholder="0">
         <button id="plant-weight-set-anchors" type="button">Set</button>
         <output id="plant-weight-anchor-message" aria-live="polite"></output>
       </div>
+      <p class="note mute" id="plant-weight-offset-note"></p>
       <details class="weighing-log" id="weighing-log">
         <summary id="weighing-log-summary">Weighings recorded</summary>
         <div id="weighing-log-list" class="weighing-log-list"></div>

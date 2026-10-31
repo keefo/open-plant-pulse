@@ -18,11 +18,27 @@ const plantLightNotes = new Map();
 // the old state back.
 let plantLightingEpoch = 0;
 
+/* The driver catalogue, which carries the plugs this hub owns.
+ *
+ * Fetched again rather than only at startup: the plug names come
+ * with it, so renaming a plug changes the catalogue, and a page
+ * loaded before the rename went on offering the old name. Moving to
+ * the Lights tab is not a reload.
+ *
+ * Rebuilt only when something actually differs, and never while
+ * somebody is filling the form in -- replacing a select mid-choice
+ * is how a half-finished form loses what was typed.
+ */
 async function refreshLightDrivers() {
   const response = await fetch("/api/light-drivers");
   if (!response.ok) return;
-  lightDrivers = (await response.json()).items;
+  const items = (await response.json()).items;
   const select = document.getElementById("light-driver");
+  const same = JSON.stringify(items) === JSON.stringify(lightDrivers);
+  lightDrivers = items;
+  const form = select.closest("form");
+  if (same || (form && form.contains(document.activeElement))) return;
+  const chosen = select.value;
   select.replaceChildren();
   lightDrivers.forEach((driver) => {
     const option = document.createElement("option");
@@ -30,6 +46,11 @@ async function refreshLightDrivers() {
     setText(option, driver.label);
     select.append(option);
   });
+  // Kept, so refreshing the list does not change which driver the
+  // form is describing.
+  if (chosen && [...select.options].some((o) => o.value === chosen)) {
+    select.value = chosen;
+  }
   renderLightFields(select.value, {});
 }
 

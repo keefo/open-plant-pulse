@@ -5816,6 +5816,11 @@ async function refresh() {
       await refreshFleet();
     }
     if (page === "rooms") await refreshRoomsPage();
+    if (page === "settings" && settingsTabFromLocation() === "lights") {
+      // The plug names live in the driver catalogue, and a plug
+      // renamed on its own page should not still be the old name here.
+      await refreshLightDrivers();
+    }
     if (page === "settings" && settingsTabFromLocation() === "box") {
       await Promise.all([refreshZigbee(), refreshBoxPage(), refreshBoxHistory()]);
     }
@@ -8642,6 +8647,30 @@ async function setPlantAnchors() {
     changed.push([kind, grams]);
   }
   if (plantId === null) return;
+
+  // What else sits on the scale is saved by the same button. It is
+  // one of the four things somebody states about a pot, and a second
+  // Set beside it was a second way to say the same kind of thing.
+  const offsetField = document.getElementById("plant-weight-offset");
+  const offsetNow = Number(offsetField.value || 0);
+  const offsetWas = selectedPlant?.weight_offset_grams || 0;
+  if (Number.isFinite(offsetNow) && offsetNow >= 0
+      && Math.round(offsetNow) !== offsetWas) {
+    const answered = await fetch(`/api/plants/${plantId}/weight-offset`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grams: Math.round(offsetNow) }),
+    }).catch(() => null);
+    if (!answered || !answered.ok) {
+      setText(message, "What else is on the scale could not be saved.");
+      return;
+    }
+    if (!changed.length) {
+      setText(message, "Saved.");
+      await refreshPlant();
+      return;
+    }
+  }
   if (!changed.length) {
     setText(message, "Both weights already say that.");
     return;
@@ -8769,34 +8798,6 @@ function weighingLooksRight(grams) {
  * the anchors keep meaning what they meant. Shown beside the weight
  * box, because a number quietly subtracted is a number nobody trusts.
  */
-async function savePlantWeightOffset() {
-  const plantId = currentPlantId();
-  const message = document.getElementById("plant-weight-offset-message");
-  const typed = Number(document.getElementById("plant-weight-offset").value || 0);
-  if (plantId === null || !Number.isFinite(typed) || typed < 0) {
-    setText(message, "Type what else is on the scale, in grams.");
-    return;
-  }
-  let response;
-  try {
-    response = await fetch(`/api/plants/${plantId}/weight-offset`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ grams: Math.round(typed) }),
-    });
-  } catch (_error) {
-    setText(message, "The hub could not be reached.");
-    return;
-  }
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    setText(message, payload.error || "That could not be saved.");
-    return;
-  }
-  setText(message, "Saved.");
-  await refreshPlant();
-}
-
 function renderPlantWeightOffset() {
   const field = document.getElementById("plant-weight-offset");
   const note = document.getElementById("plant-weight-offset-note");
@@ -9295,8 +9296,6 @@ document.getElementById("add-plant").addEventListener("click", addPlant);
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-repotted").addEventListener("click", () => recordPlantCare("repotting"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
-document.getElementById("plant-weight-offset-save")
-  .addEventListener("click", savePlantWeightOffset);
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 
 document.getElementById("plant-weight-now").addEventListener("click", async (event) => {
