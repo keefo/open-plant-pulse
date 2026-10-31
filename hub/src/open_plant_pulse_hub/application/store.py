@@ -230,7 +230,9 @@ PLANT_SECTIONS = (
     "calendar", "weight", "journey", "photos", "care-log",
 )
 
-WEIGHT_KINDS = ("reading", "watered", "thirsty", "dry")
+# "full" is the stated ceiling, set by hand; "watered" is an event. They
+# were one kind once, so every watering redefined how much the pot holds.
+WEIGHT_KINDS = ("reading", "watered", "thirsty", "dry", "full")
 # How long a Zigbee device's own reports are kept. Long enough to answer a
 # question about last week, short enough that nobody has to think about it:
 # a device reporting every half hour leaves under four hundred rows.
@@ -332,6 +334,18 @@ def _charging_column(charging: Optional[bool]) -> Optional[int]:
 
 def _charging_value(column: Optional[int]) -> Optional[bool]:
     return None if column is None else bool(column)
+
+
+def _seconds_between(first: Optional[str], last: Optional[str]) -> int:
+    """How long a span of timestamps covers, or 0 if it cannot be read."""
+    if not first or not last:
+        return 0
+    try:
+        began = datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ")
+        ended = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return 0
+    return max(0, int((ended - began).total_seconds()))
 
 
 class ReadingStore:
@@ -872,7 +886,8 @@ class ReadingStore:
             row = self._database.execute(
                 """
                 SELECT reporting_interval_minutes, plant_section_order,
-                       care_log_hidden_kinds, timezone, zigbee_report_keep_days
+                       care_log_hidden_kinds, timezone, zigbee_report_keep_days,
+                       ntfy_url
                 FROM hub_settings WHERE singleton_id = 1
                 """
             ).fetchone()
@@ -889,7 +904,278 @@ class ReadingStore:
             "timezone_effective": chosen or _machine_zone_name(),
             # None means keep every report there has ever been.
             "zigbee_report_keep_days": int(row[4]) if row[4] is not None else None,
+            # Where an alarm goes. Empty rather than None because the
+            # field that shows it is a text box, and "None" is a word
+            # somebody would have to delete before typing.
+            "ntfy_url": row[5] or "",
         }
+
+    # The sounds macOS ships. A rule naming anything else would be a
+    # rule that silently does nothing, so the name is checked here
+    # rather than discovered when the alarm fails to sound.
+    ALERT_SOUNDS = ("Basso", "Blow", "Bottle", "Frog", "Funk", "Glass",
+                    "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi",
+                    "Submarine", "Tink")
+    ALERT_TESTS = ("above", "below", "true")
+    # Sounding more often than this is a fire alarm, not a plant hub.
+    MIN_REPEAT_SECONDS = 5
+
+    def measurements_seen(self, sensor_id: str, limit: int = 400) -> List[str]:
+        """What this device has actually reported, for a rule to pick from.
+
+        Read off the kept reports rather than a list somebody
+        maintains: a curated list would mean every new kind of sensor
+        arrives unable to raise an alarm until the hub is edited,
+        which is the mistake the charts made before they were keyed to
+        the record instead of the device kind.
+        """
+        eui = sensor_id[len("zigbee-"):] if sensor_id.startswith("zigbee-") else sensor_id
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT values_json FROM zigbee_reports
+                WHERE eui = ? ORDER BY report_id DESC LIMIT ?
+                """,
+                (eui, limit),
+            ).fetchall()
+        seen = set()
+        for (raw,) in rows:
+            try:
+                values = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            for key, value in (values or {}).items():
+                # Only what a rule could test. A payload or a cluster
+                # number is not a measurement of anything.
+                if isinstance(value, bool) or isinstance(value, (int, float)):
+                    seen.add(key)
+        return sorted(seen)
+
+    def alert_rules(self, sensor_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Every alert rule, or one device's.
+
+        The service reads the whole list on every reading, so this
+        stays a plain select: a rule is six small columns and there
+        will never be many.
+        """
+        where = "WHERE sensor_id = ?" if sensor_id else ""
+        values = (sensor_id,) if sensor_id else ()
+        with self._condition:
+            rows = self._database.execute(
+                f"""
+                SELECT rule_id, sensor_id, measurement, test, threshold,
+                       sound, repeat_seconds, push, enabled
+                FROM alert_rules {where}
+                ORDER BY measurement, rule_id
+                """,
+                values,
+            ).fetchall()
+        return [
+            {"rule_id": row[0], "sensor_id": row[1], "measurement": row[2],
+             "test": row[3], "threshold": row[4], "sound": row[5],
+             "repeat_seconds": int(row[6]), "push": bool(row[7]),
+             "enabled": bool(row[8])}
+            for row in rows
+        ]
+
+    def _validate_rule(self, measurement: str, test: str,
+                       threshold: Optional[float], sound: Optional[str],
+                       repeat_seconds: int, push: bool) -> None:
+        if not (measurement or "").strip():
+            raise ValueError("a rule needs a measurement")
+        if test not in self.ALERT_TESTS:
+            raise ValueError(f"a rule tests {', '.join(self.ALERT_TESTS)}")
+        if test != "true" and threshold is None:
+            raise ValueError("above and below need a number to compare with")
+        if sound and sound not in self.ALERT_SOUNDS:
+            raise ValueError("that is not a sound this computer has")
+        if repeat_seconds and repeat_seconds < self.MIN_REPEAT_SECONDS:
+            raise ValueError(
+                f"repeat at most every {self.MIN_REPEAT_SECONDS} seconds")
+        # A rule that neither sounds nor pushes is a rule that does
+        # nothing, and saving one would read as a feature not working.
+        if not sound and not push:
+            raise ValueError("a rule has to sound, or tell the phone, or both")
+
+    def add_alert_rule(self, sensor_id: str, measurement: str, test: str,
+                       threshold: Optional[float] = None,
+                       sound: Optional[str] = None, repeat_seconds: int = 0,
+                       push: bool = True) -> Dict[str, Any]:
+        self._validate_rule(measurement, test, threshold, sound,
+                            repeat_seconds, push)
+        with self._condition, self._database:
+            known = self._database.execute(
+                "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
+            ).fetchone()
+            if known is None:
+                raise ValueError("unknown sensor")
+            cursor = self._database.execute(
+                """
+                INSERT INTO alert_rules
+                    (sensor_id, measurement, test, threshold, sound,
+                     repeat_seconds, push)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (sensor_id, measurement.strip(), test,
+                 None if test == "true" else float(threshold),
+                 sound or None, int(repeat_seconds), 1 if push else 0),
+            )
+        return next(r for r in self.alert_rules(sensor_id)
+                    if r["rule_id"] == cursor.lastrowid)
+
+    def update_alert_rule(self, rule_id: int, **fields: Any) -> Dict[str, Any]:
+        """Change a rule, leaving out what was not mentioned."""
+        current = next((r for r in self.alert_rules()
+                        if r["rule_id"] == rule_id), None)
+        if current is None:
+            raise ValueError("unknown rule")
+        merged = {**current, **{k: v for k, v in fields.items() if k in current}}
+        self._validate_rule(merged["measurement"], merged["test"],
+                            merged["threshold"], merged["sound"],
+                            int(merged["repeat_seconds"]), merged["push"])
+        with self._condition, self._database:
+            self._database.execute(
+                """
+                UPDATE alert_rules
+                SET measurement = ?, test = ?, threshold = ?, sound = ?,
+                    repeat_seconds = ?, push = ?, enabled = ?
+                WHERE rule_id = ?
+                """,
+                (merged["measurement"], merged["test"],
+                 None if merged["test"] == "true" else merged["threshold"],
+                 merged["sound"] or None, int(merged["repeat_seconds"]),
+                 1 if merged["push"] else 0, 1 if merged["enabled"] else 0,
+                 rule_id),
+            )
+        return next(r for r in self.alert_rules() if r["rule_id"] == rule_id)
+
+    def delete_alert_rule(self, rule_id: int) -> None:
+        with self._condition, self._database:
+            gone = self._database.execute(
+                "DELETE FROM alert_rules WHERE rule_id = ?", (rule_id,)
+            ).rowcount
+        if gone == 0:
+            raise ValueError("unknown rule")
+
+    FAN_MODES = ("off", "manual", "auto")
+    FAN_FIELDS = ("enabled", "mode", "moonraker_url", "fan_name", "sensor_id",
+                  "target_rh", "kp", "ki", "kd", "manual_speed",
+                  "min_speed", "max_speed", "stale_after_s", "pulse_window_s")
+
+    def latest_humidity(self, sensor_id: str) -> Optional[Tuple[float, str]]:
+        """The newest humidity this sensor reported, and when.
+
+        Not the newest row: these thermometers send temperature and
+        humidity in separate reports, so about half the latest rows
+        have no humidity in them at all. A controller reading only the
+        newest row concluded the sensor had stopped and switched the
+        fan off every other minute.
+        """
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT air_humidity_percent, observed_at FROM sensor_readings
+                WHERE sensor_id = ? AND air_humidity_percent IS NOT NULL
+                ORDER BY reading_id DESC LIMIT 1
+                """,
+                (sensor_id,),
+            ).fetchone()
+        return (float(row[0]), row[1]) if row else None
+
+    def record_fan(self, speed: float, rh: Optional[float], mode: str,
+                   why: str) -> None:
+        """Write down what the fan was told, if it is news.
+
+        Only when the speed changes: the loop wakes twice a minute and
+        the fan moves a few times an hour, so a row per tick would be
+        thousands a day all saying the same thing. Two rows with a gap
+        between them mean the fan held in between, which is what a
+        step chart draws.
+        """
+        with self._condition, self._database:
+            last = self._database.execute(
+                "SELECT speed FROM fan_log ORDER BY entry_id DESC LIMIT 1"
+            ).fetchone()
+            if last is not None and abs(float(last[0]) - float(speed)) < 0.001:
+                return
+            self._database.execute(
+                "INSERT INTO fan_log (at, speed, rh, mode, why) VALUES (?, ?, ?, ?, ?)",
+                (_timestamp(datetime.now(timezone.utc)), float(speed),
+                 None if rh is None else float(rh), mode, why))
+
+    def fan_log(self, hours: int = 24) -> List[Dict[str, Any]]:
+        """What the fan was told, oldest first, over a window."""
+        since = _timestamp(datetime.now(timezone.utc) - timedelta(hours=hours))
+        with self._condition:
+            rows = self._database.execute(
+                "SELECT at, speed, rh, mode, why FROM fan_log "
+                "WHERE at >= ? ORDER BY at", (since,)).fetchall()
+        return [{"at": r[0], "speed": r[1], "rh": r[2], "mode": r[3], "why": r[4]}
+                for r in rows]
+
+    def fan_control(self) -> Dict[str, Any]:
+        """The one fan's settings. See docs/proposals/vzbot-humidity-control.md."""
+        with self._condition:
+            row = self._database.execute(
+                f"SELECT {', '.join(self.FAN_FIELDS)} FROM fan_control "
+                "WHERE singleton_id = 1").fetchone()
+        assert row is not None
+        settings = dict(zip(self.FAN_FIELDS, row))
+        settings["enabled"] = bool(settings["enabled"])
+        return settings
+
+    def set_fan_control(self, **fields: Any) -> Dict[str, Any]:
+        """Change what was mentioned, leaving the rest alone."""
+        current = self.fan_control()
+        wanted = {k: v for k, v in fields.items() if k in self.FAN_FIELDS}
+        merged = {**current, **wanted}
+        if merged["mode"] not in self.FAN_MODES:
+            raise ValueError(f"a fan is {', '.join(self.FAN_MODES)}")
+        url = str(merged["moonraker_url"] or "").strip()
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("the printer address must start with http:// or https://")
+        if not str(merged["fan_name"] or "").strip():
+            raise ValueError("a fan needs a name")
+        if not 0 <= float(merged["target_rh"]) <= 100:
+            raise ValueError("a humidity target is between 0 and 100")
+        for speed in ("manual_speed", "min_speed", "max_speed"):
+            if not 0 <= float(merged[speed]) <= 1:
+                raise ValueError("a fan speed is between 0 and 1")
+        if float(merged["min_speed"]) > float(merged["max_speed"]):
+            raise ValueError("the floor cannot be above the ceiling")
+        if not 20 <= int(merged["pulse_window_s"]) <= 900:
+            raise ValueError("a pulse window is between 20 and 900 seconds")
+        if int(merged["stale_after_s"]) < 60:
+            raise ValueError("a reading is not stale inside a minute")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE fan_control SET "
+                + ", ".join(f"{name} = ?" for name in self.FAN_FIELDS)
+                + " WHERE singleton_id = 1",
+                tuple(1 if name == "enabled" and merged[name] else
+                      0 if name == "enabled" else merged[name]
+                      for name in self.FAN_FIELDS))
+        return self.fan_control()
+
+    def set_alert_url(self, url: Optional[str]) -> Dict[str, Any]:
+        """Where an alarm is sent, or nowhere.
+
+        Checked for shape, not for reachability: whether the address
+        answers is what the test button is for, and a hub that refused
+        to save because a phone was off would be unusable on a bad
+        afternoon.
+        """
+        address = (url or "").strip()
+        if address and not address.startswith(("http://", "https://")):
+            raise ValueError("the address must start with http:// or https://")
+        if len(address) > 500:
+            raise ValueError("that address is too long")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET ntfy_url = ? WHERE singleton_id = 1",
+                (address or None,),
+            )
+        return self.hub_settings()
 
     def set_zigbee_reporting(self, sensor_id: str, max_seconds: Optional[int],
                              sensitivity: Optional[str]) -> Dict[str, Any]:
@@ -2143,13 +2429,59 @@ class ReadingStore:
             where.append("at >= ?")
             parameters.append(since)
         clause = (" WHERE " + " AND ".join(where)) if where else ""
-        parameters.append(max(1, int(limit)))
+        wanted = max(1, int(limit))
         with self._condition:
-            rows = self._database.execute(
-                "SELECT report_id, eui, at, kind, values_json, lqi, rssi "
-                f"FROM zigbee_reports{clause} ORDER BY at DESC, report_id DESC LIMIT ?",
-                tuple(parameters),
-            ).fetchall()
+            if since is None:
+                rows = self._database.execute(
+                    "SELECT report_id, eui, at, kind, values_json, lqi, rssi "
+                    f"FROM zigbee_reports{clause} "
+                    "ORDER BY at DESC, report_id DESC LIMIT ?",
+                    tuple(parameters + [wanted]),
+                ).fetchall()
+            else:
+                # Thinned across the window rather than cut off at the
+                # newest. A scale sends about seven thousand reports a
+                # day; asked for a month and capped at two thousand
+                # rows, the answer used to be the newest two thousand
+                # -- two days -- so the 7 day, 30 day and 1 year
+                # buttons all drew the same two days.
+                #
+                # One report from each slice of time, the slice chosen
+                # so the whole window fits in the rows allowed. Under
+                # that many reports the slices are smaller than the
+                # gaps between them and every row comes back.
+                span = self._database.execute(
+                    f"SELECT MIN(at), MAX(at), COUNT(*) FROM zigbee_reports{clause}",
+                    tuple(parameters),
+                ).fetchone()
+                seconds = _seconds_between(span[0], span[1]) if span else 0
+                if not span or span[2] <= wanted:
+                    # It all fits. Bucketing anyway would throw away
+                    # real reports -- two in the same slice become one
+                    # -- and a day that fitted easily came back half
+                    # the size.
+                    rows = self._database.execute(
+                        "SELECT report_id, eui, at, kind, values_json, lqi, rssi "
+                        f"FROM zigbee_reports{clause} "
+                        "ORDER BY at DESC, report_id DESC LIMIT ?",
+                        tuple(parameters + [wanted]),
+                    ).fetchall()
+                    return self._reports_from(rows)
+                bucket = max(1, int(seconds // wanted)) if seconds else 1
+                rows = self._database.execute(
+                    "SELECT report_id, eui, at, kind, values_json, lqi, rssi FROM ("
+                    "  SELECT report_id, eui, at, kind, values_json, lqi, rssi,"
+                    "         ROW_NUMBER() OVER ("
+                    "           PARTITION BY CAST(strftime('%s', at) / ? AS INTEGER)"
+                    "           ORDER BY at DESC, report_id DESC) AS pick"
+                    f"  FROM zigbee_reports{clause}"
+                    ") WHERE pick = 1 ORDER BY at DESC, report_id DESC LIMIT ?",
+                    tuple([bucket] + parameters + [wanted]),
+                ).fetchall()
+        return self._reports_from(rows)
+
+    def _reports_from(self, rows: Any) -> List[Dict[str, Any]]:
+        """One shape for a report, however the rows were chosen."""
         reports: List[Dict[str, Any]] = []
         for row in rows:
             try:
@@ -2163,6 +2495,7 @@ class ReadingStore:
                 "values": values, "lqi": row[5], "rssi": row[6],
             })
         return reports
+
 
     def latest_zigbee_report(
         self, eui: str, within_seconds: Optional[int] = None
@@ -3719,6 +4052,22 @@ class ReadingStore:
         if not 1 <= grams <= 500_000:
             raise ValueError("a pot weighs between 1 and 500000 grams")
         at = self._validate_weighing_time(at)
+        # What else was on the scale comes off what was measured.
+        #
+        # "The scale says X, so the plant weighs X minus the probe and
+        # the cache pot" is a fact about reading a scale, and it holds
+        # whether a person read it or the scale reported it. An anchor
+        # typed in from memory is already the plant's own weight, so
+        # nothing is taken off that.
+        offset = 0
+        if observed:
+            offset = int(self.plant(plant_id).get("weight_offset_grams") or 0)
+            if offset:
+                grams = grams - offset
+                if grams < 1:
+                    raise ValueError(
+                        f"{grams + offset} g is not more than the {offset} g "
+                        "of probe and pot that come off it")
         if (kind == "reading" and observed and source == "manual"
                 and self._is_a_refill(plant_id, grams, at)):
             kind = "watered"
@@ -3726,12 +4075,12 @@ class ReadingStore:
             self._database.execute(
                 """
                 INSERT INTO plant_weights
-                    (plant_id, at, grams, source, kind, note, observed)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (plant_id, at, grams, source, kind, note, observed, offset_grams)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     plant_id, at, grams, source, kind,
-                    (note or "").strip() or None, 1 if observed else 0,
+                    (note or "").strip() or None, 1 if observed else 0, offset,
                 ),
             )
         if kind == "watered" and observed:
@@ -3773,7 +4122,7 @@ class ReadingStore:
         with self._condition:
             rows = self._database.execute(
                 """
-                SELECT weight_id, at, grams, source, kind, note, observed
+                SELECT weight_id, at, grams, source, kind, note, observed, offset_grams
                 FROM plant_weights WHERE plant_id = ?
                 ORDER BY at DESC, weight_id DESC LIMIT ?
                 """,
@@ -3788,9 +4137,31 @@ class ReadingStore:
                 "kind": row[4],
                 "note": row[5],
                 "observed": bool(row[6]),
+                # What came off this one, so the number read off the
+                # scale is still recoverable: gross = grams + offset.
+                "offset_grams": int(row[7] or 0),
             }
             for row in rows
         ]
+
+    def set_plant_weight_offset(self, plant_id: int, grams: int) -> Dict[str, Any]:
+        """What else sits on the scale with this plant.
+
+        Changed from today onwards, never backwards: weighings already
+        taken had whatever was on the scale at the time taken off
+        them, and a probe added last week did not affect the month
+        before it.
+        """
+        grams = int(round(float(grams)))
+        if not 0 <= grams <= 100_000:
+            raise ValueError("an offset is between 0 and 100000 grams")
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE plants SET weight_offset_grams = ? WHERE plant_id = ?",
+                (grams, plant_id))
+        return self.plant(plant_id)
 
     def delete_plant_weight(self, weight_id: int) -> Dict[str, Any]:
         """Strike a weighing that should not have been written down.
@@ -4077,6 +4448,7 @@ class ReadingStore:
             ).fetchall()
         status: Dict[str, Any] = {
             "latest": None,
+            "full": None,
             "watered": None,
             "thirsty": None,
             "dry": None,
@@ -4101,6 +4473,14 @@ class ReadingStore:
         weighings = [row for row in rows if row[3]]
         latest = weighings[0] if weighings else None
         status["latest"] = point(latest) if latest else None
+        # The ceiling and the event are two different rows now.
+        #
+        # They were one -- kind "watered" for both -- so the Set
+        # button and a watering wrote the same thing and the ceiling
+        # was whichever came last. Every watering redefined how much
+        # the pot holds, and once waterings were tagged automatically
+        # the number moved with nobody touching it.
+        full = next((row for row in rows if row[2] == "full"), None)
         watered = next((row for row in rows if row[2] == "watered"), None)
         thirsty = next((row for row in rows if row[2] == "thirsty"), None)
         # What the pot weighs dry can be stated, and otherwise the scale has
@@ -4113,6 +4493,10 @@ class ReadingStore:
         stated_dry = next((row for row in rows if row[2] == "dry"), None)
         lightest = min(weighings, key=lambda row: row[1]) if weighings else None
         dry = stated_dry or lightest
+        # What the pot weighs full, as somebody stated it.
+        status["full"] = point(full) if full else None
+        # When it was last watered, which is an event and says nothing
+        # about capacity.
         status["watered"] = point(watered) if watered else None
         status["thirsty"] = point(thirsty) if thirsty else None
         status["dry"] = point(dry) if dry else None
@@ -4123,8 +4507,8 @@ class ReadingStore:
         # How much water the pot holds is the distance between its anchors,
         # which is known as soon as both are, weighed or typed in.
         capacity = None
-        if watered and thirsty and watered[1] > thirsty[1]:
-            capacity = watered[1] - thirsty[1]
+        if full and thirsty and full[1] > thirsty[1]:
+            capacity = full[1] - thirsty[1]
             status["capacity_grams"] = capacity
         # What the pot holds between dry and full is all the water there is to
         # hold. Capacity above is the part of it this plant is allowed to use
@@ -4142,15 +4526,21 @@ class ReadingStore:
         if thirsty and dry and thirsty[1] < dry[1]:
             floor = thirsty
         held = None
-        if watered and floor and watered[1] > floor[1]:
-            held = watered[1] - floor[1]
+        if full and floor and full[1] > floor[1]:
+            held = full[1] - floor[1]
             status["held_grams"] = held
         if latest is None:
             return status
 
         latest_grams = latest[1]
-        if watered:
-            status["used_grams"] = max(0, watered[1] - latest_grams)
+        # From the watering, not the ceiling: "how much has gone since
+        # it was watered" is about an event, while the ceiling is a
+        # property of the pot. Falling back to the ceiling lets a pot
+        # that has never been watered still say how much it has lost
+        # since it was full.
+        from_what = watered or full
+        if from_what:
+            status["used_grams"] = max(0, from_what[1] - latest_grams)
         # "Water left" is measured from dry, the same scale "Water used"
         # is counted on.
         #
@@ -4920,7 +5310,8 @@ class ReadingStore:
                        plants.purchase_price_cents,
                        plants.purchase_place,
                        plants.ppfd_umol_m2s, plants.light_hours_per_day,
-                       plants.started_at
+                       plants.started_at,
+                       plants.weight_offset_grams
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -4970,7 +5361,8 @@ class ReadingStore:
                        plants.purchase_price_cents,
                        plants.purchase_place,
                        plants.ppfd_umol_m2s, plants.light_hours_per_day,
-                       plants.started_at
+                       plants.started_at,
+                       plants.weight_offset_grams
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -5475,6 +5867,10 @@ class ReadingStore:
             # When the plant began, not when it arrived. What its signs
             # mean depends on how old it is.
             "started_at": row[20],
+            # What else sits on the scale with it: a probe, a cache
+            # pot, a saucer. Taken off a weighing, never off a typed
+            # anchor.
+            "weight_offset_grams": int(row[21] or 0),
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

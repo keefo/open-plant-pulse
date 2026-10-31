@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 57
+DATABASE_SCHEMA_VERSION = 64
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -1366,6 +1366,178 @@ MIGRATIONS: Dict[int, str] = {
            says which it is showing, rather than letting a figure somebody
            typed look like a figure something measured. */
         ALTER TABLE plants ADD COLUMN light_hours_per_day REAL;
+    """,
+    64: """
+        -- What else is on the scale with the plant.
+        --
+        -- A probe in the soil, a cache pot, a saucer: things that are
+        -- weighed with the pot and are not the plant. The weight that
+        -- is stored is the plant's, so everything built on it -- the
+        -- drying rate, the anchors, the forecast -- keeps meaning
+        -- what it meant.
+        ALTER TABLE plants ADD COLUMN weight_offset_grams INTEGER NOT NULL DEFAULT 0;
+
+        -- And what was taken off this particular weighing, so the
+        -- number read off the scale can still be worked out. Storing
+        -- only the net would hide what was measured; storing the
+        -- gross as well would be two figures to keep agreeing.
+        ALTER TABLE plant_weights ADD COLUMN offset_grams INTEGER NOT NULL DEFAULT 0;
+    """,
+    63: """
+        -- How long a pulse cycle is, when the fan is asked for less
+        -- than it can turn at.
+        --
+        -- This fan cannot run below about a quarter speed without
+        -- buzzing, and a quarter speed for a whole minute removes
+        -- ten points of humidity from a box that is only ever two or
+        -- three over. The answer is not a gain: it is to run the fan
+        -- at its floor for part of a window and leave it off for the
+        -- rest, which is the same trick a slow PWM plays on a heater.
+        ALTER TABLE fan_control ADD COLUMN pulse_window_s INTEGER NOT NULL DEFAULT 120;
+    """,
+    62: """
+        -- What the fan was told, so the control can be judged.
+        --
+        -- Written when the speed changes rather than on every tick:
+        -- the loop wakes twice a minute and the fan moves a few times
+        -- an hour, so a row per tick would be thousands a day saying
+        -- the same thing. A step between two rows is the fan holding.
+        CREATE TABLE IF NOT EXISTS fan_log (
+            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at       TEXT NOT NULL,
+            speed    REAL NOT NULL,
+            rh       REAL,
+            mode     TEXT NOT NULL,
+            why      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS fan_log_by_time ON fan_log (at);
+    """,
+    61: """
+        -- One box, one fan. A single row rather than a table of fans
+        -- and drivers: there is one enclosure with one exhaust fan,
+        -- and a second would be a reason to generalise, not a reason
+        -- to have guessed.
+        CREATE TABLE IF NOT EXISTS fan_control (
+            singleton_id  INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+            enabled       INTEGER NOT NULL DEFAULT 0,
+            mode          TEXT NOT NULL DEFAULT 'off'
+                          CHECK (mode IN ('off', 'manual', 'auto')),
+            moonraker_url TEXT NOT NULL DEFAULT 'http://vzbot.local',
+            fan_name      TEXT NOT NULL DEFAULT 'Exhaust_fan',
+            sensor_id     TEXT,
+            target_rh     REAL NOT NULL DEFAULT 65,
+            -- Per %RH. Ki and Kd are per minute, because a reading
+            -- every seven minutes makes per-second gains unreadable.
+            kp            REAL NOT NULL DEFAULT 0.05,
+            ki            REAL NOT NULL DEFAULT 0.002,
+            -- Zero on purpose: a difference between two readings
+            -- minutes apart, each rounded to a tenth, is mostly noise.
+            kd            REAL NOT NULL DEFAULT 0,
+            manual_speed  REAL NOT NULL DEFAULT 0.1,
+            -- Below this the fan hums and does nothing.
+            min_speed     REAL NOT NULL DEFAULT 0.05,
+            max_speed     REAL NOT NULL DEFAULT 1.0,
+            -- A controller acting on a reading older than this is
+            -- guessing, so it stops and the fan goes off.
+            stale_after_s INTEGER NOT NULL DEFAULT 1800
+        );
+        INSERT OR IGNORE INTO fan_control (singleton_id) VALUES (1);
+    """,
+    60: """
+        -- "Full at" stops being the same thing as "it was watered".
+        --
+        -- Both were a row of kind 'watered': the Set button wrote one
+        -- with observed=0, a watering wrote one with observed=1, and
+        -- the ceiling was whichever came last. So every watering
+        -- silently redefined how much water the pot can hold -- and
+        -- once the hub started tagging waterings by itself, the
+        -- ceiling moved with no one touching it.
+        --
+        -- 'full' is the stated ceiling, and only the Set button
+        -- writes it. 'watered' goes back to meaning the pot was
+        -- watered, which is an event and not a measurement of
+        -- capacity.
+        -- `kind` is a CHECK constraint and SQLite cannot alter one,
+        -- so the table is rebuilt around the wider list.
+        CREATE TABLE plant_weights_with_full (
+            weight_id INTEGER PRIMARY KEY,
+            plant_id INTEGER NOT NULL REFERENCES plants(plant_id) ON DELETE CASCADE,
+            at TEXT NOT NULL,
+            grams INTEGER NOT NULL CHECK (grams > 0),
+            source TEXT NOT NULL CHECK (source IN ('manual', 'scale')),
+            kind TEXT NOT NULL CHECK (kind IN ('reading', 'watered', 'thirsty', 'dry', 'full')),
+            note TEXT,
+            observed INTEGER NOT NULL DEFAULT 1 CHECK (observed IN (0, 1))
+        );
+        INSERT INTO plant_weights_with_full
+            (weight_id, plant_id, at, grams, source, kind, note, observed)
+        SELECT weight_id, plant_id, at, grams, source, kind, note, observed
+        FROM plant_weights;
+        DROP TABLE plant_weights;
+        ALTER TABLE plant_weights_with_full RENAME TO plant_weights;
+        CREATE INDEX plant_weights_by_plant ON plant_weights(plant_id, at DESC);
+
+        UPDATE plant_weights SET kind = 'full'
+        WHERE kind = 'watered' AND COALESCE(observed, 1) = 0;
+
+        -- A plant whose ceiling was only ever a real weighing keeps
+        -- the number it had, now stated outright rather than inferred
+        -- from the last watering.
+        INSERT INTO plant_weights (plant_id, at, grams, source, kind, observed)
+        SELECT w.plant_id, w.at, w.grams, 'manual', 'full', 0
+        FROM plant_weights w
+        WHERE w.kind = 'watered'
+          AND w.at = (SELECT MAX(at) FROM plant_weights
+                      WHERE plant_id = w.plant_id AND kind = 'watered')
+          AND NOT EXISTS (SELECT 1 FROM plant_weights f
+                          WHERE f.plant_id = w.plant_id AND f.kind = 'full');
+    """,
+    59: """
+        -- A rule is one line under one measurement on one device.
+        --
+        -- Nothing here names a kind of device: a rule on
+        -- air_temperature_c works on anything that reports it, which
+        -- is what stops a new sensor arriving with no way to alarm on
+        -- it. `test` is above, below or true -- true because `wet` is
+        -- a boolean and bending it into `above 0.5` would be a trick
+        -- the next reader has to undo.
+        --
+        -- repeat_seconds: 0 sounds once, otherwise it sounds again
+        -- every N seconds until the reading leaves the condition or
+        -- somebody presses stop.
+        CREATE TABLE IF NOT EXISTS alert_rules (
+            rule_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_id      TEXT NOT NULL REFERENCES sensors(sensor_id) ON DELETE CASCADE,
+            measurement    TEXT NOT NULL,
+            test           TEXT NOT NULL CHECK (test IN ('above', 'below', 'true')),
+            threshold      REAL,
+            sound          TEXT,
+            repeat_seconds INTEGER NOT NULL DEFAULT 0,
+            push           INTEGER NOT NULL DEFAULT 1,
+            enabled        INTEGER NOT NULL DEFAULT 1,
+            created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS alert_rules_by_sensor
+            ON alert_rules (sensor_id);
+
+        -- The leak alarm was written into the service. It becomes a
+        -- rule like any other, seeded here for every leak sensor
+        -- already enrolled so nobody's alarm stops working at an
+        -- upgrade. Water repeats until somebody comes.
+        INSERT INTO alert_rules (sensor_id, measurement, test, sound,
+                                 repeat_seconds, push)
+        SELECT sensor_id, 'wet', 'true', 'Submarine', 20, 1
+        FROM sensors
+        WHERE transport = 'zigbee-leak' AND enrollment_status = 'enrolled';
+    """,
+    58: """
+        -- Where to send an alarm. The whole URL, because
+        -- https://ntfy.sh/<topic> and the same path on somebody's own
+        -- server are one string, and splitting it into a server and a
+        -- topic would be a switch for a decision the address states.
+        -- NULL means nothing is sent, which is what a hub nobody has
+        -- configured should do.
+        ALTER TABLE hub_settings ADD COLUMN ntfy_url TEXT;
     """,
     57: """
         -- How often a Zigbee device is asked to report, per device.

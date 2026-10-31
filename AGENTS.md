@@ -84,6 +84,42 @@ lines are drawn.
 A chart nobody can question is a picture. This applies to any chart
 with a line in it, not only the ones somebody has complained about.
 
+## One line chart
+
+There is one renderer for a line over time, and every chart with a
+line in it goes through it. Not one per page, not one per device kind,
+not a new one because the old one did not quite fit.
+
+This was asked for after a single device page showed three charts in
+three styles -- one with points and a readout, one a bare blue line
+that answered nothing, one somewhere in between -- because three
+people-shaped moments had each added a drawer of their own. Eight
+existed in the file at the time.
+
+What the one renderer settles, so nothing has to settle it again:
+
+- **A line is a colour, and the colour means a series.** Derived from
+  what is being drawn, never from its position in a list.
+- **Every line answers the pointer**, on hover and on tap, with the
+  reading, when it was taken, and whose it is.
+- **Points are drawn, not implied.** A reading is a thing that
+  happened at a moment; a line between two of them is an assumption.
+- **The axis is padded** so a steady room is not drawn as a mountain
+  range, and a percentage never passes 100.
+- **An empty chart says which kind of empty it is**: nothing recorded
+  yet, nothing in this range, or everything hidden. Three different
+  sentences, and only one of them is the reader's own doing.
+
+A chart that needs to say more -- which weighings had settled, where
+the ideal band sits -- extends the renderer. It does not fork it.
+Removing a distinction that is really there is not simplification, but
+neither is a second drawer that exists because adding a parameter felt
+like more work.
+
+**A control that changes a chart stays on screen.** Hiding a section
+because the chosen range is empty takes away the buttons that chose
+it; the way back has to survive the thing it undoes.
+
 ## Definition of done
 
 - Do not claim a task is complete while any requested step is unperformed, failed,

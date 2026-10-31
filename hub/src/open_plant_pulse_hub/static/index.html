@@ -186,6 +186,8 @@
         <a id="settings-tab-time" class="settings-tab" href="/settings/time" role="tab">Time</a>
         <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
         <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
+        <a id="settings-tab-alerts" class="settings-tab" href="/settings/alerts" role="tab">Alerts</a>
+        <a id="settings-tab-box" class="settings-tab" href="/settings/box" role="tab">Box</a>
       </div>
 
       <div id="settings-sensors-panel" class="settings-panel-group">
@@ -292,6 +294,144 @@
           </div>
         </div>
         <div id="room-list" class="settings-sensor-list"></div>
+      </div>
+
+      <!-- The plant box. One enclosure, one exhaust fan, kept on its
+           own page so the rest of the hub carries on not knowing about
+           fans. See docs/proposals/vzbot-humidity-control.md. -->
+      <div id="settings-box-panel" class="settings-panel-group" hidden>
+        <section class="settings-panel" aria-labelledby="box-now-title">
+          <h2 id="box-now-title">The box right now</h2>
+          <div class="journey-stats" id="box-now" aria-live="polite">
+            <div><strong id="box-rh">--</strong><span>Humidity</span></div>
+            <div><strong id="box-target">--</strong><span>Target</span></div>
+            <div><strong id="box-speed">--</strong><span>Fan</span></div>
+            <div><strong id="box-printer">--</strong><span>Printer</span></div>
+          </div>
+          <p id="box-why" class="note mute"></p>
+        </section>
+
+        <section class="settings-panel" aria-labelledby="box-history-title">
+          <div class="section-heading">
+            <div><h2 id="box-history-title">How it has held</h2></div>
+            <div class="history-range-selector" role="group" aria-label="How far back">
+              <button type="button" data-box-range="6" aria-pressed="false">6 hours</button>
+              <button type="button" data-box-range="24" aria-pressed="true">24 hours</button>
+              <button type="button" data-box-range="168" aria-pressed="false">7 days</button>
+              <button type="button" data-box-range="720" aria-pressed="false">30 days</button>
+            </div>
+          </div>
+          <p class="ph-explainer">Humidity and the fan on one axis, because both
+            are percentages and the only way to judge a controller is to see the
+            two together. The fan is drawn as steps: it holds whatever it was
+            last told until it is told otherwise.</p>
+          <div id="box-legend" class="chart-legend" hidden></div>
+          <svg id="box-chart" class="history-chart" viewBox="0 0 720 220" role="img"
+               aria-label="Humidity and fan over time"></svg>
+          <p id="box-chart-empty" class="history-chart-empty">
+            Nothing recorded yet. The fan is written down when it changes.
+          </p>
+        </section>
+
+        <form id="box-form" class="settings-panel">
+          <h2>Control</h2>
+          <p class="settings-note" data-foldable>The enclosure holds humidity well, which is why the begonias are in it and why it reaches 86&nbsp;% on a closed afternoon. The way down is the exhaust fan, and this holds it at a number instead of somebody typing <code>SET_FAN_SPEED</code> when they notice. It steps when a reading arrives rather than on a timer, stands down while the printer is printing, and switches the fan off if the sensor goes quiet &mdash; acting on an old humidity is guessing.</p>
+          <label for="box-mode">Mode</label>
+          <select id="box-mode">
+            <option value="off">Off &middot; the hub does not touch the fan</option>
+            <option value="manual">By hand &middot; hold one speed</option>
+            <option value="auto">Hold a humidity</option>
+          </select>
+
+          <div id="box-manual-row">
+            <label for="box-manual-speed">Fan speed by hand (0 to 1)</label>
+            <input id="box-manual-speed" type="number" step="0.05" min="0" max="1">
+          </div>
+
+          <div id="box-auto-rows">
+            <label for="box-target-rh">Hold humidity at (%)</label>
+            <input id="box-target-rh" type="number" step="1" min="0" max="100">
+            <label for="box-sensor">Measured by</label>
+            <select id="box-sensor"></select>
+            <div id="box-gains">
+              <h3>Tuning</h3>
+              <p class="note mute">Kp acts on how far off it is now. Ki acts on how long it has been off, per minute. Kd is off by default: two readings minutes apart, each rounded to a tenth, are mostly noise. The slowest speed is a floor, not a threshold: below it a fan tends to buzz without moving air, so when less than that is wanted the fan runs at its floor for part of a pulse window and stops for the rest &mdash; the trick a slow PWM plays on a heater. It stops entirely only once the box is back to target.</p>
+              <label for="box-preset">Start from</label>
+              <select id="box-preset"></select>
+              <p id="box-preset-note" class="note mute"></p>
+              <!-- What these gains would do to a box that drifts and a
+                   fan that clears it. A drawing of the arithmetic, not a
+                   prediction about this enclosure: the numbers it assumes
+                   are printed under it. -->
+              <svg id="box-pid-preview" class="history-chart" viewBox="0 0 720 200"
+                   role="img" aria-label="How these gains would settle"></svg>
+              <p id="box-pid-caption" class="note mute"></p>
+              <div class="box-field-row">
+                <label for="box-kp">Kp &middot; per %RH
+                  <input id="box-kp" type="number" step="0.01" min="0" max="1">
+                </label>
+                <label for="box-ki">Ki &middot; per %RH per min
+                  <input id="box-ki" type="number" step="0.001" min="0" max="1">
+                </label>
+                <label for="box-kd">Kd &middot; per %RH per min
+                  <input id="box-kd" type="number" step="0.01" min="0" max="5">
+                </label>
+              </div>
+              <div class="box-field-row">
+                <label for="box-min-speed">Slowest the fan may run
+                  <input id="box-min-speed" type="number" step="0.01" min="0" max="1">
+                </label>
+                <label for="box-max-speed">Highest speed allowed
+                  <input id="box-max-speed" type="number" step="0.05" min="0" max="1">
+                </label>
+                <label for="box-pulse-window">Pulse window (seconds)
+                  <input id="box-pulse-window" type="number" step="10" min="20" max="900">
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div id="box-printer-settings">
+            <h3>The printer</h3>
+            <label for="box-url">Moonraker address</label>
+            <input id="box-url" type="url" maxlength="200" placeholder="http://vzbot.local">
+            <label for="box-fan-name">Fan name</label>
+            <input id="box-fan-name" maxlength="80" placeholder="Exhaust_fan">
+          </div>
+
+          <div class="inline-control">
+            <button id="box-save" type="submit">Save</button>
+            <output id="box-message" aria-live="polite"></output>
+          </div>
+        </form>
+      </div>
+
+      <div id="settings-alerts-panel" class="settings-panel-group" hidden>
+        <form id="alerts-form" class="settings-panel">
+          <h2>Alerts to a phone</h2>
+          <p class="settings-note" data-foldable>Everything else the hub says, it says on a page somebody has to open. Water on a floor is different: it matters most to whoever is out, and a notice nobody sees until they get home is not a notice. Install <b>ntfy</b> on the phone, subscribe it to a topic nobody else would guess, and paste the same address here &mdash; <code>https://ntfy.sh/&lt;topic&gt;</code>, or the same path on a server of your own. Anyone who knows the topic can read it and post to it, so treat the address as the secret it is. Left empty, the hub sends nothing.</p>
+          <label for="alerts-url">Address</label>
+          <div class="inline-control alerts-address">
+            <input id="alerts-url" type="url" maxlength="500" placeholder="Press Generate, or paste an address">
+            <button id="alerts-generate" type="button">Generate</button>
+          </div>
+          <p id="alerts-topic" class="note mute" hidden></p>
+          <div class="inline-control">
+            <button id="alerts-save" type="submit">Save</button>
+            <button id="alerts-test" type="button">Send a test</button>
+            <output id="alerts-message" aria-live="polite"></output>
+          </div>
+        </form>
+
+        <section class="settings-panel" aria-labelledby="alerts-what-title">
+          <h2 id="alerts-what-title">What is sent</h2>
+          <p>A leak sensor finding water sends at once, at the priority that
+             rings a silenced phone. It is sent on the change rather than the
+             state: these sensors repeat themselves while they are wet, and a
+             phone that buzzes every few minutes until somebody gets home is a
+             phone that gets silenced. Drying out is sent too, quietly.</p>
+          <div id="alerts-sources" class="settings-sensor-list"></div>
+        </section>
       </div>
 
       <div id="settings-lights-panel" class="settings-panel-group" hidden>
@@ -749,6 +889,14 @@
             Just fertilized
           </label>
         </div>
+        <label for="plant-weight-offset">Also on the scale (g)</label>
+        <div class="inline-control">
+          <input id="plant-weight-offset" type="number" step="1" min="0"
+                 max="100000" placeholder="0">
+          <button id="plant-weight-offset-save" type="button">Set</button>
+          <output id="plant-weight-offset-message" aria-live="polite"></output>
+        </div>
+        <p class="note mute" id="plant-weight-offset-note"></p>
         <button id="plant-weight-record" type="button">Record</button>
         <output id="plant-weight-message" aria-live="polite"></output>
       </div>
@@ -1287,6 +1435,63 @@
         <div><p class="eyebrow">DEVICE</p><h2 id="zigbee-unknown-title">No controls yet</h2></div>
       </div>
       <p class="ph-explainer">The hub does not know what kind of device this is, so it has nothing to offer beyond what the list shows. It fills in once the device reports.</p>
+    </section>
+
+    <!-- Alerts, on every Zigbee device. A rule is about a measurement,
+         not about a kind of device, so anything that reports a number
+         somebody wants a line drawn under can have one. -->
+    <section class="sensor-settings" data-page="zigbee-device"
+             id="zigbee-alerts-panel" aria-labelledby="zigbee-alerts-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">ALERTS</p><h2 id="zigbee-alerts-title">Tell me when</h2></div>
+      </div>
+      <p class="ph-explainer">A rule watches one measurement on this device and
+        fires when a reading crosses the line &mdash; once on the way in, not
+        every time it reports while it is there. It can sound on the iMac, tell
+        your phone, or both.</p>
+      <div id="zigbee-alert-rules" class="settings-sensor-list"></div>
+
+      <form id="zigbee-alert-form" class="alert-rule-form">
+        <div class="alert-rule-row">
+          <label class="alert-field">
+            <span>When</span>
+            <select id="alert-measurement"></select>
+          </label>
+          <label class="alert-field">
+            <span>is</span>
+            <select id="alert-test">
+              <option value="above">above</option>
+              <option value="below">below</option>
+              <option value="true">reported</option>
+            </select>
+          </label>
+          <label class="alert-field" id="alert-threshold-field">
+            <span>value</span>
+            <input id="alert-threshold" type="number" step="any" placeholder="16">
+          </label>
+          <label class="alert-field">
+            <span>sound</span>
+            <select id="alert-sound"></select>
+          </label>
+          <button id="alert-hear" type="button" title="Hear it">Hear</button>
+          <label class="alert-field">
+            <span>repeat</span>
+            <select id="alert-repeat">
+              <option value="0">once</option>
+              <option value="10">every 10s</option>
+              <option value="20">every 20s</option>
+              <option value="60">every minute</option>
+            </select>
+          </label>
+          <label class="alert-check">
+            <input id="alert-push" type="checkbox" checked>
+            tell my phone
+          </label>
+          <button id="alert-add" type="submit">Add rule</button>
+          <button id="alert-cancel" type="button" hidden>Cancel</button>
+        </div>
+        <output id="alert-message" aria-live="polite"></output>
+      </form>
     </section>
 
     <section class="sensor-settings" data-page="sensor-config" id="sensor-identity-panel" aria-labelledby="sensor-identity-title" hidden>

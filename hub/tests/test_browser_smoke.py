@@ -1115,3 +1115,184 @@ class WateringDueColourTests(unittest.TestCase):
 
     def test_now_is_the_state_that_is_coloured(self) -> None:
         self.assertIn('.fleet-card small[data-state="now"]', self.css)
+
+
+class AlertAddressTests(unittest.TestCase):
+    """A topic somebody types is a topic somebody could guess.
+
+    ntfy has no accounts for a plain topic, so the name is the only
+    thing keeping anybody else off the channel: readable by them and
+    forgeable by them if they land on it.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.app = (here / "app.js").read_text()
+
+    def test_the_address_can_be_generated(self) -> None:
+        self.assertIn('id="alerts-generate"', self.page)
+        self.assertIn("function generatedTopic()", self.app)
+        self.assertIn("crypto.getRandomValues", self.app)
+
+    def test_the_alphabet_leaves_out_the_letters_people_misread(self) -> None:
+        """The name is read off one screen and typed into a phone."""
+        alphabet = self.app.split('TOPIC_LETTERS = "')[1].split('"')[0]
+        for confusable in "ilo01":
+            self.assertNotIn(confusable, alphabet, confusable)
+
+    def test_it_is_long_enough_not_to_be_guessed(self) -> None:
+        length = int(self.app.split("TOPIC_LENGTH = ")[1].split("\n")[0].strip(";"))
+        alphabet = self.app.split('TOPIC_LETTERS = "')[1].split('"')[0]
+        bits = length * (len(alphabet).bit_length() - 1)
+        self.assertGreaterEqual(bits, 64, f"only {bits} bits of topic")
+
+    def test_replacing_a_working_address_asks_first(self) -> None:
+        """The phone stays subscribed to the old topic, so a silent
+        replacement is a leak alarm that quietly stops working."""
+        generate = self.app.split("function generateAlertAddress()")[1]
+        self.assertIn("window.confirm", generate.split("field.value =")[0])
+
+    def test_the_topic_is_shown_so_it_can_be_subscribed_to(self) -> None:
+        self.assertIn('id="alerts-topic"', self.page)
+        self.assertIn("Subscribe the phone to the topic", self.app)
+
+
+class AlertRuleEditorTests(unittest.TestCase):
+    """A rule is about a measurement, not a kind of device."""
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.app = (here / "app.js").read_text()
+
+    def test_the_editor_is_on_every_zigbee_device(self) -> None:
+        """Not only the leak sensor: anything reporting a number
+        somebody wants a line under can have a rule."""
+        panel = self.page.split('id="zigbee-alerts-panel"')[0].split("<section")[-1]
+        self.assertIn('data-page="zigbee-device"', panel)
+        self.assertNotIn("data-device-kind", panel)
+
+    def test_the_measurements_come_from_the_device(self) -> None:
+        """A curated list would mean a new kind of sensor arrives
+        unable to raise an alarm until the hub is edited."""
+        self.assertIn("alertChoices.measurements", self.app)
+        self.assertIn("/api/alert-rules/zigbee-", self.app)
+
+    def test_every_renderer_the_editor_calls_exists(self) -> None:
+        for name in ("refreshDeviceAlerts", "renderDeviceAlertRules",
+                     "renderAlertChoices", "addAlertRule", "changeAlertRule",
+                     "hearAlertSound", "describeRule", "measurementWords"):
+            self.assertIn(f"function {name}(",
+                          self.app.replace("async function ", "function "), name)
+
+    def test_a_sound_can_be_heard_before_it_is_chosen(self) -> None:
+        self.assertIn('id="alert-hear"', self.page)
+        self.assertIn('"/api/alert-rules/hear"', self.app)
+
+
+class SeriesColourTests(unittest.TestCase):
+    """The palette a chart's lines are drawn with.
+
+    The class is built as `series-${entry.colour}`, so the full name
+    never appears in the source and a sweep for unused CSS calls the
+    rules dead. They were deleted once: `--series` went undefined,
+    `stroke: var(--series)` resolved to none, and every chart on the
+    rooms page became a scatter of black dots.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.css = (here / "app.css").read_text()
+        self.app = (here / "app.js").read_text()
+
+    def test_every_colour_the_script_can_pick_has_a_rule(self) -> None:
+        count = int(self.app.split("const SERIES_COLOURS = ")[1].split(";")[0])
+        for index in range(count):
+            self.assertIn(f".series-{index} {{ --series:", self.css,
+                          f"series-{index} has no colour, so its line is invisible")
+
+    def test_the_line_is_drawn_in_its_series_colour(self) -> None:
+        self.assertIn("var(--series)", self.css)
+
+
+class HiddenSeriesTests(unittest.TestCase):
+    """Switching a name off must not look like missing data.
+
+    Hiding is remembered across pages, so a name switched off on the
+    plant page empties the room page too -- and the room page blamed
+    the record, saying "no readings in this range" about readings that
+    were there all along.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+
+    def test_an_all_hidden_chart_says_so(self) -> None:
+        self.assertIn("Every sensor here is hidden", self.app)
+        self.assertIn("This sensor is hidden", self.app)
+
+    def test_the_original_wording_is_kept_to_go_back_to(self) -> None:
+        self.assertIn('setData(empty, "saying", empty.textContent)', self.app)
+
+    def test_a_hidden_only_sensor_keeps_its_legend(self) -> None:
+        """Otherwise a chart arrives with its one sensor switched off,
+        no line, and no chip to switch it back on."""
+        self.assertIn("setHidden(legend, series.length < 2 && !anyHidden)", self.app)
+
+    def test_the_rooms_grid_redraws_when_something_is_hidden(self) -> None:
+        """Without this, switching a name back on did nothing: the
+        readings had not changed, so the grid saw no reason to repaint
+        and the room stayed empty until a reload."""
+        key = self.app.split("if (!renderKeyChanged(grid, [roomsOverview")[1].split("return;")[0]
+        self.assertIn("hiddenSeries", key)
+
+
+class WeightRangeTests(unittest.TestCase):
+    """A control that changes a chart has to survive changing it.
+
+    Choosing "1 hour" on a scale that had not been read for an hour
+    hid the whole section, and the range buttons went with it. The
+    buttons left on screen belonged to the card below, which read as
+    the ranges having changed, and the only way back was a reload.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+
+    def test_an_empty_range_does_not_hide_the_section(self) -> None:
+        self.assertIn("setHidden(section, !weighsSomething && usable.length === 0)",
+                      self.app)
+
+    def test_it_says_which_kind_of_empty_it_is(self) -> None:
+        """Never weighed and nothing weighed in this hour are
+        different facts."""
+        self.assertIn("Nothing weighed in this range.", self.app)
+
+    def test_a_different_device_is_a_different_question(self) -> None:
+        self.assertIn("weighsFor !== eui", self.app)
+
+
+class PidPresetTests(unittest.TestCase):
+    """The picker reflects the saved gains rather than a stored name.
+
+    Choosing Balanced, saving and reloading showed "my own numbers":
+    nothing restored the selection, because only the gains are kept.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+
+    def test_the_selection_is_worked_out_from_the_gains(self) -> None:
+        self.assertIn("function presetMatching(", self.app)
+        self.assertIn('fill("box-preset", named)', self.app)
+
+    def test_the_name_is_not_stored_beside_the_gains(self) -> None:
+        """A stored name would still say "Balanced" after somebody
+        nudged Kp, while the loop ran something else."""
+        store = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                 / "application" / "store.py").read_text()
+        self.assertNotIn("preset", store.split("FAN_FIELDS = ")[1].split(")")[0])

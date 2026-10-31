@@ -182,8 +182,15 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual(status["daily_grams"], 117)
 
     def test_a_floor_as_well_gives_what_is_left_and_how_long(self) -> None:
-        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(10))
-        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty", at=ago(9))
+        # Capacity is a property of the pot, so the ceiling is stated
+        # rather than taken from whenever it was last watered.
+        self.store.record_plant_weight(self.plant_id, 17_400, "full",
+                                       at=ago(10), observed=False)
+        self.store.record_plant_weight(self.plant_id, 16_200, "thirsty",
+                                       at=ago(9), observed=False)
+        # The anchors say what the pot can hold; weighings say what it
+        # is doing, and the drying rate comes from the second.
+        self.store.record_plant_weight(self.plant_id, 17_400, at=ago(10))
         self.store.record_plant_weight(self.plant_id, 16_800, at=ago(0))
 
         status = self.store.plant_weight_status(self.plant_id)
@@ -220,12 +227,12 @@ class PlantWeightTests(unittest.TestCase):
 
     def test_correcting_an_anchor_is_not_a_second_watering(self) -> None:
         # Saying the full pot weighs 17.4 kg is a calibration, not an event.
-        self.store.record_plant_weight(self.plant_id, 17_400, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 17_400, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 16_200, "thirsty")
 
         self.assertEqual(self.store.care_log(10, plant_id=self.plant_id), [])
         status = self.store.plant_weight_status(self.plant_id)
-        self.assertEqual(status["watered"]["grams"], 17_400)
+        self.assertEqual(status["full"]["grams"], 17_400)
         self.assertEqual(status["thirsty"]["grams"], 16_200)
         self.assertEqual(status["capacity_grams"], 1_200)
 
@@ -244,7 +251,7 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual(status["daily_grams"], 125)
 
     def test_a_pot_with_only_typed_anchors_has_no_weight_yet(self) -> None:
-        self.store.record_plant_weight(self.plant_id, 17_400, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 17_400, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 16_200, "thirsty", observed=False)
 
         status = self.store.plant_weight_status(self.plant_id)
@@ -256,13 +263,13 @@ class PlantWeightTests(unittest.TestCase):
     def test_the_newest_anchor_is_the_one_that_counts(self) -> None:
         # A repot or a season's growth gives a new full weight; the old one
         # stays in the history rather than being overwritten.
-        self.store.record_plant_weight(self.plant_id, 17_400, "watered", at=ago(30),
+        self.store.record_plant_weight(self.plant_id, 17_400, "full", at=ago(30),
                                        observed=False)
-        self.store.record_plant_weight(self.plant_id, 19_000, "watered", at=ago(1),
+        self.store.record_plant_weight(self.plant_id, 19_000, "full", at=ago(1),
                                        observed=False)
 
         self.assertEqual(
-            self.store.plant_weight_status(self.plant_id)["watered"]["grams"], 19_000
+            self.store.plant_weight_status(self.plant_id)["full"]["grams"], 19_000
         )
         self.assertEqual(len(self.store.plant_weights(self.plant_id)), 2)
 
@@ -314,7 +321,7 @@ class PlantWeightTests(unittest.TestCase):
     def test_a_plant_that_stops_drinking_with_a_full_pot_is_worth_saying(self) -> None:
         # The one case where the obvious response makes things worse: water
         # the plant is not taking is not water the plant is short of.
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
                             (4, 2_590), (0.2, 2_585)])
@@ -336,7 +343,7 @@ class PlantWeightTests(unittest.TestCase):
                  if e["kind"] == "observation"]), 1)
 
     def test_the_same_slowdown_with_an_empty_pot_means_the_opposite(self) -> None:
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         self.water_history([(20, 2_900), (16, 2_750), (12, 2_600), (8, 2_450),
                             (4, 2_120), (0.2, 2_100)])
@@ -345,7 +352,7 @@ class PlantWeightTests(unittest.TestCase):
         self.assertEqual([f["code"] for f in findings], ["drinking_less_and_low"])
 
     def test_steady_drinking_is_not_worth_a_word(self) -> None:
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
                             (4, 2_500), (0.05, 2_401)])
@@ -357,7 +364,7 @@ class PlantWeightTests(unittest.TestCase):
     def test_a_weighing_written_down_late_says_nothing_about_today(self) -> None:
         # Filling in last week should not have the hub announcing findings
         # against a history it is halfway through being given.
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         self.water_history([(20, 2_900), (16, 2_800), (12, 2_700), (8, 2_600),
                             (4, 2_590), (0.2, 2_585)])
@@ -399,7 +406,7 @@ class PlantWeightTests(unittest.TestCase):
         """The air belongs to the room, so a sensor in it speaks for this pot."""
         room = self.store.create_room("Living", "south", "bright")["room_id"]
         self.store.update_plant(self.plant_id, "Spider", room_id=room)
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         # Cool and damp, then warm and dry.
         self.air_in_the_room(room, (18, 80), (26, 30))
@@ -415,7 +422,7 @@ class PlantWeightTests(unittest.TestCase):
     def test_a_change_the_room_does_not_explain_is_still_the_plant(self) -> None:
         room = self.store.create_room("Living", "south", "bright")["room_id"]
         self.store.update_plant(self.plant_id, "Spider", room_id=room)
-        self.store.record_plant_weight(self.plant_id, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant_id, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant_id, 2_000, "thirsty", observed=False)
         # The room did turn damper, but nowhere near enough to account for
         # a plant that all but stopped drinking.
@@ -1298,7 +1305,7 @@ class PlantApiTests(unittest.TestCase):
         plant_id = self.call("POST", "/api/plants", {"display_name": "Golden"})["plant_id"]
         path = f"/api/plants/{plant_id}/weight"
 
-        self.call("POST", path, {"grams": 2438, "kind": "watered", "observed": False})
+        self.call("POST", path, {"grams": 2438, "kind": "full", "observed": False})
         self.call("POST", path, {"grams": 1450, "kind": "thirsty", "observed": False})
 
         # Typed-in anchors are claims about states the pot is not in, so
@@ -2421,7 +2428,7 @@ class WaterLeftIsMeasuredFromDryTests(unittest.TestCase):
         self.plant = self.store.create_plant("Begonia")["plant_id"]
 
     def _anchors(self, full: int, thirsty: int, dry: int) -> None:
-        self.store.record_plant_weight(self.plant, full, "watered", observed=False)
+        self.store.record_plant_weight(self.plant, full, "full", observed=False)
         self.store.record_plant_weight(self.plant, thirsty, "thirsty", observed=False)
         self.store.record_plant_weight(self.plant, dry, "dry", observed=False)
 
@@ -2451,9 +2458,132 @@ class WaterLeftIsMeasuredFromDryTests(unittest.TestCase):
         """Dry is inferred from the lightest weighing when nobody states
         one. A pot whose owner waters it well above anything it has ever
         weighed would otherwise read empty at its own lightest."""
-        self.store.record_plant_weight(self.plant, 3_000, "watered", observed=False)
+        self.store.record_plant_weight(self.plant, 3_000, "full", observed=False)
         self.store.record_plant_weight(self.plant, 2_000, "thirsty", observed=False)
         self.store.record_plant_weight(self.plant, 2_585)
         weight = self.store.plant_weight_status(self.plant)
         self.assertEqual(weight["dry"]["grams"], 2_585)
         self.assertGreater(weight["remaining_percent"], 50)
+
+
+class OnlySetMovesTheAnchorsTests(unittest.TestCase):
+    """Full at, Thirsty at and Dry at change when somebody sets them.
+
+    "Full at" and "it was watered" were one row of kind 'watered': the
+    Set button wrote one, a watering wrote one, and the ceiling was
+    whichever came last. So every watering quietly redefined how much
+    the pot holds -- and once the hub began tagging waterings by
+    itself, the number moved with nobody touching it.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Pothos")["plant_id"]
+        self.store.record_plant_weight(self.plant, 700, "full", observed=False)
+        self.store.record_plant_weight(self.plant, 500, "thirsty", observed=False)
+        self.store.record_plant_weight(self.plant, 450, "dry", observed=False)
+
+    def _anchors(self):
+        s = self.store.plant_weight_status(self.plant)
+        return (s["full"]["grams"], s["thirsty"]["grams"], s["dry"]["grams"])
+
+    def test_a_watering_does_not_move_the_ceiling(self) -> None:
+        self.store.record_plant_weight(self.plant, 680, "watered")
+        self.assertEqual(self._anchors(), (700, 500, 450))
+
+    def test_an_auto_tagged_watering_does_not_move_the_ceiling(self) -> None:
+        """The case that started this: a sudden gain is recorded as a
+        watering with nobody ticking anything."""
+        self.store.record_plant_weight(self.plant, 480, at=ago(2))
+        self.store.record_plant_weight(self.plant, 640, at=ago(1))  # hub tags it
+        jump = [w for w in self.store.plant_weights(self.plant)
+                if w["grams"] == 640][0]
+        self.assertEqual(jump["kind"], "watered")
+        self.assertEqual(self._anchors(), (700, 500, 450))
+
+    def test_ordinary_weighings_do_not_move_the_anchors(self) -> None:
+        for grams in (690, 670, 640, 600, 520):
+            self.store.record_plant_weight(self.plant, grams)
+        self.assertEqual(self._anchors(), (700, 500, 450))
+
+    def test_setting_it_moves_it(self) -> None:
+        self.store.record_plant_weight(self.plant, 760, "full", observed=False)
+        self.assertEqual(self._anchors()[0], 760)
+
+    def test_the_watering_is_still_recorded_as_an_event(self) -> None:
+        """Auto-tagging is wanted; it just must not be a measurement
+        of what the pot can hold."""
+        self.store.record_plant_weight(self.plant, 480, at=ago(2))
+        self.store.record_plant_weight(self.plant, 640, at=ago(1))
+        status = self.store.plant_weight_status(self.plant)
+        self.assertEqual(status["watered"]["grams"], 640)
+        self.assertEqual(status["full"]["grams"], 700)
+        kinds = [e["kind"] for e in self.store.care_log(10, plant_id=self.plant)]
+        self.assertIn("watering", kinds)
+
+    def test_water_used_counts_from_the_watering_not_the_ceiling(self) -> None:
+        """Two different questions: how much has gone since it was
+        watered, and how much the pot can hold."""
+        self.store.record_plant_weight(self.plant, 480, at=ago(3))
+        self.store.record_plant_weight(self.plant, 640, at=ago(2))
+        self.store.record_plant_weight(self.plant, 600, at=ago(1))
+        self.assertEqual(self.store.plant_weight_status(self.plant)["used_grams"], 40)
+
+
+class WeightOffsetTests(unittest.TestCase):
+    """What else sits on the scale with the plant.
+
+    A probe in the soil or a cache pot is weighed with the pot and is
+    not the plant. The weight that is stored is the plant's, so the
+    drying rate, the anchors and the forecast keep meaning what they
+    meant.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Monstera")["plant_id"]
+        self.store.set_plant_weight_offset(self.plant, 120)
+
+    def test_it_comes_off_a_weighing(self) -> None:
+        self.store.record_plant_weight(self.plant, 800)
+        self.assertEqual(self.store.plant_weights(self.plant)[0]["grams"], 680)
+
+    def test_the_scale_reading_is_still_recoverable(self) -> None:
+        """Storing only the net would hide what was measured."""
+        self.store.record_plant_weight(self.plant, 800)
+        row = self.store.plant_weights(self.plant)[0]
+        self.assertEqual(row["grams"] + row["offset_grams"], 800)
+
+    def test_nothing_comes_off_a_typed_anchor(self) -> None:
+        """An anchor typed from memory is already the plant's weight."""
+        self.store.record_plant_weight(self.plant, 700, "full", observed=False)
+        self.assertEqual(self.store.plant_weight_status(self.plant)["full"]["grams"], 700)
+
+    def test_it_applies_to_the_scale_as_well_as_a_person(self) -> None:
+        """The probe is on the scale whoever reads it."""
+        self.store.record_plant_weight(self.plant, 800, source="scale")
+        self.assertEqual(self.store.plant_weights(self.plant)[0]["grams"], 680)
+
+    def test_a_weighing_lighter_than_the_offset_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.record_plant_weight(self.plant, 100)
+
+    def test_changing_it_does_not_rewrite_the_past(self) -> None:
+        """A probe added last week did not affect the month before."""
+        self.store.record_plant_weight(self.plant, 800, at=ago(3))
+        self.store.set_plant_weight_offset(self.plant, 200)
+        self.store.record_plant_weight(self.plant, 800, at=ago(1))
+        kept = [w["grams"] for w in self.store.plant_weights(self.plant)]
+        self.assertEqual(sorted(kept), [600, 680])
+
+    def test_the_drying_rate_is_measured_on_the_plant_not_the_probe(self) -> None:
+        for grams, days in ((800, 4), (780, 3), (760, 2), (740, 1)):
+            self.store.record_plant_weight(self.plant, grams, at=ago(days))
+        status = self.store.plant_weight_status(self.plant)
+        # 20 g a day whatever the probe weighs.
+        self.assertEqual(status["daily_grams"], 20)
+
+    def test_an_offset_of_nothing_changes_nothing(self) -> None:
+        self.store.set_plant_weight_offset(self.plant, 0)
+        self.store.record_plant_weight(self.plant, 800)
+        self.assertEqual(self.store.plant_weights(self.plant)[0]["grams"], 800)

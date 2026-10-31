@@ -80,6 +80,9 @@ def create_server(
     lights: Optional[Any] = None,
     photos: Optional[Any] = None,
     zigbee: Optional[Any] = None,
+    alerts: Optional[Any] = None,
+    sounder: Optional[Any] = None,
+    fan: Optional[Any] = None,
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     # Updating a device whose Wi-Fi is normally off is a sequence, not
@@ -137,6 +140,40 @@ def create_server(
                 self._send_json(store.hub_wifi_settings())
             elif path == "/api/rooms":
                 self._send_json({"items": store.rooms()})
+            elif path.startswith("/api/alert-rules/"):
+                # One device's rules, with the choices a page needs to
+                # offer: what this device has actually reported, and
+                # what this computer can actually play.
+                sensor_id = unquote(path[len("/api/alert-rules/") :])
+                self._send_json({
+                    "items": store.alert_rules(sensor_id),
+                    "measurements": store.measurements_seen(sensor_id),
+                    "sounds": sounder.sounds() if sounder else [],
+                    "ringing": sounder.ringing() if sounder else [],
+                })
+            elif path == "/api/fan/history":
+                # The humidity and the fan on one time axis, which is
+                # the only way to see whether the control is working.
+                try:
+                    asked = parse_qs(request.query)
+                    hours = max(1, min(int(asked.get("hours", ["24"])[0]), 24 * 366))
+                except ValueError:
+                    self.send_error(HTTPStatus.BAD_REQUEST, "hours must be a number")
+                    return
+                self._send_json({
+                    "hours": hours,
+                    "fan": store.fan_log(hours),
+                    "humidity": store.history_range(
+                        sensor_id,
+                        (datetime.now(timezone.utc)
+                         - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    ) if (sensor_id := store.fan_control().get("sensor_id")) else [],
+                })
+            elif path == "/api/fan":
+                # The settings, plus what the loop last did and why.
+                self._send_json({**store.fan_control(),
+                                 "state": fan.state() if fan else None})
             elif path == "/api/rooms/overview":
                 self._send_json({"items": store.rooms_overview()})
             elif path.startswith("/api/rooms/"):
@@ -167,7 +204,10 @@ def create_server(
                 eui = unquote(path[len("/api/zigbee/") : -len("/reports")])
                 query = parse_qs(request.query)
                 try:
-                    hours = max(1, min(int(query.get("hours", ["168"])[0]), 24 * 31))
+                    # A year, because there is a button asking for one.
+                    # Capped at 31 days, the 1 year button showed a
+                    # month and said nothing about it.
+                    hours = max(1, min(int(query.get("hours", ["168"])[0]), 24 * 366))
                     limit = max(1, min(int(query.get("limit", ["200"])[0]), 2000))
                 except ValueError:
                     self.send_error(HTTPStatus.BAD_REQUEST, "hours and limit must be numbers")
@@ -281,7 +321,9 @@ def create_server(
                 path
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
                         "/api/settings/sections", "/api/settings/care-log",
-                        "/api/settings/timezone", "/api/settings/zigbee-reports")
+                        "/api/settings/timezone", "/api/settings/zigbee-reports",
+                        "/api/settings/alerts", "/api/fan")
+                and not path.startswith("/api/alert-rules/")
                 and not path.startswith("/api/sensors/")
                 and not path.startswith("/api/rooms/")
                 and not path.startswith("/api/plants/")
@@ -293,7 +335,24 @@ def create_server(
             try:
                 self._require_same_origin()
                 payload = self._read_json()
-                if path == "/api/settings/zigbee-reports":
+                if path == "/api/fan":
+                    result = store.set_fan_control(**payload)
+                    # Acted on at the next tick, half a minute away,
+                    # rather than from inside a request handler.
+                elif path.startswith("/api/alert-rules/"):
+                    result = store.update_alert_rule(
+                        int(path[len("/api/alert-rules/") :]),
+                        **{k: v for k, v in payload.items()
+                           if k in ("measurement", "test", "threshold", "sound",
+                                    "repeat_seconds", "push", "enabled")})
+                elif path == "/api/settings/alerts":
+                    result = store.set_alert_url(payload.get("ntfy_url"))
+                    # Told to the running alarm path too, so an address
+                    # just typed in works for the next leak rather than
+                    # the next restart.
+                    if alerts is not None:
+                        alerts.set_url(result.get("ntfy_url"))
+                elif path == "/api/settings/zigbee-reports":
                     # None keeps every report there has ever been, which
                     # is the default and what most people want from a
                     # record this small.
@@ -309,6 +368,10 @@ def create_server(
                         self._plant_id(path[len("/api/photos/") :]),
                         self._optional_str(payload.get("taken_at")),
                     )
+                elif path.startswith("/api/plants/") and path.endswith("/weight-offset"):
+                    result = store.set_plant_weight_offset(
+                        self._plant_id(path[len("/api/plants/") : -len("/weight-offset")]),
+                        int(payload.get("grams") or 0))
                 elif path.startswith("/api/plants/") and path.endswith("/cover"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/cover")])
                     if "follows_latest" in payload:
@@ -520,6 +583,23 @@ def create_server(
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            if path.startswith("/api/alert-rules/"):
+                rule_id = int(path[len("/api/alert-rules/") :])
+                try:
+                    self._require_same_origin()
+                    store.delete_alert_rule(rule_id)
+                except ValueError as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+                    return
+                # A rule that is gone cannot be stopped later, so
+                # anything it had ringing stops with it.
+                if sounder:
+                    sounder.stop(rule_id)
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/api/rooms/"):
                 try:
                     self._require_same_origin()
@@ -569,8 +649,60 @@ def create_server(
                 # own body; everything else here is a small JSON object.
                 raw_upload = path.startswith("/api/plants/") and path.endswith("/photos")
                 payload = (
-                    {} if path == "/api/firmware" or raw_upload else self._read_json()
+                    {} if path in ("/api/firmware", "/api/settings/alerts/test")
+                    or path.endswith(("/stop", "/test")) or raw_upload
+                    else self._read_json()
                 )
+                if path.startswith("/api/alert-rules/") and path.endswith("/test"):
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
+                                        "No Zigbee service")
+                        return
+                    try:
+                        result = zigbee.test_rule(
+                            int(path[len("/api/alert-rules/") : -len("/test")]))
+                    except ValueError as error:
+                        self._send_json({"error": str(error)},
+                                        HTTPStatus.BAD_REQUEST)
+                        return
+                    self._send_json(result)
+                    return
+                if path.startswith("/api/alert-rules/") and path.endswith("/stop"):
+                    rule_id = int(path[len("/api/alert-rules/") : -len("/stop")])
+                    if sounder:
+                        sounder.stop(rule_id)
+                    self._send_json({"stopped": rule_id})
+                    return
+                if path == "/api/alert-rules/hear":
+                    # So a sound can be chosen by hearing it rather
+                    # than by recognising its name.
+                    played = bool(sounder and sounder.play(
+                        str(payload.get("sound", ""))))
+                    self._send_json({"played": played})
+                    return
+                if path.startswith("/api/alert-rules/"):
+                    sensor_id = unquote(path[len("/api/alert-rules/") :])
+                    result = store.add_alert_rule(
+                        sensor_id,
+                        measurement=str(payload.get("measurement", "")),
+                        test=str(payload.get("test", "")),
+                        threshold=payload.get("threshold"),
+                        sound=self._optional_str(payload.get("sound")),
+                        repeat_seconds=int(payload.get("repeat_seconds") or 0),
+                        push=payload.get("push") is not False,
+                    )
+                    self._send_json(result, HTTPStatus.CREATED)
+                    return
+                if path == "/api/settings/alerts/test":
+                    if alerts is None:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
+                                        "No alert path")
+                        return
+                    # Waited for, unlike a real alarm: a person is
+                    # watching this button and wants to be told.
+                    problem = alerts.check()
+                    self._send_json({"sent": problem is None, "error": problem})
+                    return
                 if path == "/api/zigbee/release" or path == "/api/zigbee/reconnect":
                     if not zigbee:
                         self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")

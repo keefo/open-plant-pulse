@@ -692,6 +692,11 @@ let zigbeeWeightFor = null;
 
 async function loadZigbeeWeight(eui, force = false) {
   if (!eui) return;
+  // A different device is a different question.
+  if (weighsFor !== eui) {
+    weighsSomething = false;
+    weighsFor = eui;
+  }
   if (!force && zigbeeWeightFor === `${eui}:${zigbeeWeightHours}`) return;
   zigbeeWeightFor = `${eui}:${zigbeeWeightHours}`;
   try {
@@ -704,6 +709,16 @@ async function loadZigbeeWeight(eui, force = false) {
     renderZigbeeWeightChart([]);
   }
 }
+
+/* Whether the device on screen has ever reported a weight.
+ *
+ * "Is this a scale?" is not a question whose answer changes while
+ * somebody is choosing a range, so it is remembered for as long as
+ * the page is showing that device. Without it an empty hour looked
+ * exactly like a thermometer, and the section disappeared.
+ */
+let weighsSomething = false;
+let weighsFor = null;
 
 function renderZigbeeWeightChart(items) {
   const section = document.getElementById("zigbee-weight-history");
@@ -721,14 +736,21 @@ function renderZigbeeWeightChart(items) {
     .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.grams))
     .sort((a, b) => a.at - b.at);
 
-  // A device that has never reported a weight is not a scale, so it does
-  // not get a weight chart at all -- not even an empty one explaining the
-  // absence of something it was never going to have.
-  setHidden(section, usable.length === 0);
+  // A device that has never reported a weight is not a scale and gets
+  // no weight chart. A scale with nothing in the last hour is a
+  // different fact, and hiding the section for that took the range
+  // buttons away with it: the controls that chose "1 hour" vanished,
+  // the buttons left on screen belonged to the card below, and the
+  // only way back was to reload the page.
+  if (usable.length) weighsSomething = true;
+  setHidden(section, !weighsSomething && usable.length === 0);
   setHidden(chart, usable.length < 2);
   setHidden(empty, usable.length >= 2);
   if (usable.length < 2) {
-    setText(summary, usable.length === 1 ? "One report so far." : "");
+    setText(empty, usable.length === 1
+      ? "One report in this range. Two are needed to draw a line."
+      : "Nothing weighed in this range.");
+    setText(summary, "");
     chart.replaceChildren();
     return;
   }
@@ -1268,12 +1290,33 @@ function renderZigbeeAir(device) {
  * remembered to add one for this sort of sensor. A new driver that
  * decodes a known measurement gets its history with no change here.
  */
+/* A unit: what to show, what to say, and what its axis may do.
+ *
+ * This was one string of prose, and the chart read it for hints --
+ * `unit.startsWith("degrees")` chose the padding, `unit.includes(
+ * "percent")` clamped the axis to 0-100 -- while the readout quietly
+ * translated it back to a symbol to draw it. So the heading said
+ * "52.7 percent relative humidity" beside a card already titled
+ * Relative humidity, and shortening that label would have unclamped
+ * a percentage axis with nothing to say it had.
+ *
+ * A symbol to draw, words for a screen reader, and the axis rules
+ * stated outright. Nothing has to be inferred from how a label reads.
+ */
+const CELSIUS = { symbol: "\u00b0C", spoken: "degrees Celsius", pad: 0.5 };
+const PERCENT = { symbol: "%", spoken: "percent", pad: 2, lowest: 0, highest: 100 };
+// A weight has no ceiling and moves in whole grams.
+const GRAMS = { symbol: " g", spoken: "grams", pad: 2 };
+
 const ZIGBEE_MEASUREMENTS = [
-  { key: "moisture_percent", label: "Moisture", unit: "%", decimals: 0 },
-  { key: "soil_temperature_c", label: "Soil temperature", unit: "\u00b0C", decimals: 1 },
-  { key: "temp_c", label: "Air temperature", unit: "\u00b0C", decimals: 1 },
-  { key: "rh_pct", label: "Relative humidity", unit: "%", decimals: 0 },
-  { key: "grams", label: "Weight", unit: " g", decimals: 0 },
+  { key: "moisture_percent", label: "Moisture", decimals: 0,
+    unit: { ...PERCENT, spoken: "percent moisture" } },
+  { key: "soil_temperature_c", label: "Soil temperature", decimals: 1,
+    unit: CELSIUS },
+  { key: "temp_c", label: "Air temperature", decimals: 1, unit: CELSIUS },
+  { key: "rh_pct", label: "Relative humidity", decimals: 0,
+    unit: { ...PERCENT, spoken: "percent relative humidity" } },
+  { key: "grams", label: "Weight", decimals: 0, unit: GRAMS },
 ];
 
 let zigbeeMeasureHours = 24;
@@ -1318,7 +1361,8 @@ function renderZigbeeMeasurements(items) {
     const name = document.createElement("span");
     setText(name, measure.label);
     const value = document.createElement("strong");
-    setText(value, `${points[points.length - 1].value.toFixed(measure.decimals)}${measure.unit}`);
+    setText(value, `${points[points.length - 1].value.toFixed(measure.decimals)}`
+                    + `${measure.unit.symbol}`);
     header.append(name, value);
     const chart = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     chart.id = `zigbee-measure-${measure.key}`;
@@ -1334,10 +1378,26 @@ function renderZigbeeMeasurements(items) {
     grid.append(card);
   }
   // After they are in the document: the renderer finds them by id.
+  //
+  // The same renderer as every other chart in the hub. This had a
+  // drawer of its own once -- a bare line, no points, no colour,
+  // nothing to hover -- so the device page carried two charts in two
+  // styles, and the rule in AGENTS.md is that any chart with a line
+  // in it answers the pointer.
+  const eui = zigbeeEuiFromLocation() || "device";
   for (const { measure, points } of drawn) {
-    drawZigbeeSeries(`zigbee-measure-${measure.key}`,
-                     `zigbee-measure-${measure.key}-empty`,
-                     points, measure.unit, measure.decimals);
+    renderHistoryChart(
+      `zigbee-measure-${measure.key}`,
+      `zigbee-measure-${measure.key}-empty`,
+      [{
+        sensorId: `${eui}:${measure.key}`,
+        name: measure.label,
+        colour: seriesColours([measure.key]).get(measure.key),
+        points: points.map((point) => ({ timestamp: point.at,
+                                         value: point.value })),
+        latest: points[points.length - 1].value.toFixed(measure.decimals),
+      }],
+      measure.unit, points[0].at, points[points.length - 1].at);
   }
 }
 
@@ -1354,67 +1414,6 @@ function seriesFromReports(items, key) {
  * Padded so a steady room is not drawn as a mountain range of rounding
  * noise: a tenth of a degree across a day is a still room, and an axis
  * fitted tightly to it says the opposite.
- */
-function drawZigbeeSeries(chartId, emptyId, points, unit, decimals) {
-  const chart = document.getElementById(chartId);
-  const empty = document.getElementById(emptyId);
-  if (!chart || !empty) return;
-  setHidden(chart, points.length < 2);
-  setHidden(empty, points.length >= 2);
-  if (points.length < 2) {
-    chart.replaceChildren();
-    return;
-  }
-  const width = 720, height = 220;
-  const plot = { left: 54, right: 16, top: 16, bottom: 34 };
-  const plotWidth = width - plot.left - plot.right;
-  const plotHeight = height - plot.top - plot.bottom;
-  const first = points[0].at;
-  const span = Math.max(1, points[points.length - 1].at - first);
-  const values = points.map((point) => point.value);
-  const lowest = Math.min(...values);
-  const highest = Math.max(...values);
-  const padding = Math.max(unit === "%" ? 2 : 0.5, (highest - lowest) * 0.15);
-  const bottom = lowest - padding;
-  const top = highest + padding;
-  const x = (at) => plot.left + ((at - first) / span) * plotWidth;
-  const y = (value) => plot.top + ((top - value) / Math.max(0.01, top - bottom)) * plotHeight;
-
-  chart.replaceChildren();
-  for (const value of [bottom, (bottom + top) / 2, top]) {
-    chart.append(svgElement("line", { class: "grid-line", x1: plot.left,
-                                      x2: width - plot.right, y1: y(value), y2: y(value) }));
-    chart.append(svgElement("text", { class: "axis-label", x: plot.left - 8,
-                                      y: y(value) + 4, "text-anchor": "end" },
-                            `${value.toFixed(decimals)}${unit}`));
-  }
-  chart.append(svgElement("path", {
-    class: "history-line",
-    d: points.map((point, index) =>
-      `${index ? "L" : "M"}${x(point.at).toFixed(1)} ${y(point.value).toFixed(1)}`).join(" "),
-  }));
-  for (const at of [first, points[points.length - 1].at]) {
-    chart.append(svgElement("text", {
-      class: "axis-label", x: x(at), y: height - 12,
-      "text-anchor": at === first ? "start" : "end",
-    }, new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })));
-  }
-  // The same readout the plant's charts have: a line nobody can
-  // question is a picture, not a measurement.
-  attachNearestReadout(chart, { width, height }, points.map((point) => ({
-    cx: x(point.at), cy: y(point.value),
-    text: `${point.value.toFixed(decimals)}${unit}`,
-    when: new Date(point.at).toLocaleString([], {
-      month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-  })));
-}
-
-/* A leak sensor's one answer.
- *
- * Three states, not two: wet, dry, and not yet heard from. A sensor
- * that has never reported is not dry -- it is unasked -- and a leak
- * sensor that says "Dry" when it has never spoken is the single most
- * dangerous thing this page could print.
  */
 function renderZigbeeLeak(device) {
   const state = document.getElementById("zigbee-leak-state");
@@ -1805,12 +1804,840 @@ async function deleteRoomFromItsPage() {
   navigate("/settings/rooms");
 }
 
+/* Where an alarm goes, and whether the path works.
+ *
+ * The test button exists because the alternative way to find out
+ * whether the address was typed correctly is to pour water on a floor.
+ */
+// No i, l, o, 0 or 1: the name is read off one screen and typed into
+// a phone, and those are the characters people get wrong.
+const TOPIC_LETTERS = "abcdefghjkmnpqrstuvwxyz23456789";
+const TOPIC_LENGTH = 16;
+
+/* A topic nobody could guess.
+ *
+ * The name is the only thing keeping anybody else off this channel --
+ * ntfy has no accounts for a plain topic -- so it is generated rather
+ * than typed. "leak", "home", a street name: those are the ones
+ * somebody else arrives at by accident, and the alert is then readable
+ * by them and forgeable by them.
+ *
+ * 16 characters of this alphabet is about 79 bits, which is not
+ * guessable by anybody working through names.
+ */
+function generatedTopic() {
+  const numbers = new Uint32Array(TOPIC_LENGTH);
+  crypto.getRandomValues(numbers);
+  const name = [...numbers]
+    .map((n) => TOPIC_LETTERS[n % TOPIC_LETTERS.length]).join("");
+  return `opp-${name}`;
+}
+
+function showAlertTopic(address) {
+  const line = document.getElementById("alerts-topic");
+  if (!line) return;
+  let topic = "";
+  try {
+    topic = address ? new URL(address).pathname.replace(/^\//, "") : "";
+  } catch (_error) {
+    topic = "";
+  }
+  setText(line, topic
+    ? `Subscribe the phone to the topic ${topic}`
+    : "");
+  setHidden(line, !topic);
+}
+
+function generateAlertAddress() {
+  const field = document.getElementById("alerts-url");
+  const message = document.getElementById("alerts-message");
+  // Replacing an address already in use would leave the phone
+  // subscribed to a topic the hub no longer sends to, which is a
+  // silent way for a leak alarm to stop working.
+  if (field.value.trim()
+      && !window.confirm("Replace the address?\n\nThe phone is subscribed to "
+                         + "the old topic and would stop receiving alerts "
+                         + "until it is subscribed to the new one.")) {
+    return;
+  }
+  field.value = `https://ntfy.sh/${generatedTopic()}`;
+  showAlertTopic(field.value);
+  setText(message, "Generated. Press Save, then subscribe the phone to it.");
+}
+
+/* The alert rules on one device.
+ *
+ * The measurements offered are the ones this device has actually
+ * reported, read off its kept reports, so a kind of sensor nobody has
+ * written code for still gets rules. The sounds offered are the ones
+ * this computer can actually play.
+ */
+let alertChoices = { measurements: [], sounds: [], ringing: [] };
+// The rule the form is editing, or null when it is adding one. One
+// form either way: two forms describing a rule would be two places to
+// keep saying the same thing.
+let editingRule = null;
+let knownRules = [];
+
+// What a measurement is called in a sentence. Anything not here reads
+// as its own key, which is honest for a device nobody has named yet.
+const MEASUREMENT_WORDS = {
+  wet: "water", air_temperature_c: "air temperature", rh_pct: "humidity",
+  soil_temperature_c: "soil temperature", moisture_percent: "soil moisture",
+  batt_pct: "battery", battery_low: "battery low", grams: "weight",
+  tamper: "tamper", temp_c: "temperature", lqi: "signal",
+};
+
+function measurementWords(key) {
+  return MEASUREMENT_WORDS[key] || String(key).replace(/_/g, " ");
+}
+
+function describeRule(rule) {
+  const what = measurementWords(rule.measurement);
+  if (rule.test === "true") return `When ${what} is reported`;
+  return `When ${what} is ${rule.test} ${rule.threshold}`;
+}
+
+async function refreshDeviceAlerts() {
+  const eui = zigbeeEuiFromLocation();
+  if (!eui) return;
+  try {
+    const response = await fetch(`/api/alert-rules/zigbee-${eui}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    alertChoices = {
+      measurements: data.measurements || [],
+      sounds: data.sounds || [],
+      ringing: data.ringing || [],
+    };
+    renderAlertChoices();
+    renderDeviceAlertRules(data.items || []);
+  } catch (_error) {
+    /* the rest of the page still works */
+  }
+}
+
+function renderAlertChoices() {
+  const measurement = document.getElementById("alert-measurement");
+  const sound = document.getElementById("alert-sound");
+  if (!measurement || !sound) return;
+  if (!renderKeyChanged(measurement, alertChoices.measurements)) return;
+  measurement.replaceChildren();
+  for (const key of alertChoices.measurements) {
+    const option = document.createElement("option");
+    option.value = key;
+    setText(option, measurementWords(key));
+    measurement.append(option);
+  }
+  // What was picked, kept across a rebuild: the list is rebuilt
+  // whenever the measurements change, and resetting the box under
+  // somebody choosing is how a selection gets lost.
+  const chosen = sound.value;
+  sound.replaceChildren();
+  // A real sound first. With "no sound" at the top, a rule added in a
+  // hurry made none, and Hear did nothing until the box was changed.
+  for (const name of alertChoices.sounds) {
+    const option = document.createElement("option");
+    option.value = name;
+    setText(option, name);
+    sound.append(option);
+  }
+  const silent = document.createElement("option");
+  silent.value = "";
+  setText(silent, "no sound");
+  sound.append(silent);
+  if (chosen && [...sound.options].some((o) => o.value === chosen)) {
+    sound.value = chosen;
+  }
+}
+
+function renderDeviceAlertRules(rules) {
+  const list = document.getElementById("zigbee-alert-rules");
+  if (!list) return;
+  knownRules = rules;
+  if (!renderKeyChanged(list, [rules, alertChoices.ringing])) return;
+  list.replaceChildren();
+  if (!rules.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    setText(empty, "No rules on this device. It will not raise an alarm.");
+    list.append(empty);
+    return;
+  }
+  for (const rule of rules) {
+    const card = document.createElement("div");
+    card.className = "settings-sensor";
+    const heading = document.createElement("div");
+    heading.className = "settings-sensor-heading";
+    const what = document.createElement("strong");
+    setText(what, describeRule(rule));
+    heading.append(what);
+    if (alertChoices.ringing.includes(rule.rule_id)) {
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "danger";
+      setData(stop, "stopRule", rule.rule_id);
+      setText(stop, "Stop the sound");
+      heading.append(stop);
+    }
+    const how = document.createElement("code");
+    setText(how, [rule.sound ? `${rule.sound}${rule.repeat_seconds
+                    ? ` every ${rule.repeat_seconds}s` : ""}` : "silent",
+                  rule.push ? "phone" : null,
+                  rule.enabled ? null : "off"].filter(Boolean).join(" \u00b7 "));
+    const actions = document.createElement("div");
+    actions.className = "inline-control";
+    const test = document.createElement("button");
+    test.type = "button";
+    setData(test, "testRule", rule.rule_id);
+    setText(test, "Test");
+    const edit = document.createElement("button");
+    edit.type = "button";
+    setData(edit, "editRule", rule.rule_id);
+    setText(edit, "Edit");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    setData(toggle, "toggleRule", rule.rule_id);
+    setData(toggle, "enabled", rule.enabled ? "1" : "0");
+    setText(toggle, rule.enabled ? "Turn off" : "Turn on");
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    setData(remove, "deleteRule", rule.rule_id);
+    setText(remove, "Delete");
+    actions.append(test, edit, toggle, remove);
+    card.append(heading, how, actions);
+    list.append(card);
+  }
+}
+
+function startRuleEdit(ruleId) {
+  const rule = knownRules.find((r) => r.rule_id === Number(ruleId));
+  if (!rule) return;
+  editingRule = rule.rule_id;
+  document.getElementById("alert-measurement").value = rule.measurement;
+  document.getElementById("alert-test").value = rule.test;
+  document.getElementById("alert-threshold").value =
+    rule.threshold == null ? "" : rule.threshold;
+  document.getElementById("alert-sound").value = rule.sound || "";
+  document.getElementById("alert-repeat").value = String(rule.repeat_seconds);
+  document.getElementById("alert-push").checked = rule.push;
+  setHidden(document.getElementById("alert-threshold-field"),
+            rule.test === "true");
+  setText(document.getElementById("alert-add"), "Save changes");
+  setHidden(document.getElementById("alert-cancel"), false);
+  setText(document.getElementById("alert-message"), `Editing: ${describeRule(rule)}`);
+  document.getElementById("alert-threshold").focus();
+}
+
+function clearRuleForm() {
+  editingRule = null;
+  document.getElementById("alert-threshold").value = "";
+  document.getElementById("alert-repeat").value = "0";
+  document.getElementById("alert-push").checked = true;
+  setText(document.getElementById("alert-add"), "Add rule");
+  setHidden(document.getElementById("alert-cancel"), true);
+  setText(document.getElementById("alert-message"), "");
+}
+
+async function addAlertRule(event) {
+  event.preventDefault();
+  const eui = zigbeeEuiFromLocation();
+  const message = document.getElementById("alert-message");
+  const test = document.getElementById("alert-test").value;
+  const threshold = document.getElementById("alert-threshold").value;
+  setText(message, "");
+  const body = {
+    measurement: document.getElementById("alert-measurement").value,
+    test,
+    threshold: test === "true" ? null : Number(threshold),
+    sound: document.getElementById("alert-sound").value || null,
+    repeat_seconds: Number(document.getElementById("alert-repeat").value),
+    push: document.getElementById("alert-push").checked,
+  };
+  if (test !== "true" && !Number.isFinite(body.threshold)) {
+    setText(message, "Type the number to compare with.");
+    return;
+  }
+  let response;
+  try {
+    // The same form writes a new rule and corrects an old one; only
+    // where it goes differs.
+    response = await fetch(editingRule
+        ? `/api/alert-rules/${editingRule}`
+        : `/api/alert-rules/zigbee-${eui}`, {
+      method: editingRule ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (_error) {
+    setText(message, "The hub could not be reached.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That rule could not be added.");
+    return;
+  }
+  const changed = Boolean(editingRule);
+  clearRuleForm();
+  setText(message, changed ? "Saved." : "Added.");
+  await refreshDeviceAlerts();
+}
+
+async function changeAlertRule(event) {
+  const test = event.target.closest("[data-test-rule]");
+  if (test) {
+    const message = document.getElementById("alert-message");
+    test.disabled = true;
+    setText(message, "Testing...");
+    try {
+      const response = await fetch(`/api/alert-rules/${test.dataset.testRule}/test`,
+                                   { method: "POST" });
+      const result = await response.json().catch(() => ({}));
+      // Said in full, because "it worked" about two things when one
+      // of them failed is the sort of answer that wastes an evening.
+      const said = [
+        result.sound ? (result.sounded ? `played ${result.sound}`
+                                       : `could not play ${result.sound}`) : null,
+        result.push ? (result.pushed ? "sent to the phone"
+                                     : "could not reach the phone") : null,
+      ].filter(Boolean);
+      setText(message, result.error || (said.length ? said.join(", ")
+                                                    : "This rule does nothing."));
+    } catch (_error) {
+      setText(message, "The hub could not be reached.");
+    } finally {
+      test.disabled = false;
+    }
+    return;
+  }
+  const edit = event.target.closest("[data-edit-rule]");
+  if (edit) {
+    startRuleEdit(edit.dataset.editRule);
+    return;
+  }
+  const stop = event.target.closest("[data-stop-rule]");
+  if (stop) {
+    await fetch(`/api/alert-rules/${stop.dataset.stopRule}/stop`,
+                { method: "POST" });
+    await refreshDeviceAlerts();
+    return;
+  }
+  const toggle = event.target.closest("[data-toggle-rule]");
+  if (toggle) {
+    await fetch(`/api/alert-rules/${toggle.dataset.toggleRule}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: toggle.dataset.enabled !== "1" }),
+    });
+    await refreshDeviceAlerts();
+    return;
+  }
+  const remove = event.target.closest("[data-delete-rule]");
+  if (remove) {
+    await fetch(`/api/alert-rules/${remove.dataset.deleteRule}`,
+                { method: "DELETE" });
+    // The form cannot go on editing a rule that is gone.
+    if (editingRule === Number(remove.dataset.deleteRule)) clearRuleForm();
+    await refreshDeviceAlerts();
+  }
+}
+
+async function hearAlertSound(event) {
+  const button = event.currentTarget;
+  const message = document.getElementById("alert-message");
+  const sound = document.getElementById("alert-sound").value;
+  if (!sound) {
+    // It used to return here without a word, so a button pressed on a
+    // fresh page -- where the box says "no sound" -- did nothing and
+    // looked broken.
+    setText(message, "Pick a sound first.");
+    return;
+  }
+  // Held down briefly, because a second press cuts the first sound
+  // off to start it again, which is heard as the sound breaking up
+  // rather than as two presses.
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/alert-rules/hear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sound }),
+    });
+    const result = await response.json().catch(() => ({}));
+    setText(message, result.played ? `Played ${sound}.`
+                                   : `The hub could not play ${sound}.`);
+  } catch (_error) {
+    setText(message, "The hub could not be reached.");
+  } finally {
+    // About as long as a system sound lasts.
+    window.setTimeout(() => { button.disabled = false; }, 600);
+  }
+}
+
+/* The plant box's fan.
+ *
+ * Self-contained: this page and /api/fan, and nothing else in the hub
+ * knows a fan exists. See docs/proposals/vzbot-humidity-control.md.
+ */
+// Whether the form holds something not yet saved.
+let boxEdited = false;
+
+function showFanMode(mode) {
+  // Only the controls that apply to what it is doing. A manual speed
+  // box beside a humidity target invites setting both and wondering
+  // which won.
+  setHidden(document.getElementById("box-manual-row"), mode !== "manual");
+  setHidden(document.getElementById("box-auto-rows"), mode !== "auto");
+}
+
+async function refreshBoxPage() {
+  const form = document.getElementById("box-form");
+  if (!form) return;
+  let fan;
+  try {
+    const response = await fetch("/api/fan");
+    if (!response.ok) return;
+    fan = await response.json();
+  } catch (_error) {
+    return;
+  }
+  const state = fan.state || {};
+  setText(document.getElementById("box-rh"),
+          state.rh == null ? "--" : `${state.rh}%`);
+  setText(document.getElementById("box-target"), `${fan.target_rh}%`);
+  setText(document.getElementById("box-speed"),
+          state.speed == null ? "--" : `${Math.round(state.speed * 100)}%`);
+  setText(document.getElementById("box-printer"),
+          state.why && state.why.includes("cannot be reached") ? "away"
+            : state.why && state.why.includes("printer is") ? "printing" : "ready");
+  setText(document.getElementById("box-why"), state.why || "");
+
+  renderBoxSensors(fan.sensor_id);
+  // Unsaved changes survive the poll.
+  //
+  // Leaving it alone only while it has focus was not enough: a mode
+  // chosen and then a glance away is still an unsaved change, and a
+  // poll a second later put it back without saying anything.
+  if (boxEdited || form.contains(document.activeElement)) return;
+  const fill = (id, value) => {
+    const field = document.getElementById(id);
+    if (field) field.value = value;
+  };
+  fill("box-mode", fan.mode);
+  fill("box-manual-speed", fan.manual_speed);
+  fill("box-target-rh", fan.target_rh);
+  fill("box-kp", fan.kp);
+  fill("box-ki", fan.ki);
+  fill("box-kd", fan.kd);
+  const named = presetMatching(fan.kp, fan.ki, fan.kd);
+  fill("box-preset", named);
+  setText(document.getElementById("box-preset-note"),
+          (PID_PRESETS.find((p) => p.name === named) || {}).why || "");
+  fill("box-min-speed", fan.min_speed);
+  fill("box-max-speed", fan.max_speed);
+  fill("box-pulse-window", fan.pulse_window_s);
+  renderPidPresets();
+  fill("box-url", fan.moonraker_url);
+  fill("box-fan-name", fan.fan_name);
+  showFanMode(fan.mode);
+  drawPidPreview();
+}
+
+/* Anything that has reported humidity can hold the box.
+ *
+ * Read off what the devices have actually sent, the same way the
+ * alert rules offer their measurements, so a thermometer bought next
+ * year appears here without a code change.
+ */
+function renderBoxSensors(chosen) {
+  const picker = document.getElementById("box-sensor");
+  if (!picker) return;
+  const able = (zigbeeDevices || []).filter(
+    (device) => device.last && device.last.rh_pct != null);
+  if (!renderKeyChanged(picker, [able.map((d) => [d.eui, d.name]), chosen])) return;
+  picker.replaceChildren();
+  if (!able.length) {
+    const none = document.createElement("option");
+    none.value = "";
+    setText(none, "nothing is measuring humidity yet");
+    picker.append(none);
+    return;
+  }
+  for (const device of able) {
+    const option = document.createElement("option");
+    option.value = `zigbee-${device.eui}`;
+    setText(option, `${device.name || device.eui} \u00b7 ${device.last.rh_pct}%`);
+    picker.append(option);
+  }
+  if (chosen) picker.value = chosen;
+}
+
+/* Starting points, not tuned values.
+ *
+ * There is no "correct PID for an enclosure": the right gains depend
+ * on how big the box is, how much air the fan moves and how humid the
+ * outside is, and the only way to know is to watch the chart. These
+ * are four sensible places to start, with the symptom that should
+ * send you to another one.
+ */
+const PID_PRESETS = [
+  { name: "Gentle", kp: 0.03, ki: 0.0008, kd: 0,
+    why: "Slow and steady. Start here if the fan hunts up and down." },
+  { name: "Balanced", kp: 0.05, ki: 0.002, kd: 0,
+    why: "A sensible default for a sealed box on a slow sensor." },
+  { name: "Firm", kp: 0.1, ki: 0.004, kd: 0,
+    why: "Reacts harder. Use if it sits above target for hours." },
+  { name: "Proportional only", kp: 0.06, ki: 0, kd: 0,
+    why: "Never winds up, and never quite reaches the target. "
+       + "Useful while you watch what the fan actually does." },
+  { name: "With damping", kp: 0.05, ki: 0.002, kd: 0.2,
+    why: "Kd pushes back on fast rises. Only worth it once the sensor "
+       + "reports often; on a slow one it mostly amplifies noise." },
+];
+
+function renderPidPresets() {
+  const picker = document.getElementById("box-preset");
+  if (!picker || picker.options.length) return;
+  const custom = document.createElement("option");
+  custom.value = "";
+  setText(custom, "my own numbers");
+  picker.append(custom);
+  for (const preset of PID_PRESETS) {
+    const option = document.createElement("option");
+    option.value = preset.name;
+    setText(option, preset.name);
+    picker.append(option);
+  }
+}
+
+/* Which preset the saved gains amount to, if any.
+ *
+ * Worked out from the gains rather than remembered beside them.
+ * Storing the chosen name as well would be a second thing to keep
+ * true: nudge Kp by hand and the stored name would still say
+ * "Balanced" while the loop ran something else. The gains are what
+ * the controller uses, so they are what the picker reflects.
+ */
+function presetMatching(kp, ki, kd) {
+  const same = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-9;
+  const found = PID_PRESETS.find((p) => same(p.kp, kp) && same(p.ki, ki)
+                                     && same(p.kd, kd));
+  return found ? found.name : "";
+}
+
+function applyPidPreset(name) {
+  const preset = PID_PRESETS.find((p) => p.name === name);
+  setText(document.getElementById("box-preset-note"), preset ? preset.why : "");
+  if (!preset) return;
+  for (const [id, value] of [["box-kp", preset.kp], ["box-ki", preset.ki],
+                             ["box-kd", preset.kd]]) {
+    document.getElementById(id).value = value;
+  }
+  boxEdited = true;
+  drawPidPreview();
+}
+
+// What the preview assumes. Printed under the drawing, because a
+// curve with hidden assumptions is a picture of nothing.
+const BOX_DRIFT_PER_HOUR = 1.5;      // %RH the sealed box gains on its own
+const FAN_CLEARS_PER_HOUR = 12;      // %RH a full-speed fan removes
+const PREVIEW_MINUTES = 7;           // how often the sensor reports
+
+/* How these gains would settle a box that drifts.
+ *
+ * A drawing of the arithmetic, not a prediction about this enclosure.
+ * The box is modelled as rising on its own and falling in proportion
+ * to the fan -- enough to show whether a set of gains overshoots,
+ * hunts, or crawls, which is what somebody choosing between them
+ * wants to see. The real answer is the chart above.
+ */
+function drawPidPreview() {
+  const chart = document.getElementById("box-pid-preview");
+  if (!chart) return;
+  const number = (id) => Number(document.getElementById(id).value);
+  const kp = number("box-kp"), ki = number("box-ki"), kd = number("box-kd");
+  const target = number("box-target-rh") || 65;
+  const highest = number("box-max-speed") || 1;
+  if (![kp, ki, kd, target].every(Number.isFinite)) return;
+
+  let rh = target + 15;                       // start well above, to watch it come down
+  let integral = 0, lastRh = null;
+  const points = [];
+  const step = PREVIEW_MINUTES / 60;          // hours per reading
+  for (let hour = 0; hour <= 8; hour += step) {
+    const error = rh - target;
+    let derivative = 0;
+    if (kd && lastRh !== null) derivative = -kd * (rh - lastRh) / (step * 60);
+    const trial = integral + ki * error * step * 60;
+    let output = kp * error + trial + derivative;
+    if ((output > 0 && output < highest) || (output <= 0 && trial > 0)
+        || (output >= highest && trial < 0)) integral = trial;
+    output = kp * error + integral + derivative;
+    // The demand, delivered the way the fan can: below its floor it
+    // pulses, so over a reading it averages out to what was asked.
+    // Drawn as that average, since a pulse is shorter than a step
+    // here and a sawtooth would say less than the line does.
+    // Over a reading the pulse averages out to the demand, whether it
+    // was delivered continuously or in bursts at the floor, so the
+    // line is the demand itself.
+    const speed = Math.max(0, Math.min(highest, output));
+    lastRh = rh;
+    points.push({ hour, rh, speed });
+    rh += (BOX_DRIFT_PER_HOUR - FAN_CLEARS_PER_HOUR * speed) * step;
+    rh = Math.max(0, Math.min(100, rh));
+  }
+
+  const width = 720, height = 200;
+  const plot = { left: 46, right: 12, top: 12, bottom: 28 };
+  const lowRh = Math.min(target - 5, ...points.map((p) => p.rh));
+  const highRh = Math.max(target + 5, ...points.map((p) => p.rh));
+  const x = (hour) => plot.left + (hour / 8) * (width - plot.left - plot.right);
+  const y = (value) => plot.top + ((highRh - value) / Math.max(1, highRh - lowRh))
+                               * (height - plot.top - plot.bottom);
+  chart.replaceChildren();
+  chart.append(svgElement("line", { class: "ideal-edge", x1: plot.left,
+                                    x2: width - plot.right, y1: y(target), y2: y(target) }));
+  chart.append(svgElement("text", { class: "axis-label", x: plot.left - 6,
+                                    y: y(target) + 4, "text-anchor": "end" },
+                          `${target}%`));
+  chart.append(svgElement("polyline", {
+    class: "history-line series-0",
+    points: points.map((p) => `${x(p.hour).toFixed(1)},${y(p.rh).toFixed(1)}`).join(" "),
+  }));
+  chart.append(svgElement("polyline", {
+    class: "history-line series-1",
+    points: points.map((p) => `${x(p.hour).toFixed(1)},`
+      + `${(height - plot.bottom - p.speed * (height - plot.top - plot.bottom) * 0.3)
+           .toFixed(1)}`).join(" "),
+  }));
+  for (const hour of [0, 2, 4, 6, 8]) {
+    chart.append(svgElement("text", { class: "axis-label", x: x(hour),
+                                      y: height - 8, "text-anchor": "middle" },
+                            `${hour}h`));
+  }
+  const settled = points.find((p) => Math.abs(p.rh - target) < 1);
+  setText(document.getElementById("box-pid-caption"),
+    `Starting 15 points high, on a box assumed to gain `
+    + `${BOX_DRIFT_PER_HOUR}%/h on its own and lose ${FAN_CLEARS_PER_HOUR}%/h `
+    + `at full fan, measured every ${PREVIEW_MINUTES} min. `
+    + (settled ? `Within a point of target after ${settled.hour.toFixed(1)} h.`
+               : "Does not reach the target in eight hours.")
+    + " Those are assumed numbers, not yours -- the chart above is what really happened.");
+}
+
+let boxHours = 24;
+
+/* Humidity and the fan, on one chart.
+ *
+ * Both are percentages, so they share an axis and the same renderer
+ * every other chart here uses -- no second drawer, and the pointer
+ * answers on both lines.
+ */
+async function refreshBoxHistory() {
+  const chart = document.getElementById("box-chart");
+  if (!chart) return;
+  let data;
+  try {
+    const response = await fetch(`/api/fan/history?hours=${boxHours}`);
+    if (!response.ok) return;
+    data = await response.json();
+  } catch (_error) {
+    return;
+  }
+  const humidity = (data.humidity || [])
+    .map((item) => ({
+      timestamp: Date.parse(item.reading?.observed_at || item.received_at),
+      value: item.reading?.air_humidity_percent,
+    }))
+    .filter((p) => Number.isFinite(p.timestamp) && Number.isFinite(p.value));
+
+  // Drawn as steps: the fan holds whatever it was last told, so a
+  // straight line between two changes would show it easing from one
+  // speed to the other, which is not what happened.
+  const fan = [];
+  let held = null;
+  for (const row of data.fan || []) {
+    const at = Date.parse(row.at);
+    if (!Number.isFinite(at)) continue;
+    if (held !== null) fan.push({ timestamp: at, value: held });
+    fan.push({ timestamp: at, value: row.speed * 100 });
+    held = row.speed * 100;
+  }
+  // Carried to now, because the last thing it was told is still true.
+  if (held !== null) fan.push({ timestamp: Date.now(), value: held });
+
+  const series = [];
+  if (humidity.length > 1) {
+    series.push({ sensorId: "box:humidity", name: "Humidity", colour: 0,
+                  points: humidity,
+                  latest: humidity[humidity.length - 1].value.toFixed(1) });
+  }
+  if (fan.length > 1) {
+    series.push({ sensorId: "box:fan", name: "Fan", colour: 1, points: fan,
+                  latest: fan[fan.length - 1].value.toFixed(0) });
+  }
+  const began = Date.now() - boxHours * 3600 * 1000;
+  renderChartLegend("box-legend", series);
+  renderHistoryChart("box-chart", "box-chart-empty", series,
+                     { ...PERCENT, spoken: "percent" }, began, Date.now());
+}
+
+async function saveBoxSettings(event) {
+  event.preventDefault();
+  const message = document.getElementById("box-message");
+  const number = (id) => Number(document.getElementById(id).value);
+  const mode = document.getElementById("box-mode").value;
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch("/api/fan", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Enabled follows the mode: "off" is the way to switch it off,
+        // so a second switch saying the same thing would be one too many.
+        enabled: mode !== "off",
+        mode,
+        manual_speed: number("box-manual-speed"),
+        target_rh: number("box-target-rh"),
+        sensor_id: document.getElementById("box-sensor").value || null,
+        kp: number("box-kp"), ki: number("box-ki"), kd: number("box-kd"),
+        min_speed: number("box-min-speed"), max_speed: number("box-max-speed"),
+        pulse_window_s: number("box-pulse-window"),
+        moonraker_url: document.getElementById("box-url").value.trim(),
+        fan_name: document.getElementById("box-fan-name").value.trim(),
+      }),
+    });
+  } catch (_error) {
+    setText(message, "The hub could not be reached. Nothing was saved.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That could not be saved.");
+    return;
+  }
+  boxEdited = false;
+  setText(message, mode === "off" ? "Saved. The hub will not touch the fan."
+                                  : "Saved. It takes effect within a minute.");
+  await refreshBoxPage();
+}
+
+async function refreshAlertSettings() {
+  const field = document.getElementById("alerts-url");
+  // Left alone while it is being typed into: a poll that puts the
+  // saved value back under somebody mid-edit is how an address gets
+  // half entered and saved.
+  if (!field || field === document.activeElement) return;
+  try {
+    const response = await fetch("/api/settings");
+    if (!response.ok) return;
+    field.value = (await response.json()).ntfy_url || "";
+    showAlertTopic(field.value);
+  } catch (_error) {
+    /* the panel is still usable without it */
+  }
+}
+
+async function saveAlertSettings(event) {
+  event.preventDefault();
+  const message = document.getElementById("alerts-message");
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch("/api/settings/alerts", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ntfy_url: document.getElementById("alerts-url").value.trim(),
+      }),
+    });
+  } catch (_error) {
+    setText(message, "The hub could not be reached. Nothing was saved.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That address could not be saved.");
+    return;
+  }
+  const saved = await response.json();
+  showAlertTopic(saved.ntfy_url);
+  setText(message, saved.ntfy_url
+    ? "Saved. Send a test to be sure it arrives."
+    : "Saved. The hub will not send alerts.");
+}
+
+async function testAlert(event) {
+  const button = event.currentTarget;
+  const message = document.getElementById("alerts-message");
+  button.disabled = true;
+  setText(message, "Sending...");
+  try {
+    const response = await fetch("/api/settings/alerts/test", { method: "POST" });
+    const result = await response.json().catch(() => ({}));
+    // The hub waits for this one, unlike a real alarm, because
+    // somebody is watching the button and wants to be told.
+    setText(message, result.sent
+      ? "Sent. It should be on the phone now."
+      : result.error || "It did not go.");
+  } catch (_error) {
+    setText(message, "The hub could not be reached.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/* The devices that can raise an alarm, so the page is honest about
+   there being none rather than implying the hub watches everything. */
+function renderAlertSources() {
+  const list = document.getElementById("alerts-sources");
+  if (!list) return;
+  const sources = (zigbeeDevices || []).filter((device) => device.kind === "leak");
+  if (!renderKeyChanged(list, sources)) return;
+  list.replaceChildren();
+  if (!sources.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    setText(empty, "No leak sensors are enrolled, so nothing can raise an alarm.");
+    list.append(empty);
+    return;
+  }
+  for (const device of sources) {
+    const card = document.createElement("div");
+    card.className = "settings-sensor";
+    const heading = document.createElement("div");
+    heading.className = "settings-sensor-heading";
+    const link = document.createElement("a");
+    link.href = `/zigbee/${device.eui}`;
+    setText(link, device.name || device.eui);
+    heading.append(link);
+    const state = document.createElement("small");
+    setText(state, device.last?.wet ? "Wet now" : "Dry");
+    heading.append(state);
+    const note = document.createElement("code");
+    setText(note, `${device.model || "leak sensor"} \u00b7 battery `
+                  + `${device.last?.batt_pct ?? "--"}%`);
+    card.append(heading, note);
+    list.append(card);
+  }
+}
+
 function renderRoomsPage() {
   const grid = document.getElementById("rooms-grid");
   if (!grid) return;
   setHidden(document.getElementById("rooms-empty"), roomsOverview.length > 0);
   if (!renderKeyChanged(grid, [roomsOverview, [...roomHistory.keys()].sort(),
-                               [...roomHistory.values()].map((h) => h.items.length)])) return;
+                               [...roomHistory.values()].map((h) => h.items.length),
+                               // Which series are hidden decides what is
+                               // drawn, so it decides whether to redraw.
+                               // Without it, switching a name back on did
+                               // nothing: the readings had not changed, the
+                               // grid saw no reason to repaint, and the room
+                               // stayed empty until the page was reloaded.
+                               [...hiddenSeries].sort()])) return;
   grid.replaceChildren();
   for (const room of roomsOverview) grid.append(roomCard(room));
   // After they are in the document: renderHistoryChart finds its
@@ -1919,21 +2746,6 @@ function roomCard(room) {
   return card;
 }
 
-/* A unit: what to show, what to say, and what its axis may do.
- *
- * This was one string of prose, and the chart read it for hints --
- * `unit.startsWith("degrees")` chose the padding, `unit.includes(
- * "percent")` clamped the axis to 0-100 -- while the readout quietly
- * translated it back to a symbol to draw it. So the heading said
- * "52.7 percent relative humidity" beside a card already titled
- * Relative humidity, and shortening that label would have unclamped
- * a percentage axis with nothing to say it had.
- *
- * A symbol to draw, words for a screen reader, and the axis rules
- * stated outright. Nothing has to be inferred from how a label reads.
- */
-const CELSIUS = { symbol: "\u00b0C", spoken: "degrees Celsius", pad: 0.5 };
-const PERCENT = { symbol: "%", spoken: "percent", pad: 2, lowest: 0, highest: 100 };
 
 const ROOM_AIR_METRICS = [
   { key: "air_temperature_c", label: "Temperature",
@@ -2009,7 +2821,7 @@ function pageFromLocation() {
 }
 
 const SETTINGS_TABS = ["sensors", "rooms", "lights", "wifi", "time",
-                       "firmware", "zigbee"];
+                       "firmware", "zigbee", "alerts", "box"];
 const SETTINGS_TAB_KEY = "opp.settings.tab";
 
 function settingsTabFromLocation() {
@@ -3783,7 +4595,13 @@ function rememberHiddenSeries() {
 function renderChartLegend(legendId, series) {
   const legend = document.getElementById(legendId);
   if (!legend) return;
-  setHidden(legend, series.length < 2);
+  // A legend of one says nothing worth the space -- unless that one
+  // is switched off, in which case it is the only way back. Hiding is
+  // remembered across pages, so a chart can arrive with its only
+  // sensor already hidden, and without this there would be no line
+  // and no chip to bring it back.
+  const anyHidden = series.some((entry) => hiddenSeries.has(entry.sensorId));
+  setHidden(legend, series.length < 2 && !anyHidden);
   if (!renderKeyChanged(legend, [series.map((s) => [s.sensorId, s.name, s.latest]),
                                  [...hiddenSeries].sort()])) return;
   legend.replaceChildren();
@@ -3839,7 +4657,24 @@ function renderHistoryChart(chartId, emptyId, series, unit, startTime, endTime, 
                                 unit, startTime, endTime, selectedHistoryRange, ideal])) return;
   chart.replaceChildren();
   setHidden(chart, everything.length === 0);
-  if (empty) setHidden(empty, everything.length !== 0);
+  if (empty) {
+    // What this chart says when it truly has nothing, kept before
+    // anything overwrites it so it can be put back.
+    if (!empty.dataset.saying) setData(empty, "saying", empty.textContent);
+    setHidden(empty, everything.length !== 0);
+    // Nothing recorded and everything hidden are different facts, and
+    // only one of them is the reader's own doing. This said "no
+    // readings in this range" about readings that were there all
+    // along, because a name switched off on one page is switched off
+    // on every page.
+    if (series.length && !shown.length) {
+      setText(empty, series.length > 1
+        ? "Every sensor here is hidden. Tap a name above to show one again."
+        : "This sensor is hidden. Tap its name above to show it again.");
+    } else if (empty.dataset.saying) {
+      setText(empty, empty.dataset.saying);
+    }
+  }
   if (!everything.length) return;
 
   const width = 720;
@@ -4981,7 +5816,19 @@ async function refresh() {
       await refreshFleet();
     }
     if (page === "rooms") await refreshRoomsPage();
+    if (page === "settings" && settingsTabFromLocation() === "box") {
+      await Promise.all([refreshZigbee(), refreshBoxPage(), refreshBoxHistory()]);
+    }
+    if (page === "settings" && settingsTabFromLocation() === "alerts") {
+      // The Zigbee panel's refresh fills zigbeeDevices, and it does not
+      // run on this tab. Without this the page said "no leak sensors
+      // are enrolled" about a house with one, which is the worst thing
+      // an alerts page could be wrong about.
+      await Promise.all([refreshAlertSettings(), refreshZigbee()]);
+      renderAlertSources();
+    }
     if (page === "room") await refreshRoomPage();
+    if (page === "zigbee-device") await refreshDeviceAlerts();
     if (page === "plant") {
       await Promise.all([refreshPlant(), refreshPlantPhotos()]);
       /* What the plant's probe says, asked for by the plant.
@@ -5740,6 +6587,7 @@ function renderPlantPage() {
         : "Nothing weighed yet";
   setText(document.getElementById("plant-page-state"), state);
 
+  renderPlantWeightOffset();
   setText(document.getElementById("plant-weight-latest"),
     weight.latest ? showWeight(weight.latest.grams) : "--");
   setText(document.getElementById("plant-weight-latest-label"), "Weighs now");
@@ -5758,9 +6606,8 @@ function renderPlantPage() {
   /* "weighed" only for a weighing: an anchor typed in from memory was set,
    * which is a different claim about a different moment. */
   setText(document.getElementById("plant-weight-summary"),
-    weight.watered
-      ? `Full at ${showWeight(weight.watered.grams)} g, ` +
-        `${weight.watered.observed ? "weighed" : "set"} ${daysSince(weight.watered.at)}`
+    weight.full
+      ? `Full at ${showWeight(weight.full.grams)} g, set ${daysSince(weight.full.at)}`
       : "No watered weight yet");
 
   renderPlantScale(selectedPlant.scale);
@@ -7590,7 +8437,7 @@ function renderPlantWeightChart() {
   const width = Math.max(320, Math.round(chart.getBoundingClientRect().width) || 640);
   const height = 170;
   if (!renderKeyChanged(chart,
-      [points, weight.watered, weight.thirsty, weight.dry, width])) return;
+      [points, weight.full, weight.thirsty, weight.dry, width])) return;
   chart.replaceChildren();
   setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
 
@@ -7604,7 +8451,7 @@ function renderPlantWeightChart() {
 
   /* The scale always holds both anchors, so the band they make is visible
    * even when every weighing sits above or below it. */
-  const anchors = [weight.watered?.grams, weight.thirsty?.grams, weight.dry?.grams]
+  const anchors = [weight.full?.grams, weight.thirsty?.grams, weight.dry?.grams]
     .filter((g) => g != null);
   const values = points.map((point) => point.grams).concat(anchors);
   const lowest = Math.min(...values);
@@ -7626,7 +8473,7 @@ function renderPlantWeightChart() {
    * flat green: 90% full is no better than 70%. Below thirsty it is spending
    * a reserve, and how far in matters, so that stretch runs yellow-green to
    * red as it approaches the driest the pot has ever been. */
-  const fullGrams = weight.watered?.grams;
+  const fullGrams = weight.full?.grams;
   const dryGrams = weight.dry?.grams;
   const thirstyGrams = weight.thirsty?.grams;
   const bandedRange = fullGrams != null && dryGrams != null && fullGrams > dryGrams;
@@ -7694,16 +8541,16 @@ function renderPlantWeightChart() {
             : "")
         : `Driest seen ${showWeight(dryGrams)} g`)
     );
-  } else if (weight.watered) {
+  } else if (weight.full) {
     chart.append(
       svgElement("line", {
         class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right,
-        y1: y(weight.watered.grams), y2: y(weight.watered.grams),
+        y1: y(weight.full.grams), y2: y(weight.full.grams),
       }),
       svgElement("text", {
-        class: "trend-cycle-label", x: plot.left + 4, y: y(weight.watered.grams) + 12,
+        class: "trend-cycle-label", x: plot.left + 4, y: y(weight.full.grams) + 12,
         "text-anchor": "start",
-      }, `Full at ${showWeight(weight.watered.grams)} g`)
+      }, `Full at ${showWeight(weight.full.grams)} g`)
     );
   }
 
@@ -7770,7 +8617,11 @@ async function setPlantAnchors() {
   const message = document.getElementById("plant-weight-anchor-message");
   const weight = (selectedPlant && selectedPlant.weight) || {};
   const wanted = [
-    ["watered", "plant-weight-full", weight.watered],
+    // The stated ceiling. This wrote kind "watered" once, which is
+    // what a real watering writes, so pressing Set and watering the
+    // plant moved the same number and the ceiling drifted with every
+    // watering.
+    ["full", "plant-weight-full", weight.full],
     ["thirsty", "plant-weight-thirsty", weight.thirsty],
     // Only what was stated counts as the current value here. Left empty,
     // dry falls back to the lightest weighing -- so comparing against
@@ -7826,7 +8677,7 @@ async function setPlantAnchors() {
 function fillPlantAnchorFields() {
   const weight = (selectedPlant && selectedPlant.weight) || {};
   const fields = [
-    ["plant-weight-full", weight.watered],
+    ["plant-weight-full", weight.full],
     ["plant-weight-thirsty", weight.thirsty],
     // Empty where nobody has stated one, so the placeholder can say the
     // scale is answering it instead.
@@ -7909,6 +8760,57 @@ function weighingLooksRight(grams) {
       + "A pot rarely loses that much at once. Press Cancel if the number is wrong.");
   }
   return true;
+}
+
+/* What else sits on the scale with the plant.
+ *
+ * A probe in the soil, a cache pot, a saucer. The hub takes it off a
+ * weighing and stores the plant's own weight, so the drying rate and
+ * the anchors keep meaning what they meant. Shown beside the weight
+ * box, because a number quietly subtracted is a number nobody trusts.
+ */
+async function savePlantWeightOffset() {
+  const plantId = currentPlantId();
+  const message = document.getElementById("plant-weight-offset-message");
+  const typed = Number(document.getElementById("plant-weight-offset").value || 0);
+  if (plantId === null || !Number.isFinite(typed) || typed < 0) {
+    setText(message, "Type what else is on the scale, in grams.");
+    return;
+  }
+  let response;
+  try {
+    response = await fetch(`/api/plants/${plantId}/weight-offset`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grams: Math.round(typed) }),
+    });
+  } catch (_error) {
+    setText(message, "The hub could not be reached.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setText(message, payload.error || "That could not be saved.");
+    return;
+  }
+  setText(message, "Saved.");
+  await refreshPlant();
+}
+
+function renderPlantWeightOffset() {
+  const field = document.getElementById("plant-weight-offset");
+  const note = document.getElementById("plant-weight-offset-note");
+  if (!field) return;
+  const offset = selectedPlant?.weight_offset_grams || 0;
+  if (field !== document.activeElement) field.value = offset || "";
+  // Said plainly, because a number taken off without a word is the
+  // kind of thing somebody finds months later and distrusts.
+  setText(note, offset
+    ? `Weigh the whole thing and type that. ${offset} g comes off, `
+      + "and the plant's own weight is what is kept. Typed anchors are "
+      + "not touched."
+    : "If a probe or a cache pot is weighed with the plant, put its "
+      + "weight here and the hub will take it off each weighing.");
 }
 
 async function recordPlantWeight() {
@@ -8049,6 +8951,44 @@ document.getElementById("room-list").addEventListener("click", (event) => {
   const remove = event.target.closest(".delete-room");
   if (remove) deleteRoom(Number(remove.dataset.roomId));
 });
+document.querySelectorAll("[data-box-range]").forEach((button) => {
+  button.addEventListener("click", () => {
+    boxHours = Number(button.dataset.boxRange);
+    document.querySelectorAll("[data-box-range]").forEach((other) => {
+      other.setAttribute("aria-pressed", String(other === button));
+    });
+    refreshBoxHistory();
+  });
+});
+document.getElementById("box-form").addEventListener("submit", saveBoxSettings);
+document.getElementById("box-form").addEventListener("input", (event) => {
+  boxEdited = true;
+  // The drawing follows the numbers as they are typed.
+  if (["box-kp", "box-ki", "box-kd", "box-target-rh", "box-min-speed",
+       "box-max-speed"].includes(event.target.id)) drawPidPreview();
+});
+document.getElementById("box-preset").addEventListener("change", (event) => {
+  applyPidPreset(event.target.value);
+});
+document.getElementById("box-mode").addEventListener("change", (event) => {
+  showFanMode(event.target.value);
+});
+document.getElementById("alerts-form").addEventListener("submit", saveAlertSettings);
+document.getElementById("alerts-test").addEventListener("click", testAlert);
+document.getElementById("zigbee-alert-form")
+  .addEventListener("submit", addAlertRule);
+document.getElementById("zigbee-alert-rules")
+  .addEventListener("click", changeAlertRule);
+document.getElementById("alert-hear").addEventListener("click", hearAlertSound);
+document.getElementById("alert-cancel").addEventListener("click", clearRuleForm);
+// "reported" is for a thing that either happened or did not, so there
+// is no number to compare it with.
+document.getElementById("alert-test").addEventListener("change", (event) => {
+  setHidden(document.getElementById("alert-threshold-field"),
+            event.target.value === "true");
+});
+document.getElementById("alerts-generate")
+  .addEventListener("click", generateAlertAddress);
 document.getElementById("room-page-form").addEventListener("submit", saveRoomPage);
 document.getElementById("room-page-delete")
   .addEventListener("click", deleteRoomFromItsPage);
@@ -8355,6 +9295,8 @@ document.getElementById("add-plant").addEventListener("click", addPlant);
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-repotted").addEventListener("click", () => recordPlantCare("repotting"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
+document.getElementById("plant-weight-offset-save")
+  .addEventListener("click", savePlantWeightOffset);
 document.getElementById("plant-weight-record").addEventListener("click", () => recordPlantWeight());
 
 document.getElementById("plant-weight-now").addEventListener("click", async (event) => {

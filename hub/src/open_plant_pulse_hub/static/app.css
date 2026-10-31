@@ -331,7 +331,10 @@ main > * { min-width: 0; }
 .history-range-selector button:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
 .climate-history-status { min-height: 18px; margin: -10px 0 14px; color: var(--muted); font-size: 12px; }
 .climate-history-status.error { color: #a34831; }
-.climate-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+/* As many columns as fit, not always two: a thermometer has two
+   measurements and fills a row, a scale has one and used to sit in
+   the left half with the right half empty. */
+.climate-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .climate-chart-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 .climate-chart-card header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .climate-chart-card header > span { color: var(--muted); font-size: 13px; font-weight: 700; }
@@ -998,6 +1001,62 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* A room's own page: a form and the lists of what is in the room.
    Laid out like Settings, because it is the same kind of work and the
    eye should not have to learn a second shape for it. */
+/* A colour per sensor. Which sensor gets which is decided in app.js
+   by hashing its id, so it keeps its colour across refreshes; the
+   palette itself lives here.
+
+   NOT DEAD, though a search says so. The class is built as
+   `series-${entry.colour}`, for the line, its points and its legend
+   entry, so the full name never appears anywhere. Deleted once as
+   unused: `--series` went undefined, `stroke: var(--series)` resolved
+   to none, and every chart became a scatter of black dots. The count
+   here has to match SERIES_COLOURS in app.js. */
+.series-0 { --series: #246a9a; }
+.series-1 { --series: #c2622d; }
+.series-2 { --series: #19734c; }
+.series-3 { --series: #8a4f9e; }
+.series-4 { --series: #a3341f; }
+.series-5 { --series: #4a5a66; }
+
+/* The Box page's grouped controls.
+ *
+ * A settings panel is a grid with a gap; a plain <div> inside one is
+ * a block, so its children fall back to flow layout and a label
+ * becomes an inline with no margins. This gives the inside of a group
+ * the same shape as the panel around it.
+ *
+ * Scoped to this page on purpose: the box was asked for as a thing of
+ * its own, and no other panel groups its fields this way. */
+#settings-box-panel #box-gains,
+#settings-box-panel #box-printer-settings { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfa; }
+#settings-box-panel #box-gains h3,
+#settings-box-panel #box-printer-settings h3 { margin: 0; font-size: 14px; }
+#settings-box-panel #box-gains > label,
+#settings-box-panel #box-printer-settings > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+/* Kp, Ki and Kd are one setting read together, so they share a line
+   on a desktop and stack when there is no room. auto-fit rather than
+   a width to guess at. */
+#settings-box-panel .box-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+#settings-box-panel .box-field-row > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+#settings-box-panel #box-gains > p { margin: 0; }
+#settings-box-panel #box-gains > svg { width: 100%; height: auto; }
+
+/* The rule editor: one line of small controls that wraps on a phone
+   rather than forcing the page sideways. */
+.alert-rule-form { display: grid; gap: 8px; margin-top: 12px; }
+.alert-rule-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.alert-field { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.alert-field select, .alert-field input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px; font: inherit; color: var(--ink); text-transform: none; letter-spacing: normal; }
+.alert-field input { width: 90px; }
+.alert-check { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+#zigbee-alert-rules .settings-sensor-heading { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+
+/* The address and the button that fills it, on one line. */
+.alerts-address { display: flex; gap: 8px; align-items: center; }
+.alerts-address input { flex: 1 1 auto; min-width: 0; }
+.alerts-address button { white-space: nowrap; }
+#alerts-topic { margin: 2px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
 .room-page { padding: 30px; display: grid; gap: 14px; border: 1px solid var(--line); background: #f8faf6; }
 .room-page h1 { margin: 2px 0 4px; font: 500 38px Georgia, "Times New Roman", serif; }
 .room-page .section-heading p:last-child { margin: 0; color: var(--muted); }

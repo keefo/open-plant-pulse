@@ -7,6 +7,8 @@ from open_plant_pulse_hub.application import AdvertisementIngestionService, Read
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.application.scales import ScaleService
+from open_plant_pulse_hub.application.airflow import FanService
+from open_plant_pulse_hub.application.alerts import Alerts, Sounder
 from open_plant_pulse_hub.application.zigbee import EzspGateway, ZigbeeService
 from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
 from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
@@ -111,7 +113,14 @@ def main() -> None:
     # Zigbee, always. The dongle finds its own port and a hub with none
     # plugged in says so and carries on, so there is nothing here to turn
     # off and no port worth naming on the command line.
-    zigbee = ZigbeeService(store, EzspGateway())
+    # The plant box's exhaust fan, held at a humidity. Self-contained:
+    # see docs/proposals/vzbot-humidity-control.md.
+    fan = FanService(store)
+    fan.start()
+    alerts = Alerts(store.hub_settings().get("ntfy_url"))
+    # A noise in the house, which a push notification cannot make.
+    sounder = Sounder()
+    zigbee = ZigbeeService(store, EzspGateway(), alerts=alerts, sounder=sounder)
     zigbee.start()
     # Lent to the lighting side, where a light switched by a Zigbee plug
     # needs a radio it cannot reach from its own settings.
@@ -130,6 +139,9 @@ def main() -> None:
         lights=lights,
         photos=photos,
         zigbee=zigbee,
+        alerts=alerts,
+        sounder=sounder,
+        fan=fan,
     )
     host, port = server_address(server)
     shown_host = "localhost" if host in ("::", "0.0.0.0") else f"[{host}]" if ":" in host else host

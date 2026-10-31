@@ -60,9 +60,25 @@ class DeviceHealth:
 
 
 class ZigbeeService:
-    def __init__(self, store: Any, network: Any) -> None:
+    QUIET_SECONDS = 600
+
+    def __init__(self, store: Any, network: Any,
+                 alerts: Optional[Any] = None,
+                 sounder: Optional[Any] = None) -> None:
         self._store = store
         self._network = network
+        # Somewhere to send an alarm, if the hub has been given one.
+        self._alerts = alerts
+        # Somewhere to make a noise in the house, if there is one.
+        self._sounder = sounder
+        # Which rules are currently inside their condition, so one
+        # fires on entering rather than on every report that follows.
+        # Empty at startup on purpose: a hub that comes up to find a
+        # sensor already wet should say so.
+        self._firing: Dict[int, bool] = {}
+        # When each last fired, so a reading resting on a threshold
+        # cannot ring every time it twitches by a tenth.
+        self._fired_at: Dict[int, float] = {}
         self._health: Dict[str, DeviceHealth] = {}
         self._pending: Dict[int, str] = {}
         self._lock = threading.Lock()
@@ -792,10 +808,153 @@ class ZigbeeService:
         address = reading.values.get("ip")
         if isinstance(address, str) and address:
             self.remember_address(reading.eui, address)
+        self._raise_alarm(reading)
         self._keep_report(reading)
         self._file(reading)
         self._note_battery(reading)
         LOG.debug("%s: %s", reading.eui, reading.values)
+
+    def test_rule(self, rule_id: int) -> Dict[str, Any]:
+        """Fire a rule on purpose, so it can be heard before it matters.
+
+        Sounds once whatever the rule's repeat says: a test that had
+        to be stopped would be a worse button than no button. The push
+        is waited for, unlike a real alarm, because somebody is
+        watching and wants to be told.
+        """
+        if not self._store:
+            raise ValueError("no store")
+        rule = next((r for r in self._store.alert_rules()
+                     if r["rule_id"] == rule_id), None)
+        if rule is None:
+            raise ValueError("unknown rule")
+        eui = rule["sensor_id"][len("zigbee-"):]
+        # The threshold itself stands in for a reading: it is the
+        # number the rule is about, and a made-up one would read as a
+        # measurement that happened.
+        example = True if rule["test"] == "true" else rule["threshold"]
+        said = self._phrase(rule, example)
+        sounded = False
+        if self._sounder and rule["sound"]:
+            sounded = bool(self._sounder.play(rule["sound"]))
+        pushed = None
+        if self._alerts and rule["push"]:
+            pushed = self._alerts.send(
+                f"Test: {said}", f"{self._describe(eui)}: {said.lower()}.",
+                tags="test_tube", block=True)
+        return {"sounded": sounded, "pushed": pushed,
+                "sound": rule["sound"], "push": rule["push"]}
+
+    def _raise_alarm(self, reading: Reading) -> None:
+        """Check what this device just said against the rules on it.
+
+        Every rule, every measurement, no device kind anywhere: a rule
+        on air_temperature_c works on whatever reports it. This
+        replaced a hard-coded leak check, which could only ever alarm
+        on the one thing somebody had written into the service.
+
+        First thing after the reading is understood, before it is
+        written down: filing touches the database, and an alarm should
+        leave ahead of everything else.
+        """
+        if not self._store:
+            return
+        sensor_id = f"zigbee-{reading.eui}"
+        try:
+            rules = self._store.alert_rules(sensor_id)
+        except Exception:
+            LOG.exception("could not read the alert rules for %s", sensor_id)
+            return
+        for rule in rules:
+            if not rule["enabled"]:
+                continue
+            if rule["measurement"] not in reading.values:
+                continue
+            self._apply_rule(rule, reading.values[rule["measurement"]], reading.eui)
+
+    @staticmethod
+    def _rule_met(rule: Dict[str, Any], value: Any) -> Optional[bool]:
+        """Whether the reading is inside the rule, or None if it cannot say."""
+        if rule["test"] == "true":
+            return bool(value)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if rule["threshold"] is None:
+            return None
+        return (number > rule["threshold"] if rule["test"] == "above"
+                else number < rule["threshold"])
+
+    def _apply_rule(self, rule: Dict[str, Any], value: Any, eui: str) -> None:
+        """Fire on entering the condition, and stop on leaving it.
+
+        On the change rather than the state. A leak sensor repeats
+        itself every time it checks in and a thermometer reports every
+        few minutes, so a rule that fired on the state would fire for
+        hours.
+
+        A value resting on the threshold would still ring each time it
+        twitched by a tenth, so a rule that has just fired stays quiet
+        for QUIET_SECONDS however often it re-enters.
+        """
+        met = self._rule_met(rule, value)
+        if met is None:
+            return
+        rule_id = int(rule["rule_id"])
+        now = time.time()
+        with self._lock:
+            before = self._firing.get(rule_id)
+            if met and not before:
+                recent = self._fired_at.get(rule_id, 0.0)
+                if now - recent < self.QUIET_SECONDS:
+                    # Inside the condition, but it said so a moment ago.
+                    self._firing[rule_id] = True
+                    return
+                self._fired_at[rule_id] = now
+            self._firing[rule_id] = bool(met)
+        if met and not before:
+            self._sound_and_tell(rule, value, eui)
+        elif before and not met:
+            # Out of the condition: whatever was ringing has no reason
+            # to carry on, and nobody has to press stop.
+            if self._sounder:
+                self._sounder.stop(rule_id)
+
+    def _sound_and_tell(self, rule: Dict[str, Any], value: Any, eui: str) -> None:
+        where = self._describe(eui)
+        said = self._phrase(rule, value)
+        if self._sounder and rule["sound"]:
+            self._sounder.start(rule_id=int(rule["rule_id"]),
+                                sound=rule["sound"],
+                                every_seconds=int(rule["repeat_seconds"]))
+        if self._alerts and rule["push"]:
+            self._alerts.send(said, f"{where}: {said.lower()}.",
+                              urgent=bool(rule["repeat_seconds"]),
+                              tags="rotating_light")
+
+    @staticmethod
+    def _phrase(rule: Dict[str, Any], value: Any) -> str:
+        """What the rule has to say, in words fit for a lock screen."""
+        measurement = str(rule["measurement"]).replace("_", " ")
+        if rule["test"] == "true":
+            return "Water detected" if rule["measurement"] == "wet" \
+                else f"{measurement} reported"
+        direction = "above" if rule["test"] == "above" else "below"
+        return f"{measurement} {value} is {direction} {rule['threshold']:g}"
+
+    def _describe(self, eui: str) -> str:
+        """What to call a device in a message read on a lock screen.
+
+        Its name and its room if the hub knows them, because "leak" on
+        its own does not say which floor to look at.
+        """
+        row = self._row_for(eui)
+        if not row:
+            return f"A sensor ({eui})"
+        name = row.get("display_name") or eui
+        room = row.get("room")
+        return f"{name} in {room}" if room else str(name)
 
     def _keep_report(self, reading: Reading) -> None:
         """Store the raw report, and now and then drop the stale ones."""
