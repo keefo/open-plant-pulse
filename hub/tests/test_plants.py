@@ -1717,7 +1717,7 @@ class PlantApiTests(unittest.TestCase):
         # Today unless somebody says otherwise, and never a day ahead.
         self.assertIn("function resetWeighingDate()", script)
         self.assertIn("if (chosen > today) return null;", script)
-        self.assertIn("JSON.stringify({ grams, kind, at })", script)
+        self.assertIn("grams, at, kind: answered.kind,", script)
 
     def test_the_pot_has_a_month_of_its_own_history(self) -> None:
         page = self.call_text("/")
@@ -1767,7 +1767,7 @@ class PlantApiTests(unittest.TestCase):
         self.assertNotIn("function weightUnit(", script)
         self.assertNotIn("function gramsFrom(", script)
         # Grams on the wire, as before.
-        self.assertIn("JSON.stringify({ grams, kind, at })", script)
+        self.assertIn("grams, at, kind: answered.kind,", script)
         # The remembered choices are cleared rather than left in every
         # browser for ever, since nothing reads them now.
         self.assertIn("forgetWeightUnits", script)
@@ -2587,3 +2587,47 @@ class WeightOffsetTests(unittest.TestCase):
         self.store.set_plant_weight_offset(self.plant, 0)
         self.store.record_plant_weight(self.plant, 800)
         self.assertEqual(self.store.plant_weights(self.plant)[0]["grams"], 800)
+
+
+class SayingItWasNotAWateringTests(unittest.TestCase):
+    """A sudden gain is usually a watering, and the hub says so.
+
+    But a repotting or a top dressing adds weight too, and the person
+    holding the pot knows which it was. When they have been asked and
+    answered, their answer stands.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("Pothos")["plant_id"]
+        self.store.record_plant_weight(self.plant, 500, at=ago(2))
+
+    def _kind_of(self, grams: int) -> str:
+        return [w for w in self.store.plant_weights(self.plant)
+                if w["grams"] == grams][0]["kind"]
+
+    def test_the_hub_still_decides_when_nobody_says(self) -> None:
+        self.store.record_plant_weight(self.plant, 700, at=ago(1))
+        self.assertEqual(self._kind_of(700), "watered")
+
+    def test_saying_it_was_not_a_watering_is_honoured(self) -> None:
+        self.store.record_plant_weight(self.plant, 700, at=ago(1),
+                                       detect_refill=False)
+        self.assertEqual(self._kind_of(700), "reading")
+
+    def test_it_is_still_recorded_as_a_weighing(self) -> None:
+        """Answering "not watered" is not cancelling."""
+        self.store.record_plant_weight(self.plant, 700, at=ago(1),
+                                       detect_refill=False)
+        self.assertEqual(self.store.plant_weight_status(self.plant)["latest"]["grams"],
+                         700)
+
+    def test_it_does_not_reach_the_care_log(self) -> None:
+        self.store.record_plant_weight(self.plant, 700, at=ago(1),
+                                       detect_refill=False)
+        kinds = [e["kind"] for e in self.store.care_log(10, plant_id=self.plant)]
+        self.assertNotIn("watering", kinds)
+
+    def test_saying_it_was_a_watering_needs_no_detection(self) -> None:
+        self.store.record_plant_weight(self.plant, 520, "watered", at=ago(1))
+        self.assertEqual(self._kind_of(520), "watered")

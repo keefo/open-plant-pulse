@@ -978,8 +978,8 @@ class NoWateredTickTests(unittest.TestCase):
         self.assertIn("Just fertilized", self.page)
 
     def test_a_sudden_change_is_queried_before_it_is_saved(self) -> None:
-        self.assertIn("function weighingLooksRight(", self.script)
-        self.assertIn("if (!weighingLooksRight(grams))", self.script)
+        self.assertIn("async function askAboutWeighing(", self.script)
+        self.assertIn("const answered = await askAboutWeighing(grams)", self.script)
 
 
 class ChartUnitTests(unittest.TestCase):
@@ -1354,3 +1354,55 @@ class LightDriverCatalogueTests(unittest.TestCase):
 
     def test_the_chosen_driver_survives_a_refresh(self) -> None:
         self.assertIn("if (chosen &&", self.lights)
+
+
+class WeighingQuestionTests(unittest.TestCase):
+    """Three answers, which a confirm box cannot offer."""
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.page = (here / "index.html").read_text()
+        self.app = (here / "app.js").read_text()
+
+    def test_the_dialog_offers_all_three(self) -> None:
+        dialog = self.page.split('id="weighing-question"')[1].split("</dialog>")[0]
+        for value in ('value="watered"', 'value="reading"', 'value="cancel"'):
+            self.assertIn(value, dialog)
+
+    def test_a_lighter_pot_is_not_offered_as_a_watering(self) -> None:
+        """A pot that suddenly weighs less was not watered, whatever
+        else happened to it."""
+        self.assertIn('setHidden(document.getElementById("weighing-question-watered")',
+                      self.app)
+
+    def test_not_watered_tells_the_hub_not_to_guess(self) -> None:
+        self.assertIn("detect_refill: false", self.app)
+
+    def test_cancelling_records_nothing(self) -> None:
+        self.assertIn("if (answered === null)", self.app)
+
+
+class SensorKindWordsTests(unittest.TestCase):
+    """Every kind sensorKind can return has words written for it.
+
+    It grew a "soil" answer when the soil probes arrived and this
+    table did not, so renderSensorSettings threw on any plant with a
+    probe in its pot -- and took the whole fleet refresh with it,
+    every second, for three weeks.
+    """
+
+    def setUp(self) -> None:
+        self.app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                    / "static" / "app.js").read_text()
+
+    def test_every_kind_it_can_return_is_in_the_table(self) -> None:
+        import re
+        returns = set(re.findall(r'return "(\w+)";', self.app.split(
+            "function sensorKind(sensor)")[1].split("\n}")[0]))
+        table = self.app.split("const SENSOR_KINDS = {")[1].split("\n};")[0]
+        named = set(re.findall(r"^  (\w+):", table, re.M))
+        self.assertEqual(returns - named, set(),
+                         f"sensorKind can return {returns - named} with no words")
+
+    def test_an_unknown_kind_falls_back_rather_than_throwing(self) -> None:
+        self.assertIn("|| SENSOR_KINDS.unknown", self.app)

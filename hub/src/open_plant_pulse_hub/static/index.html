@@ -993,6 +993,21 @@
     </section>
 
 
+    <!-- A weighing that looks like a watering, or like a typo. Three
+         answers, which window.confirm cannot offer: it was a watering,
+         it was not, or do not record it at all. -->
+    <dialog id="weighing-question" class="weighing-question">
+      <form method="dialog">
+        <h2 id="weighing-question-title">That is a big change</h2>
+        <p id="weighing-question-detail"></p>
+        <div class="inline-control">
+          <button value="watered" id="weighing-question-watered">Yes, I watered it</button>
+          <button value="reading" id="weighing-question-reading">No, just heavier</button>
+          <button value="cancel" id="weighing-question-cancel">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
     <section class="plant-journey" data-page="plant" data-section="journey" aria-labelledby="plant-journey-plant-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">WHOLE PLANT · LIFETIME</p><h2 id="plant-journey-plant-title">Plant journey</h2></div>

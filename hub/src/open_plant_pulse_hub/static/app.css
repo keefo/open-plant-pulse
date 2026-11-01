@@ -1018,6 +1018,13 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .series-4 { --series: #a3341f; }
 .series-5 { --series: #4a5a66; }
 
+/* The question asked when a weighing jumps. */
+.weighing-question { max-width: 420px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); }
+.weighing-question form { display: grid; gap: 12px; padding: 20px; }
+.weighing-question h2 { margin: 0; font-size: 19px; }
+.weighing-question p { margin: 0; color: var(--muted); }
+.weighing-question::backdrop { background: rgba(20, 28, 22, 0.35); }
+
 /* The Box page's grouped controls.
  *
  * A settings panel is a grid with a gap; a plain <div> inside one is

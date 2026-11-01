@@ -913,6 +913,10 @@ def create_server(
                         self._optional_str(payload.get("note")),
                         self._optional_str(payload.get("at")),
                         observed=payload.get("observed", True) is not False,
+                        # Left out, the hub decides whether a sudden
+                        # gain was a watering. Sent as false, somebody
+                        # has been asked and said it was not.
+                        detect_refill=payload.get("detect_refill", True) is not False,
                     )
                 elif path.startswith("/api/plants/") and path.endswith("/archive"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/archive")])

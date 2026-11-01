@@ -3881,7 +3881,11 @@ function renderSensorSettings() {
   /* The plant is somewhere to go from here, not where here came from, so
    * it sits with the other things done to this sensor rather than in the
    * back button. A sensor with no plant is offered nothing. */
-  const kind = SENSOR_KINDS[sensorKind(selectedSensor)];
+  // A kind with no words written for it falls back rather than
+  // throwing. sensorKind grew a "soil" answer and this table did
+  // not, so every render died here and took the fleet refresh with
+  // it for anybody with a probe in a pot.
+  const kind = SENSOR_KINDS[sensorKind(selectedSensor)] || SENSOR_KINDS.unknown;
   setText(document.getElementById("sensor-kind-label"), kind.label);
   setText(document.getElementById("sensor-kind-note"), kind.note);
   setHidden(document.getElementById("sensor-identity-panel"),
@@ -7378,6 +7382,11 @@ function sensorKind(sensor) {
 }
 
 const SENSOR_KINDS = {
+  soil: {
+    label: "SOIL PROBE",
+    note: "What the soil is doing in one pot. Administered on the Zigbee "
+      + "page, because what can be done with it depends on the dongle.",
+  },
   zigbee: {
     label: "ZIGBEE DEVICE",
     note: "Administered on the Zigbee page, because what can be done with it "
@@ -8763,40 +8772,64 @@ async function recordPlantCare(kind) {
  */
 /* A last look at a number before it goes in the log.
  *
- * The hub reads a sudden gain as a watering and files it as one, so
- * nobody has to remember a tick. The mistake that leaves behind is a
- * mistyped number, which is wrong in the log afterwards and makes the
- * weighing that follows it look like a refill. Cheap to ask once,
- * hard to spot later.
+ * The hub reads a sudden gain as a watering, so nobody has to
+ * remember a tick. But a repotting and a top dressing also add
+ * weight, and a mistyped number -- 240 for 2400 -- is wrong in the
+ * log afterwards and makes the next correct weighing look like a
+ * refill. The person holding the pot knows which it was, so they are
+ * asked, and the question has three answers rather than the two a
+ * confirm box can offer: it was a watering, it was not, or do not
+ * record it.
  *
- * Only for a change big enough to be one or the other: a pot losing
+ * Returns the kind to record, or null to record nothing. Only asks
+ * about a change big enough to be one or the other; a pot losing
  * water a few grams at a time goes straight through.
  */
-function weighingLooksRight(grams) {
+async function askAboutWeighing(grams) {
   const previous = plantWeightPoints().at(-1)?.grams;
-  if (previous == null) return true;
+  if (previous == null) return { kind: "reading" };
   const change = grams - previous;
-  if (change >= Math.max(40, previous * 0.08)) {
-    return window.confirm(
-      `${showWeight(grams)} g is ${showWeight(change)} g heavier than the last `
-      + `weighing of ${showWeight(previous)} g.\n\n`
-      + "It will be recorded as a watering. Press Cancel if the number is wrong.");
+  const dialog = document.getElementById("weighing-question");
+  const title = document.getElementById("weighing-question-title");
+  const detail = document.getElementById("weighing-question-detail");
+  const heavier = change >= Math.max(40, previous * 0.08);
+  const lighter = change <= -Math.max(40, previous * 0.3);
+  if (!heavier && !lighter) return { kind: "reading" };
+  if (!dialog || typeof dialog.showModal !== "function") {
+    // No dialog element: record it and let the hub decide, rather
+    // than refusing to write down a weighing somebody took.
+    return { kind: "reading" };
   }
-  if (change <= -Math.max(40, previous * 0.3)) {
-    return window.confirm(
-      `${showWeight(grams)} g is ${showWeight(-change)} g lighter than the last `
-      + `weighing of ${showWeight(previous)} g.\n\n`
-      + "A pot rarely loses that much at once. Press Cancel if the number is wrong.");
-  }
-  return true;
+
+  setText(title, heavier ? "That is a lot heavier" : "That is a lot lighter");
+  setText(detail, heavier
+    ? `${showWeight(grams)} g is ${showWeight(change)} g more than the last `
+      + `weighing of ${showWeight(previous)} g. A pot does not gain that on `
+      + "its own, so it is usually a watering -- but a repotting or a top "
+      + "dressing would look the same."
+    : `${showWeight(grams)} g is ${showWeight(-change)} g less than the last `
+      + `weighing of ${showWeight(previous)} g. A pot rarely loses that much `
+      + "at once, so this is usually a number typed wrong.");
+  // Only the heavy case can be a watering. A pot that suddenly weighs
+  // less was not watered, whatever else happened to it.
+  setHidden(document.getElementById("weighing-question-watered"), !heavier);
+
+  dialog.showModal();
+  const answer = await new Promise((settle) => {
+    dialog.addEventListener("close", () => settle(dialog.returnValue),
+                            { once: true });
+  });
+  if (answer === "watered") return { kind: "watered" };
+  if (answer === "reading") return { kind: "reading", detectRefill: false };
+  return null;
 }
 
 /* What else sits on the scale with the plant.
  *
  * A probe in the soil, a cache pot, a saucer. The hub takes it off a
- * weighing and stores the plant's own weight, so the drying rate and
- * the anchors keep meaning what they meant. Shown beside the weight
- * box, because a number quietly subtracted is a number nobody trusts.
+ * weighing and keeps the plant's own weight, so the drying rate and
+ * the anchors go on meaning what they meant. Said out loud under the
+ * field, because a number quietly subtracted is one nobody trusts.
  */
 function renderPlantWeightOffset() {
   const field = document.getElementById("plant-weight-offset");
@@ -8804,14 +8837,11 @@ function renderPlantWeightOffset() {
   if (!field) return;
   const offset = selectedPlant?.weight_offset_grams || 0;
   if (field !== document.activeElement) field.value = offset || "";
-  // Said plainly, because a number taken off without a word is the
-  // kind of thing somebody finds months later and distrusts.
   setText(note, offset
-    ? `Weigh the whole thing and type that. ${offset} g comes off, `
-      + "and the plant's own weight is what is kept. Typed anchors are "
-      + "not touched."
-    : "If a probe or a cache pot is weighed with the plant, put its "
-      + "weight here and the hub will take it off each weighing.");
+    ? `Weigh the whole thing and type that. ${offset} g comes off, and the `
+      + "plant's own weight is kept. Typed anchors are not touched."
+    : "If a probe or a cache pot is weighed with the plant, put its weight "
+      + "here and the hub will take it off each weighing.");
 }
 
 async function recordPlantWeight() {
@@ -8840,7 +8870,8 @@ async function recordPlantWeight() {
   // usually a mistyped number -- 240 for 2400 -- and that one is worth
   // stopping, because it is wrong in the log afterwards and makes the
   // next correct weighing look like a refill.
-  if (!weighingLooksRight(grams)) {
+  const answered = await askAboutWeighing(grams);
+  if (answered === null) {
     setText(message, "Not recorded.");
     field.focus();
     field.select();
@@ -8849,7 +8880,12 @@ async function recordPlantWeight() {
   const response = await fetch(`/api/plants/${plantId}/weight`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ grams, kind, at }),
+    body: JSON.stringify({
+      grams, at, kind: answered.kind,
+      // Sent only when somebody has said it was not a watering, so
+      // the hub does not tag the gain itself.
+      ...(answered.detectRefill === false ? { detect_refill: false } : {}),
+    }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));

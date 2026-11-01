@@ -4029,6 +4029,7 @@ class ReadingStore:
         at: Optional[str] = None,
         source: str = "manual",
         observed: bool = True,
+        detect_refill: bool = True,
     ) -> Dict[str, Any]:
         """Write down what the pot weighs.
 
@@ -4068,7 +4069,12 @@ class ReadingStore:
                     raise ValueError(
                         f"{grams + offset} g is not more than the {offset} g "
                         "of probe and pot that come off it")
-        if (kind == "reading" and observed and source == "manual"
+        # A sudden gain is usually a watering, and the hub says so --
+        # unless somebody has been asked and said it was not. A
+        # repotting or a top dressing also adds weight, and the person
+        # holding the pot knows which it was.
+        if (detect_refill and kind == "reading" and observed
+                and source == "manual"
                 and self._is_a_refill(plant_id, grams, at)):
             kind = "watered"
         with self._condition, self._database:
