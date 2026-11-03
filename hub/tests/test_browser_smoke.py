@@ -1406,3 +1406,60 @@ class SensorKindWordsTests(unittest.TestCase):
 
     def test_an_unknown_kind_falls_back_rather_than_throwing(self) -> None:
         self.assertIn("|| SENSOR_KINDS.unknown", self.app)
+
+
+class WeighingQuestionOffsetTests(unittest.TestCase):
+    """The question compares like with like.
+
+    What is typed includes the probe and the cache pot; what is
+    stored does not. Comparing the two made every weighing look like
+    a gain the size of the offset, so a pot with a 120 g probe was
+    asked about on every single entry.
+    """
+
+    def setUp(self) -> None:
+        self.app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                    / "static" / "app.js").read_text()
+
+    def test_the_offset_comes_off_before_the_comparison(self) -> None:
+        asker = self.app.split("async function askAboutWeighing(grams)")[1]
+        decision = asker.split("const heavier")[0]
+        self.assertIn("const net = grams - offset", decision)
+        self.assertIn("const change = net - previous", decision)
+
+    def test_the_question_talks_in_stored_weights(self) -> None:
+        """Otherwise the numbers on screen do not add up to what was
+        typed."""
+        asker = self.app.split("async function askAboutWeighing(grams)")[1]
+        self.assertIn("on the scale with it", asker)
+
+
+class PhotoFromAnIPhoneTests(unittest.TestCase):
+    """A photograph picked from an iPhone's library is HEIC.
+
+    Safari decodes it, the canvas re-encodes it to JPEG -- and then
+    the "do not make it worse" rule sent the original back, because
+    HEIC is efficient enough that the JPEG is usually bigger. The hub
+    refuses HEIC outright, so every photo picked on an iPhone failed
+    a line after it had been converted perfectly well.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+        self.photos = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                       / "application" / "photos.py").read_text()
+
+    def test_the_original_is_only_kept_when_the_hub_takes_it(self) -> None:
+        self.assertIn("const sendable = SENDABLE_PHOTO_TYPES.has", self.app)
+        self.assertIn("return (shrunk.size < file.size || !sendable) ? shrunk : file",
+                      self.app)
+
+    def test_the_two_lists_agree(self) -> None:
+        """The browser's idea of what the hub accepts has to be the
+        hub's idea, or it sends something that gets refused."""
+        import re
+        browser = set(re.findall(r'"(image/\w+)"', self.app.split(
+            "const SENDABLE_PHOTO_TYPES = new Set([")[1].split("]")[0]))
+        hub = set(re.findall(r'"(image/\w+)": "\.\w+"', self.photos))
+        self.assertEqual(browser, hub)

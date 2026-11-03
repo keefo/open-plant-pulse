@@ -1,0 +1,156 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "alocasia",
+  "name": "Alocasia",
+  "scientific_name": "Alocasia spp.",
+  "varieties": [
+    {
+      "id": "watsoniana",
+      "name": "Watsoniana",
+      "note": "Sold under this name, and usually a form of Alocasia longiloba. Dark corrugated leaf with bone-white veins, from the forest floor of Borneo and Sumatra. Slow even when happy, and the first to sulk when the air dries or the night turns cold."
+    },
+    {
+      "id": "amazonica",
+      "name": "Amazonica (Polly)",
+      "note": "The common hybrid, arrow-shaped with pale veins and a wavy edge. Not from the Amazon. Hardier than most of the genus indoors, and the one that most often drops every leaf and comes back from the corm."
+    },
+    {
+      "id": "zebrina",
+      "name": "Zebrina",
+      "note": "Grown as much for the banded stems as the leaves. Wants the brightest light in this profile's range; in a dim corner the stems stretch and the plant leans."
+    },
+    {
+      "id": "frydek",
+      "name": "Frydek",
+      "note": "Velvet green with white veins. The velvet leaves mark with water and dislike being wiped, so water the soil and let the air do the rest."
+    },
+    {
+      "id": "cuprea",
+      "name": "Cuprea",
+      "note": "Thick metallic leaf, small and slow. Needs the highest humidity of these and resents a draught more than it resents a dim week."
+    },
+    {
+      "id": "macrorrhiza",
+      "name": "Macrorrhiza",
+      "note": "The giant. Takes more light and more water than the rest of the genus and outgrows a windowsill quickly; these ranges are set for the smaller kinds."
+    }
+  ],
+  "root_zone": {
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [0, 100]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "°C",
+      "ideal": [18, 26],
+      "scale": [10, 35]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "µS/cm",
+      "ideal": [400, 1200],
+      "scale": [0, 3000]
+    }
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Water well, then let the top third dry before the next. The corm rots in standing wet",
+    "refill_below": 35,
+    "post_water_target": [60, 75],
+    "comfortable_cycle": [35, 75],
+    "concern_below": 22,
+    "concern_above": 88
+  },
+  "drainage": {
+    "label": "Chunky aroid mix, bark and perlite. Water should run through, not sit",
+    "preferred_response": "fast",
+    "acceptable_responses": ["fast"],
+    "maximum_settle_minutes": 12
+  },
+  "climate": {
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "°C",
+      "ideal": [18, 29],
+      "scale": [10, 35]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [60, 80],
+      "scale": [20, 95]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m²/day",
+      "ideal": [5, 12],
+      "scale": [0, 25],
+      "bands": [
+        {
+          "upto": 2.5,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark for a young plant. A two-leaf nursery plant has no reserve to spend and simply stops.",
+              "Dim. The next leaf comes up smaller than the one before it, which is how this genus fades out."
+            ],
+            "established": [
+              "Too dark. Leaf stalks stretch and lean, and the plant carries fewer leaves at a time.",
+              "Dim. New growth is smaller each round and the veining loses its contrast.",
+              "A little short. It holds, but it will not add a leaf."
+            ]
+          }
+        },
+        {"upto": 5, "name": "getting by"},
+        {"upto": 12, "name": "healthy"},
+        {"upto": 16, "name": "bright"},
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Far too much for a young plant. Thin new leaves bleach and crisp in a single afternoon."
+            ],
+            "established": [
+              "Burning. Pale patches spread between the veins and do not recover.",
+              "Too much. The leaf yellows overall and the edges go papery.",
+              "Far too much. These grow under a canopy; direct midday sun scorches them through."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 12
+    }
+  },
+  "chemistry": {
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [5.5, 6.5],
+      "scale": [4.0, 9.0]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [60, 120],
+      "scale": [0, 200]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [20, 55],
+      "scale": [0, 140]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [70, 160],
+      "scale": [0, 300]
+    }
+  }
+}

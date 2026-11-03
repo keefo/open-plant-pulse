@@ -4126,13 +4126,29 @@ class ReadingStore:
     def plant_weights(self, plant_id: int, limit: int = 50) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(limit, 500))
         with self._condition:
+            # The limit counts weighings. Every stated anchor comes too,
+            # however old.
+            #
+            # Full, Thirsty and Dry are a handful of rows that say what
+            # the pot was held to and when, and the chart draws each
+            # stretch with the ones in force through it. Cut off with
+            # the weighings, an anchor set before the limit's horizon
+            # simply vanished: a Thirsty stated in October fell off the
+            # end and the weeks it governed lost their line.
             rows = self._database.execute(
                 """
                 SELECT weight_id, at, grams, source, kind, note, observed, offset_grams
-                FROM plant_weights WHERE plant_id = ?
-                ORDER BY at DESC, weight_id DESC LIMIT ?
+                FROM plant_weights WHERE plant_id = ? AND observed = 0
+                UNION
+                SELECT weight_id, at, grams, source, kind, note, observed, offset_grams
+                FROM plant_weights WHERE weight_id IN (
+                    SELECT weight_id FROM plant_weights
+                    WHERE plant_id = ? AND observed = 1
+                    ORDER BY at DESC, weight_id DESC LIMIT ?
+                )
+                ORDER BY at DESC, weight_id DESC
                 """,
-                (plant_id, safe_limit),
+                (plant_id, plant_id, safe_limit),
             ).fetchall()
         return [
             {
@@ -6524,10 +6540,28 @@ class ReadingStore:
         # How long since the hub last heard the device at all, as opposed to
         # since it last sent a measurement. A sensor beaconing for adoption has
         # nothing to measure, so only this one says whether it is in the room.
-        seen = self._observation_datetime(sensor["last_seen_at"], datetime.now(timezone.utc))
-        sensor["seen_age_seconds"] = max(
-            0, int((datetime.now(timezone.utc) - seen).total_seconds())
-        )
+        # Heard is the later of the two things that prove it.
+        #
+        # last_seen_at is written when a device is first recognised and
+        # then left alone: the Zigbee service keeps a cache so a device
+        # that talks constantly is not written on every frame. The
+        # column therefore froze at whenever the hub last started, and
+        # every sensor in the house read "Not reporting" while its
+        # readings were arriving on time.
+        #
+        # A reading is evidence of being heard, so it counts. A device
+        # that only beacons, with nothing to measure, still counts
+        # through last_seen_at -- which is why that was used in the
+        # first place.
+        now_at = datetime.now(timezone.utc)
+        seen = self._observation_datetime(sensor["last_seen_at"], now_at)
+        if latest is not None:
+            heard = self._observation_datetime(
+                latest.get("received_at") or latest["reading"].get("observed_at"),
+                now_at)
+            if heard > seen:
+                seen = heard
+        sensor["seen_age_seconds"] = max(0, int((now_at - seen).total_seconds()))
         # Freshness answers "is this sensor reporting?", which is about being
         # heard. Judging it by the last measurement called a sensor with no probe
         # stale while it was announcing itself every few seconds, which described

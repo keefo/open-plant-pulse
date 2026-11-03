@@ -312,6 +312,11 @@ main > * { min-width: 0; }
 /* The reserve below thirsty is painted by a gradient defined per chart, so it
    carries no fill here; only the floor it runs down to is drawn. */
 .history-chart .trend-dry { stroke: #a33a2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Where the pot changed. Grey rather than another signal colour: it
+   is not a reading and not a threshold, it is the reason the bands
+   either side of it disagree. */
+.history-chart .trend-repot { stroke: #8a8578; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.history-chart .trend-repot-label { fill: #6f6a5e; font-size: 10px; font-weight: 600; }
 /* Filled where the scale called the reading settled, hollow where it did
    not. A scale that never settles is the thing being looked for, so those
    points are shown rather than dropped. */
@@ -1263,6 +1268,11 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* A stretch of time with no photographs, drawn where the track was
    squeezed, so the compression is declared rather than hidden. */
 .photo-track-gap { position: absolute; top: 15px; width: 14px; height: 4px; margin-left: -7px; background: repeating-linear-gradient(90deg, rgba(232,239,230,0.5) 0 2px, transparent 2px 4px); }
+/* Where the pot changed, on the strip under the photographs.
+   Dashed, warm, and running the height of the track rather than
+   standing in it: a photograph is a tick on the line, a repot is a
+   divider across it. */
+.photo-track-repot { position: absolute; top: 1px; width: 0; height: 32px; margin-left: -1px; border-left: 2px dashed rgba(240, 206, 138, 0.9); pointer-events: auto; }
 
 /* A long note folded to its first line, with a caret to say it opens.
    Clamped rather than hidden, so the subject stays readable and the

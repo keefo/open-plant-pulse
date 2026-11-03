@@ -6761,6 +6761,13 @@ function readExifDate(view, start) {
   return walk(start + u32(start + 4));
 }
 
+// What the hub stores a photograph as. Anything else has to go
+// through the canvas, whatever it costs in bytes, because the hub
+// refuses it otherwise.
+const SENDABLE_PHOTO_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+]);
+
 async function shrinkPhoto(file) {
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (bitmap === null) return null;
@@ -6772,9 +6779,15 @@ async function shrinkPhoto(file) {
   bitmap.close();
   const shrunk = await new Promise((resolve) =>
     canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
-  // A picture that grew in the shrinking -- a small PNG screenshot, say -- is
-  // sent as it came rather than made worse.
-  return shrunk !== null && shrunk.size < file.size ? shrunk : file;
+  if (shrunk === null) return file;
+  // A picture that grew in the shrinking -- a small PNG screenshot, say --
+  // is sent as it came rather than made worse. But only when the hub can
+  // take what it came as: HEIC is efficient enough that a JPEG re-encode
+  // of an iPhone photograph is usually bigger, and sending the original
+  // back meant every photo picked from an iPhone's library was refused,
+  // a line after Safari had decoded it perfectly well.
+  const sendable = SENDABLE_PHOTO_TYPES.has((file.type || "").toLowerCase());
+  return (shrunk.size < file.size || !sendable) ? shrunk : file;
 }
 
 /* Which plant is being looked at, however it was reached: a plant with a
@@ -7002,7 +7015,31 @@ function photoTrackLayout(photos) {
       });
     }
   });
-  return {at, marks, first: photoAt(oldestFirst[0]),
+  /* Where a date sits on this track.
+   *
+   * The track is not linear in time -- each gap is log-scaled so a
+   * year away from the others does not squash everything else into
+   * the corner -- so a date cannot be placed by proportion. It goes
+   * inside the gap it falls in, on that gap's own scale, which is
+   * the arithmetic the photographs either side were placed with.
+   */
+  const place = (time) => {
+    if (!Number.isFinite(time)) return null;
+    // Before the first photograph there is no track to put it on.
+    if (time < photoAt(oldestFirst[0])) return null;
+    if (time >= photoAt(oldestFirst[oldestFirst.length - 1])) return 100;
+    for (let index = 1; index < oldestFirst.length; index += 1) {
+      const before = photoAt(oldestFirst[index - 1]);
+      const after = photoAt(oldestFirst[index]);
+      if (time < before || time > after) continue;
+      const all = Math.log1p((after - before) / 86400000);
+      const into = Math.log1p((time - before) / 86400000);
+      const step = running[index] - running[index - 1];
+      return (running[index - 1] + step * (all > 0 ? into / all : 0)) / span * 100;
+    }
+    return null;
+  };
+  return {at, marks, place, first: photoAt(oldestFirst[0]),
           last: photoAt(oldestFirst[oldestFirst.length - 1])};
 }
 
@@ -7011,7 +7048,14 @@ function renderPhotoTrack(photos, at) {
   const track = document.getElementById("photo-track");
   if (!ticks || !track) return;
   const layout = photoTrackLayout(photos);
-  const renderKey = JSON.stringify([photos.map((photo) => photo.photo_id), at]);
+  // A repot is why the plant in the pictures either side of it can
+  // look like it changed overnight.
+  const repots = (selectedPlant?.care_log || [])
+    .filter((event) => event.kind === "repotting")
+    .map((event) => Date.parse(event.detected_at))
+    .filter((time) => Number.isFinite(time));
+  const renderKey = JSON.stringify(
+    [photos.map((photo) => photo.photo_id), at, repots]);
   if (ticks.dataset.renderKey !== renderKey) {
     setData(ticks, "renderKey", renderKey);
     ticks.replaceChildren();
@@ -7021,6 +7065,16 @@ function renderPhotoTrack(photos, at) {
       gap.style.left = `${mark.middle}%`;
       gap.title = `${describeSpan(mark.days * 86400000)} with no photograph`;
       ticks.append(gap);
+    }
+    for (const time of repots) {
+      const where = layout ? layout.place(time) : null;
+      if (where === null) continue;
+      const flag = document.createElement("i");
+      flag.className = "photo-track-repot";
+      flag.style.left = `${where}%`;
+      flag.title = "Repotted " + new Date(time).toLocaleDateString(
+        [], {month: "long", day: "numeric", year: "numeric"});
+      ticks.append(flag);
     }
     photos.forEach((photo, index) => {
       const tick = document.createElement("i");
@@ -8433,6 +8487,49 @@ function attachNearestReadout(chart, size, marks) {
   chart.append(readout);
 }
 
+/* What the pot's anchors were, when.
+ *
+ * Full, Thirsty and Dry are stated rows with dates on them, so the
+ * pot has a history of them and not just a present. Drawing today's
+ * across the whole chart painted a 1200 g band over the weeks when
+ * the pot was a 550 g pot -- after a repot the bands floated above
+ * the line entirely, describing a pot that did not exist yet.
+ *
+ * Returns the stretches between changes, each with the anchors that
+ * were in force through it.
+ */
+function anchorSegments(weights, startTime, endTime) {
+  const stated = (weights || [])
+    .filter((w) => !w.observed && ["full", "thirsty", "dry"].includes(w.kind))
+    .map((w) => ({ at: Date.parse(w.at), kind: w.kind, grams: w.grams }))
+    .filter((w) => Number.isFinite(w.at))
+    .sort((a, b) => a.at - b.at);
+
+  // What was in force when the window opens: the newest of each kind
+  // stated at or before it.
+  const held = {};
+  for (const row of stated) {
+    if (row.at <= startTime) held[row.kind] = row.grams;
+  }
+  const changes = stated.filter((row) => row.at > startTime && row.at <= endTime);
+
+  const segments = [];
+  let from = startTime;
+  let current = { ...held };
+  for (const row of changes) {
+    // Several anchors set in the same second are one change, which is
+    // what pressing Set does.
+    if (row.at > from) {
+      segments.push({ from, to: row.at, ...current });
+      from = row.at;
+    }
+    current = { ...current, [row.kind]: row.grams };
+  }
+  segments.push({ from, to: endTime, ...current });
+  // A stretch narrower than a pixel is not worth drawing.
+  return segments.filter((s) => s.to > s.from);
+}
+
 function renderPlantWeightChart() {
   const chart = document.getElementById("plant-weight-chart");
   const empty = document.getElementById("plant-weight-chart-empty");
@@ -8477,8 +8574,26 @@ function renderPlantWeightChart() {
   const plot = { left: 46, right: 10, top: 10, bottom: 22 };
   const plotWidth = width - plot.left - plot.right;
   const plotHeight = height - plot.top - plot.bottom;
+  /* The axis runs a little past the last weighing when the anchors
+   * have only just changed.
+   *
+   * A repot an hour ago is an hour out of thirty days: the band for
+   * the new pot came out under two pixels wide and could not be
+   * seen at all. The strip past the last reading is the near future,
+   * and the band drawn across it says what the pot is held to now.
+   * It stops being needed as soon as the new pot has a few days of
+   * weighings behind it.
+   */
+  const WANTED_TAIL = 52;
+  const newestChange = Math.max(startTime, ...(selectedPlant?.weights || [])
+    .filter((w) => !w.observed && ["full", "thirsty", "dry"].includes(w.kind))
+    .map((w) => Date.parse(w.at))
+    .filter((at) => Number.isFinite(at) && at <= endTime));
+  const perPixel = (endTime - startTime) / Math.max(1, plotWidth);
+  const axisEnd = Math.max(
+    endTime, newestChange + WANTED_TAIL * perPixel);
   const x = (timestamp) =>
-    plot.left + ((timestamp - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
+    plot.left + ((timestamp - startTime) / Math.max(1, axisEnd - startTime)) * plotWidth;
   const y = (grams) => plot.top + ((top - grams) / Math.max(1, top - bottom)) * plotHeight;
 
   /* The pot's whole range, full at the top and dry at the bottom, coloured by
@@ -8487,75 +8602,125 @@ function renderPlantWeightChart() {
    * flat green: 90% full is no better than 70%. Below thirsty it is spending
    * a reserve, and how far in matters, so that stretch runs yellow-green to
    * red as it approaches the driest the pot has ever been. */
-  const fullGrams = weight.full?.grams;
-  const dryGrams = weight.dry?.grams;
-  const thirstyGrams = weight.thirsty?.grams;
-  const bandedRange = fullGrams != null && dryGrams != null && fullGrams > dryGrams;
-  if (bandedRange) {
-    // Thirsty outside the range would paint a band taller than the pot.
-    const refill = thirstyGrams != null && thirstyGrams < fullGrams && thirstyGrams > dryGrams
-      ? thirstyGrams : null;
-    const gradientId = `pot-dry-${currentPlantId()}`;
-    const gradient = svgElement("linearGradient", {
-      id: gradientId, x1: 0, y1: 0, x2: 0, y2: 1,
-    });
-    gradient.append(
-      svgElement("stop", { offset: "0%", "stop-color": "#cfe08f", "stop-opacity": "0.75" }),
-      svgElement("stop", { offset: "55%", "stop-color": "#e8b45a", "stop-opacity": "0.78" }),
-      svgElement("stop", { offset: "100%", "stop-color": "#d4503f", "stop-opacity": "0.82" })
-    );
-    const defs = svgElement("defs", {});
-    defs.append(gradient);
-    chart.append(defs);
+  // Drawn per stretch, because the anchors have dates on them.
+  //
+  // One band across the whole chart painted today's pot over every
+  // week before it. After a repot that is a 1200 g band floating
+  // above a line that never left 550 -- a pot that did not exist
+  // yet. Each stretch now carries the anchors that were in force
+  // through it, and the step between them is the repot.
+  const segments = anchorSegments(selectedPlant?.weights, startTime, axisEnd);
+  const gradientId = `pot-dry-${currentPlantId()}`;
+  const gradient = svgElement("linearGradient", {
+    id: gradientId, x1: 0, y1: 0, x2: 0, y2: 1,
+  });
+  gradient.append(
+    svgElement("stop", { offset: "0%", "stop-color": "#cfe08f", "stop-opacity": "0.75" }),
+    svgElement("stop", { offset: "55%", "stop-color": "#e8b45a", "stop-opacity": "0.78" }),
+    svgElement("stop", { offset: "100%", "stop-color": "#d4503f", "stop-opacity": "0.82" })
+  );
+  const defs = svgElement("defs", {});
+  defs.append(gradient);
+  chart.append(defs);
 
+  let bandDrawn = false;
+  for (const [index, piece] of segments.entries()) {
+    const fullGrams = piece.full;
+    const dryGrams = piece.dry;
+    const thirstyGrams = piece.thirsty;
+    if (fullGrams == null || dryGrams == null || fullGrams <= dryGrams) continue;
+    bandDrawn = true;
+    const left = x(piece.from);
+    const span = Math.max(0, x(piece.to) - left);
+    // Thirsty outside the range would paint a band taller than the pot.
+    const refill = thirstyGrams != null && thirstyGrams < fullGrams
+                   && thirstyGrams > dryGrams ? thirstyGrams : null;
     const comfortableTo = refill ?? dryGrams;
+    // Only the stretch reaching today is labelled: a label on each
+    // would stack them on top of one another at the change.
+    const last = index === segments.length - 1;
+    // Beside its own stretch where there is room, and shifted left
+    // where there is not. A repot an hour ago leaves the newest
+    // stretch a few pixels wide, and a label hung off its left edge
+    // would sit past the end of the chart.
+    const labelX = Math.max(plot.left + 4,
+                            Math.min(left + 4, width - plot.right - 190));
     chart.append(
       svgElement("rect", {
-        class: "trend-cycle", x: plot.left, width: plotWidth,
+        class: "trend-cycle", x: left, width: span,
         y: y(fullGrams), height: Math.max(0, y(comfortableTo) - y(fullGrams)),
       }),
       svgElement("line", {
-        class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right,
+        class: "trend-cycle-edge", x1: left, x2: left + span,
         y1: y(fullGrams), y2: y(fullGrams),
-      }),
-      svgElement("text", {
-        class: "trend-cycle-label", x: plot.left + 4, y: y(fullGrams) + 12,
-        "text-anchor": "start",
-      }, `Full at ${showWeight(fullGrams)} g`)
+      })
     );
+    if (last) {
+      chart.append(svgElement("text", {
+        class: "trend-cycle-label", x: labelX, y: y(fullGrams) + 12,
+        "text-anchor": "start",
+      }, `Full at ${showWeight(fullGrams)} g`));
+    }
     if (refill != null) {
       chart.append(
         svgElement("rect", {
-          class: "trend-reserve", x: plot.left, width: plotWidth,
+          class: "trend-reserve", x: left, width: span,
           y: y(refill), height: Math.max(0, y(dryGrams) - y(refill)),
           fill: `url(#${gradientId})`,
         }),
         svgElement("line", {
-          class: "trend-refill", x1: plot.left, x2: width - plot.right,
+          class: "trend-refill", x1: left, x2: left + span,
           y1: y(refill), y2: y(refill),
-        }),
-        svgElement("text", {
-          class: "trend-refill-label", x: plot.left + 4, y: y(refill) - 4,
-          "text-anchor": "start",
-        }, `Thirsty at ${showWeight(refill)} g`)
+        })
       );
+      if (last) {
+        chart.append(svgElement("text", {
+          class: "trend-refill-label", x: labelX, y: y(refill) - 4,
+          "text-anchor": "start",
+        }, `Thirsty at ${showWeight(refill)} g`));
+      }
     }
-    chart.append(
-      svgElement("line", {
-        class: "trend-dry", x1: plot.left, x2: width - plot.right,
-        y1: y(dryGrams), y2: y(dryGrams),
-      }),
-      svgElement("text", {
-        class: "trend-dry-label", x: plot.left + 4, y: y(dryGrams) - 4,
+    chart.append(svgElement("line", {
+      class: "trend-dry", x1: left, x2: left + span,
+      y1: y(dryGrams), y2: y(dryGrams),
+    }));
+    if (last) {
+      chart.append(svgElement("text", {
+        class: "trend-dry-label", x: labelX, y: y(dryGrams) - 4,
         "text-anchor": "start",
       }, weight.dry_stated
         ? `Dry at ${showWeight(dryGrams)} g`
           + (weight.lightest && weight.lightest.grams < dryGrams
             ? ` \u00b7 weighed ${showWeight(weight.lightest.grams)} g once`
             : "")
-        : `Driest seen ${showWeight(dryGrams)} g`)
+        : `Driest seen ${showWeight(dryGrams)} g`));
+    }
+  }
+  // Why the bands step.
+  //
+  // Without it the chart shows a pot that changed size for no stated
+  // reason, and the step reads as a weighing nobody can explain.
+  for (const event of selectedPlant?.care_log || []) {
+    if (event.kind !== "repotting") continue;
+    const at = Date.parse(event.detected_at);
+    if (!Number.isFinite(at) || at < startTime || at > endTime) continue;
+    const where = x(at);
+    chart.append(
+      svgElement("line", {
+        class: "trend-repot", x1: where, x2: where,
+        y1: plot.top, y2: plot.top + plotHeight,
+      }),
+      // To the left of the line: a repot is usually the newest thing
+      // on the chart, and a label hung off its right would run out
+      // past the edge.
+      svgElement("text", {
+        class: "trend-repot-label", x: where - 5, y: plot.top + 10,
+        "text-anchor": "end",
+      }, "Repotted")
     );
-  } else if (weight.full) {
+  }
+
+  if (!bandDrawn && weight.full) {
     chart.append(
       svgElement("line", {
         class: "trend-cycle-edge", x1: plot.left, x2: width - plot.right,
@@ -8675,6 +8840,7 @@ async function setPlantAnchors() {
       return;
     }
     if (!changed.length) {
+      anchorsEdited = false;
       setText(message, "Saved.");
       await refreshPlant();
       return;
@@ -8704,16 +8870,34 @@ async function setPlantAnchors() {
   const which = list.length > 1
     ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]} weights set`
     : `${list[0]} weight set`;
+  anchorsEdited = false;
   setText(message, saved.includes("watered")
     ? `${which} \u2014 a reference, not a watering. Weigh the pot after watering to record one.`
     : `${which}.`);
   await refreshPlant();
 }
 
+/* What has been typed into the anchor row and not yet saved.
+ *
+ * Holding a field only while it has focus was not enough: letting go
+ * of it to reach for Set is a blur, and the poll a second later put
+ * the stored number back over what had been typed. Set then found
+ * nothing had changed, so a new Dry at simply vanished.
+ */
+let anchorsEdited = false;
+let anchorsFor = null;
+
 /* The anchor fields show what the plant currently believes, so correcting one
  * means editing a number rather than remembering it. */
 function fillPlantAnchorFields() {
   const weight = (selectedPlant && selectedPlant.weight) || {};
+  // A different plant is a different set of numbers, and nothing
+  // typed about the last one should follow it here.
+  if (anchorsFor !== selectedPlant?.plant_id) {
+    anchorsFor = selectedPlant?.plant_id;
+    anchorsEdited = false;
+  }
+  if (anchorsEdited) return;
   const fields = [
     ["plant-weight-full", weight.full],
     ["plant-weight-thirsty", weight.thirsty],
@@ -8788,7 +8972,13 @@ async function recordPlantCare(kind) {
 async function askAboutWeighing(grams) {
   const previous = plantWeightPoints().at(-1)?.grams;
   if (previous == null) return { kind: "reading" };
-  const change = grams - previous;
+  // Net against net. What is typed includes whatever else is on the
+  // scale; what is stored does not. Comparing the two made every
+  // weighing look like a gain the size of the offset, so the
+  // question was asked every single time.
+  const offset = selectedPlant?.weight_offset_grams || 0;
+  const net = grams - offset;
+  const change = net - previous;
   const dialog = document.getElementById("weighing-question");
   const title = document.getElementById("weighing-question-title");
   const detail = document.getElementById("weighing-question-detail");
@@ -8802,14 +8992,18 @@ async function askAboutWeighing(grams) {
   }
 
   setText(title, heavier ? "That is a lot heavier" : "That is a lot lighter");
+  // Said in the weights that get stored, with the offset spelled out
+  // so the numbers on screen add up to what was typed.
+  const taken = offset ? ` (${showWeight(grams)} g less the ${showWeight(offset)} g `
+                       + "on the scale with it)" : "";
   setText(detail, heavier
-    ? `${showWeight(grams)} g is ${showWeight(change)} g more than the last `
-      + `weighing of ${showWeight(previous)} g. A pot does not gain that on `
-      + "its own, so it is usually a watering -- but a repotting or a top "
+    ? `${showWeight(net)} g${taken} is ${showWeight(change)} g more than the `
+      + `last weighing of ${showWeight(previous)} g. A pot does not gain that `
+      + "on its own, so it is usually a watering -- but a repotting or a top "
       + "dressing would look the same."
-    : `${showWeight(grams)} g is ${showWeight(-change)} g less than the last `
-      + `weighing of ${showWeight(previous)} g. A pot rarely loses that much `
-      + "at once, so this is usually a number typed wrong.");
+    : `${showWeight(net)} g${taken} is ${showWeight(-change)} g less than the `
+      + `last weighing of ${showWeight(previous)} g. A pot rarely loses that `
+      + "much at once, so this is usually a number typed wrong.");
   // Only the heavy case can be a watering. A pot that suddenly weighs
   // less was not watered, whatever else happened to it.
   setHidden(document.getElementById("weighing-question-watered"), !heavier);
@@ -8836,7 +9030,11 @@ function renderPlantWeightOffset() {
   const note = document.getElementById("plant-weight-offset-note");
   if (!field) return;
   const offset = selectedPlant?.weight_offset_grams || 0;
-  if (field !== document.activeElement) field.value = offset || "";
+  // Same row, same hole: not while it has focus, and not while
+  // anything in the row is waiting to be saved.
+  if (!anchorsEdited && field !== document.activeElement) {
+    field.value = offset || "";
+  }
   setText(note, offset
     ? `Weigh the whole thing and type that. ${offset} g comes off, and the `
       + "plant's own weight is kept. Typed anchors are not touched."
@@ -9399,6 +9597,12 @@ document.getElementById("plant-weight-schedule").addEventListener("change", asyn
     setText(message, error.message || "Could not save");
   }
 });
+for (const id of ["plant-weight-full", "plant-weight-thirsty",
+                  "plant-weight-dry", "plant-weight-offset"]) {
+  document.getElementById(id).addEventListener("input", () => {
+    anchorsEdited = true;
+  });
+}
 document.getElementById("plant-weight-set-anchors").addEventListener("click", setPlantAnchors);
 /* The label opens the picker by itself, which is one less thing to go wrong
  * than forwarding a click; the keyboard needs the forwarding, though, since a

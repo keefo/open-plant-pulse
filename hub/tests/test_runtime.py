@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -863,3 +864,101 @@ class RoomDetailTests(unittest.TestCase):
             self.store.delete_room(self.room)
         self.assertEqual(len(detail["plants"]), detail["plant_count"])
         self.assertIn(f"{detail['plant_count']} plant", str(caught.exception))
+
+
+class SensorFreshnessTests(unittest.TestCase):
+    """A reading is evidence that a sensor was heard.
+
+    last_seen_at is written when a device is first recognised and
+    then left alone -- the Zigbee service caches so a device that
+    talks constantly is not written on every frame. The column froze
+    at whenever the hub last started, and every sensor in the house
+    read "Not reporting" while its readings arrived on time.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.eui = "a4c13815bb584ebb"
+        self.sensor = f"zigbee-{self.eui}"
+        self.store.seen_zigbee_device(self.eui, "soil")
+        self.store.enroll_zigbee_device(self.eui, "aurea_soil")
+
+    def _row(self):
+        return [s for s in self.store.sensors() if s["sensor_id"] == self.sensor][0]
+
+    def test_a_recent_reading_makes_it_fresh(self) -> None:
+        long_ago = (datetime.now(timezone.utc) - timedelta(days=1)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                "UPDATE sensors SET last_seen_at = ? WHERE sensor_id = ?",
+                (long_ago, self.sensor))
+        self.store.record_soil_reading(self.sensor, 19.4, 73.0)
+        row = self._row()
+        self.assertEqual(row["freshness"], "fresh")
+        self.assertLess(row["seen_age_seconds"], 120)
+
+    def test_a_beacon_with_no_readings_still_counts(self) -> None:
+        """Which is why last_seen_at was used in the first place: a
+        sensor with no probe announces itself and measures nothing."""
+        self.assertEqual(self._row()["freshness"], "fresh")
+
+    def test_a_silent_sensor_is_still_stale(self) -> None:
+        long_ago = (datetime.now(timezone.utc) - timedelta(days=2)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                "UPDATE sensors SET last_seen_at = ? WHERE sensor_id = ?",
+                (long_ago, self.sensor))
+        self.assertEqual(self._row()["freshness"], "stale")
+
+
+class StatedAnchorsSurviveTheLimitTests(unittest.TestCase):
+    """Full, Thirsty and Dry are not trimmed with the weighings.
+
+    The page is sent a capped list of weight rows so it does not grow
+    forever. Anchors share the table, and an anchor older than the cap
+    fell off the end -- so the chart, which draws each stretch of time
+    with the anchors in force through it, lost the Thirsty line for
+    every week an October-stated Thirsty governed.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("marble queen")["plant_id"]
+
+    def test_an_old_anchor_is_sent_however_many_weighings_follow(self) -> None:
+        old = datetime.now(timezone.utc) - timedelta(days=60)
+        self.store.record_plant_weight(
+            self.plant, 390, kind="thirsty", observed=False,
+            at=old.isoformat())
+        # All of them newer than the anchor, so a cap of 30 counted
+        # over the whole table stops short of it. Counted backwards
+        # from now, because the store will not weigh a pot in the
+        # future.
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        for step in range(40):
+            self.store.record_plant_weight(
+                self.plant, 460 + step,
+                at=(now - timedelta(hours=6 * step + 1)).isoformat(),
+                detect_refill=False)
+
+        rows = self.store.plant_weights(self.plant, limit=30)
+        weighings = [row for row in rows if row["observed"]]
+        anchors = [row for row in rows if not row["observed"]]
+        self.assertEqual(len(weighings), 30, "the cap still caps the weighings")
+        self.assertEqual([(a["kind"], a["grams"]) for a in anchors],
+                         [("thirsty", 390)])
+
+    def test_every_anchor_comes_back_with_its_date(self) -> None:
+        """The chart reconstructs history from these, so each needs
+        its own row rather than only the newest winning."""
+        for at, grams in (("2026-10-12T05:13:02Z", 390),
+                          ("2026-11-03T04:09:12Z", 1000)):
+            self.store.record_plant_weight(
+                self.plant, grams, kind="thirsty", observed=False, at=at)
+
+        thirsty = [(row["at"], row["grams"])
+                   for row in self.store.plant_weights(self.plant, limit=1)
+                   if row["kind"] == "thirsty"]
+        self.assertEqual(len(thirsty), 2, thirsty)
