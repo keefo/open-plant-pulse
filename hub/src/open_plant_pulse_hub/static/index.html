@@ -1037,11 +1037,12 @@
         </div>
       </div>
       <output id="plant-photo-message" aria-live="polite"></output>
-      <div id="plant-photo-grid" class="photo-grid is-collapsed">
+      <div id="plant-photo-grid" class="photo-grid">
         <p class="care-log-empty">No photographs yet.</p>
       </div>
-      <!-- Only on a narrow screen, where the grid is one column and the
-           whole history pushes everything below it off the page. -->
+      <!-- The grid folds to a single row, so this unfolds it. Hidden
+           when a plant has no more photographs than fit in that row,
+           since there would be nothing to unfold. -->
       <button id="plant-photo-more" class="secondary-action photo-more" type="button" hidden></button>
     </section>
 

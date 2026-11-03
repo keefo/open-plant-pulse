@@ -1210,15 +1210,17 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .field-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .field-head .field-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The photographs collapse to the newest one on a phone, where the grid
-   is a single column and a year of pictures pushes every other section
-   off the screen. Wider than this they sit side by side and all show,
-   so the button is not offered at all. */
-.photo-more { display: none; margin-top: 12px; }
-@media (max-width: 560px) {
-  .photo-grid.is-collapsed > .photo-tile:nth-of-type(n + 2) { display: none; }
-  .photo-more { display: inline-block; width: 100%; text-align: center; }
-}
+/* The photographs fold down to one row, at every width. A year of
+   pictures pushes every other section off the screen on a phone and
+   buries the charts on a desktop; the difference is only how many
+   fit in a row before it happens.
+
+   No count is written down. The grid is auto-fill at 200px, so the
+   number in a row changes with the width, and the script asks the
+   grid how many columns it ended up with. A phone's single column
+   folds to one photograph without that being a rule anybody wrote. */
+.photo-tile.is-folded { display: none; }
+.photo-more { display: inline-block; width: 100%; margin-top: 12px; text-align: center; }
 /* The two things that may have happened at the pot, kept together: the
    row around them wraps, and split across two lines they stop reading as
    one question about this weighing. */

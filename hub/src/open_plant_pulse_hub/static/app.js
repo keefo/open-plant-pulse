@@ -7186,12 +7186,34 @@ function describeSpan(milliseconds) {
 function renderPlantPhotos() {
   const grid = document.getElementById("plant-photo-grid");
   if (grid === null) return;
-  setClass(grid, "is-collapsed", !photosExpanded);
+  /* One row of them, which is however many columns the grid made.
+   *
+   * The grid is auto-fill, so the count is a question about the
+   * width and the stylesheet has already answered it -- asking for
+   * the tracks it laid out beats keeping breakpoints here that
+   * would have to be changed in step with the ones over there. A
+   * phone gets one column and so one photograph, without that
+   * being a rule of its own.
+   */
+  const columns = getComputedStyle(grid).gridTemplateColumns
+    .split(" ").filter(Boolean).length;
+  // A grid nobody has laid out yet -- the section is hidden, or the
+  // page has not drawn -- reports no tracks at all.
+  const shown = Math.max(1, columns);
+  // Run again once the tiles have been built below: on the render
+  // that builds them this grid is still empty, and folding them a
+  // poll later is a flash of the whole year of pictures.
+  const fold = () => [...grid.children].forEach((tile, index) => {
+    setClass(tile, "is-folded", !photosExpanded && index >= shown);
+  });
+  fold();
   const more = document.getElementById("plant-photo-more");
   if (more) {
-    setHidden(more, plantPhotos.length < 2);
-    setText(more, photosExpanded ? "Show fewer"
-      : `Show all ${plantPhotos.length} photographs`);
+    // Nothing to unfold, nothing to ask: a button that says "Show
+    // all 5" and then shows the same five is worse than no button.
+    setHidden(more, plantPhotos.length <= shown);
+    setText(more, photosExpanded
+      ? "Show fewer" : `Show all ${plantPhotos.length} photographs`);
   }
   const follows = document.getElementById("plant-cover-follows");
   if (follows !== null && follows.checked !== coverFollowsLatest) {
@@ -7276,6 +7298,7 @@ function renderPlantPhotos() {
     tile.append(link, caption);
     grid.append(tile);
   }
+  fold();
 }
 
 /* A button that is a picture.
