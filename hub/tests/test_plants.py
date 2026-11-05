@@ -2380,6 +2380,13 @@ class ASuddenGainIsAWateringTests(unittest.TestCase):
             "%Y-%m-%dT%H:%M:%SZ")
         self.store.record_plant_weight(self.plant, grams, at=at, source=source)
 
+    def _weigh_seconds(self, grams: int, seconds_ago: int,
+                       source: str = "manual") -> None:
+        """Seconds apart, which is how a lift-and-replace arrives."""
+        at = (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_plant_weight(self.plant, grams, at=at, source=source)
+
     def _kinds(self):
         return [row["kind"] for row in self.store.plant_weights(self.plant)]
 
@@ -2402,16 +2409,27 @@ class ASuddenGainIsAWateringTests(unittest.TestCase):
         self._weigh(712, 200)
         self.assertEqual(self._kinds()[0], "reading")
 
-    def test_a_scales_own_reading_is_never_promoted(self) -> None:
+    def test_a_pot_put_back_on_the_scale_is_not_a_watering(self) -> None:
         """A pot put back on the scale gains its whole weight at once.
 
-        That is the biggest jump of all and not a drop of water, which
-        is why only a weighing somebody took can be promoted.
+        That is the biggest jump of all and not a drop of water. It
+        used to be answered by refusing to promote anything a scale
+        weighed, which also threw away every watering the scale saw --
+        on the one plant that weighs itself, the hub noticed none of
+        them. What marks a lift is not the size of the gain but where
+        it lands: a pot coming back arrives at a weight it held
+        moments ago.
         """
-        self._weigh(700, 300, source="scale")
-        self._weigh(100, 200, source="scale")
-        self._weigh(700, 100, source="scale")
+        self._weigh_seconds(700, 90, source="scale")
+        self._weigh_seconds(100, 60, source="scale")
+        self._weigh_seconds(700, 30, source="scale")
         self.assertEqual(self._kinds()[0], "reading")
+
+    def test_a_watering_the_scale_weighed_is_a_watering(self) -> None:
+        self._weigh(700, 300, source="scale")
+        self._weigh(540, 200, source="scale")
+        self._weigh(760, 100, source="scale")
+        self.assertEqual(self._kinds()[0], "watered")
 
 
 class WaterLeftIsMeasuredFromDryTests(unittest.TestCase):

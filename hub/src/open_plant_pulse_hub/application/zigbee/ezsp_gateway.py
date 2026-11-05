@@ -467,11 +467,57 @@ class EzspGateway:
         # Resuming is the common case and the one that must be quiet: a
         # gateway that formed a fresh network on every start would hand
         # out a new key and orphan every device each time.
-        self._app = await ControllerApplication.new(
-            settings, auto_form=True, start_radio=True)
+        self._app = await self._radio_that_hears_the_scale(
+            ControllerApplication).new(
+                settings, auto_form=True, start_radio=True)
         self._app.add_listener(self)
         LOG.info("Zigbee dongle ready on %s", self._port)
         self._ready.set()
+
+    @staticmethod
+    def _radio_that_hears_the_scale(base):
+        """The radio, told to listen on the endpoint the scale uses.
+
+        A frame only reaches us if the chip has been told about the
+        endpoint it is addressed to. zigpy registers endpoint 1 and
+        nothing else, so the scale -- which talks on 10, and said so
+        in its own firmware long before this gateway existed -- was
+        dropped inside the radio: no error, no unparsed frame, no
+        counter. Only a silence that reads like a flat battery.
+
+        Registered by overriding register_endpoints rather than
+        calling add_endpoint afterwards, because the chip takes
+        endpoints while the stack is coming up and the call is a
+        coroutine. Asked for later, and unawaited, it does nothing at
+        all -- which is exactly what happened on the first attempt at
+        this, right down to a log line announcing success.
+
+        The older gateway did this in C on the coordinator chip. When
+        the coordinator moved in here the sending side came with it
+        and the listening side did not, and the scale fell silent the
+        next morning.
+        """
+        import zigpy.zdo.types as zdo_types
+        from .network import SCALE_CLUSTER, SCALE_ENDPOINT
+
+        class HearsTheScale(base):
+            async def register_endpoints(self) -> None:
+                await super().register_endpoints()
+                await self.add_endpoint(zdo_types.SimpleDescriptor(
+                    endpoint=SCALE_ENDPOINT,
+                    profile=HOME_AUTOMATION_PROFILE,
+                    # What the endpoint calls itself. Nothing here reads
+                    # it; the endpoint number and cluster decide whether
+                    # a frame arrives.
+                    device_type=0x0302,
+                    device_version=0,
+                    input_clusters=[SCALE_CLUSTER],
+                    output_clusters=[SCALE_CLUSTER],
+                ))
+                LOG.info("zigbee: listening on endpoint %d for cluster 0x%04x",
+                         SCALE_ENDPOINT, SCALE_CLUSTER)
+
+        return HearsTheScale
 
     def _call(self, work) -> None:
         app, loop = self._app, self._loop

@@ -351,6 +351,24 @@ static void handle_line(char *line)
         } else {
             remote_log("!!! Could not set the weight: HX711 read timed out");
         }
+    } else if (line[0] == 'J') {
+        // Rejoin with the radio to itself.
+        //
+        // Plain "j" leaves and looks again, which is enough when Zigbee
+        // has the radio. It is not enough with Wi-Fi up: the search
+        // finds no network at all, because the receiver is off between
+        // exchanges and the beacons arrive while it is not listening.
+        // This stands Wi-Fi down for the length of the attempt and the
+        // firmware puts it back on a timer either way.
+#if CONFIG_SCALE_ZIGBEE
+        void remote_wifi_quiet_for_join(uint32_t seconds);
+        void zigbee_rejoin(void);
+        uint32_t secs = (uint32_t)strtoul(line + 1, NULL, 10);
+        remote_wifi_quiet_for_join(secs ? secs : 150);
+        zigbee_rejoin();
+#else
+        remote_log("!!! This build has no Zigbee");
+#endif
     } else if (line[0] == 'j') {
 #if CONFIG_SCALE_ZIGBEE
         void zigbee_rejoin(void);

@@ -535,6 +535,76 @@ const char *remote_hostname(void)
 void zigbee_share_radio_with_wifi(bool wifi_on);
 #endif
 
+static esp_timer_handle_t s_wifi_back_timer;
+
+// Put Wi-Fi back, whatever became of the join.
+//
+// On a timer nothing cancels, because the one way this must not end
+// is with both ways in shut. The board may be somewhere a hand cannot
+// reach, and "send w 1 over Zigbee" is no help when Zigbee is the
+// thing being repaired.
+static void wifi_back(void *arg)
+{
+    (void)arg;
+    if (!s_wifi_on) return;          // somebody turned it off meaning it
+    if (esp_wifi_start() != ESP_OK) {
+        // Out of options in software. A restart comes up on the saved
+        // preference, which is Wi-Fi on.
+        remote_log("!!! Wi-Fi would not restart; rebooting to get it back");
+        esp_restart();
+    }
+    web_server_start();
+#if CONFIG_SCALE_ZIGBEE
+    zigbee_share_radio_with_wifi(true);
+#endif
+    remote_log(">>> Wi-Fi back");
+}
+
+// Stand Wi-Fi down for a moment so Zigbee can hear itself join.
+//
+// One radio serves both. Sending a report is a blink of transmit and
+// survives the sharing; joining is a conversation, and a receiver
+// that is off between exchanges misses the half that comes back --
+// which is how a scale reports for days and still cannot rejoin.
+//
+// Nothing here is saved. The stored preference stays "on", so a crash
+// or a power cut comes back on Wi-Fi, and the timer above brings it
+// back even when the join fails. The window is the whole of the risk,
+// and it is minutes long and closes itself.
+void remote_wifi_quiet_for_join(uint32_t seconds)
+{
+    if (seconds < 30) seconds = 30;
+    if (seconds > 600) seconds = 600;
+    if (!s_wifi_on) {
+        remote_log(">>> Wi-Fi is already off; nothing to stand down");
+        return;
+    }
+    if (!s_wifi_back_timer) {
+        const esp_timer_create_args_t args = {.callback = wifi_back,
+                                              .name = "wifi_back"};
+        if (esp_timer_create(&args, &s_wifi_back_timer) != ESP_OK) {
+            remote_log("!!! No timer to bring Wi-Fi back with; not risking it");
+            return;
+        }
+    }
+    esp_timer_stop(s_wifi_back_timer);
+    // Armed before the radio goes, so there is never an instant where
+    // Wi-Fi is down and nothing is due to restore it.
+    if (esp_timer_start_once(s_wifi_back_timer,
+                             (uint64_t)seconds * 1000000ULL) != ESP_OK) {
+        remote_log("!!! Could not arm the timer; leaving Wi-Fi alone");
+        return;
+    }
+    remote_log(">>> Standing Wi-Fi down for %lus so Zigbee can join",
+               (unsigned long)seconds);
+    web_server_stop();
+    esp_wifi_stop();
+    s_sta_state = "quiet for zigbee";
+#if CONFIG_SCALE_ZIGBEE
+    zigbee_share_radio_with_wifi(false);
+#endif
+}
+
 void remote_set_wifi(bool on)
 {
     if (on == s_wifi_on) {

@@ -516,17 +516,101 @@ class SoilProbeDriver:
     subject = "plant"
 
     # datapoint -> what it is, and what to multiply the raw number by.
+    #
+    # Moisture is datapoint 3, and the probe says the same number on the
+    # standard humidity cluster below. It used to be read off datapoint
+    # 109, on the strength of a note that 109 "rose as the soil took up
+    # water" -- which it does, because watering a plant raises whatever
+    # 109 is along with everything else nearby. Put to the question,
+    # 109 held 61-70 through damp soil, a glass of water, open air and
+    # a wet cloth, while 3 went 0 in air, 52-60 in a damp cloth and
+    # 57-62 submerged. What 109 measures is still nobody's idea; it is
+    # not the soil.
     DATAPOINTS = {
         5: ("soil_temperature_c", 0.1),
-        109: ("moisture_percent", 1),
+        3: ("moisture_percent", 1),
         15: ("batt_pct", 1),
+    }
+
+    # The settings the probe keeps, as datapoints like its readings.
+    #
+    # name -> (datapoint, what a raw unit is worth, the range it takes).
+    # Established by asking this probe for everything it has and
+    # reading back what it answered; the numbers agree with what
+    # zigbee2mqtt publishes for the same hardware, which is a second
+    # opinion rather than the source.
+    SETTINGS = {
+        "soil_sampling": (112, 1, (5, 3600), "s"),
+        "temperature_sampling": (111, 1, (5, 3600), "s"),
+        "soil_warning": (110, 1, (0, 100), "%"),
+        "soil_calibration": (102, 1, (-30, 30), "%"),
+        "humidity_calibration": (105, 1, (-30, 30), "%"),
+        "temperature_calibration": (104, 0.1, (-2, 2), "\u00b0C"),
+    }
+
+    # Everything the probe has ever been seen to send, named where the
+    # name is known. The debug list shows the rest by number rather
+    # than hiding them: a datapoint nobody has explained is exactly
+    # the one worth watching while doing something to the device.
+    KNOWN_POINTS = {
+        3: "soil moisture (also on the 0x0405 cluster)",
+        5: "temperature x10",
+        9: "unexplained",
+        15: "battery %",
+        102: "soil_calibration",
+        104: "temperature_calibration x10",
+        105: "humidity_calibration",
+        106: "temperature_unit",
+        107: "soil_moisture on other makers\u0027 firmware; never seen here",
+        109: "unexplained -- held 61-70 through soil, water, air and cloth",
+        110: "soil_warning",
+        111: "temperature_sampling",
+        112: "soil_sampling",
     }
 
     @classmethod
     def payload_for(cls, command: str) -> bytes:
-        """Asks for everything. There is nothing to tell a probe."""
-        if command.strip().lower() not in ("state", "datapoints"):
-            raise ValueError(f"a soil probe only answers questions, not {command!r}")
+        """Asks for everything, or sets one numbered setting.
+
+        The probe's settings are datapoints like its readings are, so
+        telling it how often to sample the soil is writing a number to
+        a number: "set 112 5". Spelled that way rather than given names
+        because which number means what is still being established on
+        this maker's firmware, and a name would claim to know.
+        """
+        words = command.strip().lower().split()
+        if words and words[0] == "set":
+            if len(words) != 3:
+                raise ValueError("set wants a setting and a value: set soil_sampling 5")
+            named = cls.SETTINGS.get(words[1])
+            if named is not None:
+                point, scale, (low, high), _unit = named
+                try:
+                    asked = float(words[2])
+                except ValueError as error:
+                    raise ValueError(f"{words[1]} takes a number") from error
+                if not low <= asked <= high:
+                    raise ValueError(f"{words[1]} takes {low} to {high}")
+                value = int(round(asked / scale))
+            else:
+                try:
+                    point, value = int(words[1]), int(words[2])
+                except ValueError as error:
+                    raise ValueError(
+                        f"no setting called {words[1]!r}, and it is not a datapoint number"
+                    ) from error
+            if not 0 <= point <= 255:
+                raise ValueError("a datapoint is one byte")
+            # Tuya's write: command 0, its own two-byte sequence, then
+            # the datapoint, its type (2 is a four-byte integer), and
+            # the value's length.
+            return (bytes([0x01, next(_SEQUENCE) & 0xFF, 0x00])
+                    + (next(_SEQUENCE) & 0xFFFF).to_bytes(2, "big")
+                    + bytes([point, 0x02])
+                    + (4).to_bytes(2, "big")
+                    + value.to_bytes(4, "big", signed=value < 0))
+        if words and words[0] not in ("state", "datapoints"):
+            raise ValueError(f"a soil probe answers questions and takes settings, not {command!r}")
         return bytes([0x01, next(_SEQUENCE) & 0xFF, 0x03])
 
     @classmethod
@@ -539,14 +623,46 @@ class SoilProbeDriver:
             if attributes and 0x0000 in attributes:
                 return {"soil_temperature_c": round(attributes[0x0000] * 0.01, 2)}
             return None
+        if int(cluster) == HUMIDITY_CLUSTER:
+            # The soil's moisture, on the cluster meant for air.
+            #
+            # There is no standard cluster for soil moisture, so these
+            # probes borrow the humidity one, and this frame carries
+            # the same number datapoint 3 does. Reading the cluster's
+            # name rather than watching the value is how this was
+            # thrown away as "the air humidity, which a soil probe has
+            # no business reporting" while the real measurement went
+            # in the bin and datapoint 109 was recorded in its place.
+            attributes = zcl_attributes(payload)
+            if attributes and 0x0000 in attributes:
+                return {"moisture_percent": round(attributes[0x0000] * 0.01, 1)}
+            return None
         values: Dict[str, object] = {}
+        by_point = {point: name for name, (point, _s, _r, _u)
+                    in cls.SETTINGS.items()}
         for point, raw in tuya_datapoints(payload).items():
+            # A setting the probe is telling us about. Carried under its
+            # own prefix so a setting is never mistaken for a reading,
+            # and so the page can show what the device last confirmed
+            # rather than what it was last asked for.
+            setting = by_point.get(point)
+            if setting is not None:
+                scale = cls.SETTINGS[setting][1]
+                values[f"setting:{setting}"] = (
+                    round(raw * scale, 2) if scale != 1 else raw)
+                continue
             known = cls.DATAPOINTS.get(point)
             if known is None:
                 continue
             name, scale = known
             values[name] = round(raw * scale, 2) if scale != 1 else raw
         return values or None
+
+
+# What each of the soil probe's datapoints is, for the debug list.
+# Lifted off the driver so the service can label a frame without
+# knowing which driver it came from.
+SOIL_POINT_NAMES = dict(SoilProbeDriver.KNOWN_POINTS)
 
 
 class TuyaDriver:

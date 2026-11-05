@@ -240,6 +240,21 @@ def create_server(
                     "days": span,
                     "points": store.battery_history(row["sensor_id"], since),
                 })
+            elif path == "/api/zigbee/device":
+                # One device, in the detail its own page needs: the
+                # settings it has confirmed and the frames it lately
+                # sent. Separate from the list because a list of every
+                # device carrying eighty frames each would be most of
+                # a megabyte to draw a dozen rows.
+                eui = (parse_qs(request.query).get("eui") or [""])[0]
+                if not zigbee or not eui:
+                    self._send_json({"settings": [], "waiting": [],
+                                     "frames": []})
+                    return
+                detail = dict(zigbee.settings(eui))
+                detail["frames"] = zigbee.frames(eui)
+                detail["eui"] = eui
+                self._send_json(detail)
             elif path == "/api/zigbee":
                 # One call for the whole panel. Whether the gateway is there
                 # and what it knows are separate questions: an unplugged
@@ -304,6 +319,13 @@ def create_server(
                 path == page or path.startswith(page + "/") for page in APPLICATION_PAGES
             ):
                 self._send_file("index.html", "text/html; charset=utf-8")
+            elif path == "/monstera.svg":
+                self._send_file("monstera.svg", "image/svg+xml")
+            elif path == "/apple-touch-icon.png":
+                # iOS wants a PNG and will not read the SVG one. Asked
+                # for by name at the site root by older iOS even when
+                # the page says where it is, so it answers on both.
+                self._send_file("apple-touch-icon.png", "image/png")
             elif path == "/app.css":
                 self._send_file("app.css", "text/css; charset=utf-8")
             elif path == "/app.js":
@@ -832,6 +854,21 @@ def create_server(
                         eui,
                         None if seconds in (None, "", "default") else int(seconds),
                         payload.get("sensitivity") or None)
+                elif path == "/api/zigbee/config":
+                    if not zigbee:
+                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")
+                        return
+                    eui = str(payload.get("eui", ""))
+                    name = str(payload.get("setting", ""))
+                    if not eui or not name or payload.get("value") is None:
+                        self.send_error(HTTPStatus.BAD_REQUEST,
+                                        "eui, setting and value are required")
+                        return
+                    try:
+                        result = zigbee.configure(eui, name, float(payload["value"]))
+                    except ValueError as error:
+                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
+                        return
                 elif path == "/api/zigbee/command":
                     if not zigbee:
                         self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No Zigbee gateway")

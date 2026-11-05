@@ -712,9 +712,9 @@ class ZigbeeSoilProbeTests(unittest.TestCase):
         self.service = ZigbeeService(self.store, _SilentRadio())
 
     def test_a_tuya_frame_becomes_a_soil_reading(self) -> None:
-        # Datapoint 5 is the temperature in tenths, 109 the moisture.
+        # Datapoint 5 is the temperature in tenths, 3 the moisture.
         for frame in ("095502005505020004000000e1",      # 225 -> 22.5 C
-                      "09560200566d02000400000046"):   # dp 109 -> 70 %
+                      "09560200560302000400000046"):   # dp 3 -> 70 %
             self.service._reading(Reading(
                 eui=self.eui, kind="frame",
                 values={"cluster": 0xEF00, "endpoint": 1,
@@ -724,6 +724,44 @@ class ZigbeeSoilProbeTests(unittest.TestCase):
         moist = [r for r in rows if r["moisture_percent"] is not None]
         self.assertEqual(soil[0]["soil_temperature_c"], 22.5)
         self.assertEqual(moist[0]["moisture_percent"], 70)
+
+    def test_the_moisture_is_read_off_the_humidity_cluster_too(self) -> None:
+        """The probe says it twice, and both are the soil.
+
+        There is no standard cluster for soil moisture, so the probe
+        borrows the one meant for air. Reading the cluster by its name
+        rather than watching the value is how this frame was discarded
+        as "the air humidity, which a soil probe has no business
+        reporting".
+        """
+        self.service._reading(Reading(
+            eui=self.eui, kind="frame",
+            values={"cluster": 0x0405, "endpoint": 1,
+                    # 5700 hundredths -> 57.0 %, as the probe sent while
+                    # its blades were standing in a glass of water.
+                    "payload": bytes.fromhex("18840a0000214416")}))
+        rows = [row["reading"] for row in self.store.history(self.sensor_id)]
+        moist = [r for r in rows if r["moisture_percent"] is not None]
+        self.assertEqual(moist[0]["moisture_percent"], 57.0)
+
+    def test_datapoint_109_is_not_the_moisture(self) -> None:
+        """It was read as the moisture, and it is not.
+
+        The mapping came from a note that 109 "rose as the soil took up
+        water", which it does -- watering a plant raises whatever 109 is
+        along with everything else nearby. Put to the question it held
+        61-70 through damp soil, a glass of water, open air and a wet
+        cloth, while the real measurement swung 0 to 62 across the same
+        four. What 109 measures is still nobody's idea; it is not the
+        soil, and recording it as the soil made every moisture figure
+        in the hub wrong.
+        """
+        self.service._reading(Reading(
+            eui=self.eui, kind="frame",
+            values={"cluster": 0xEF00, "endpoint": 1,
+                    "payload": bytes.fromhex("09560200566d02000400000046")}))
+        rows = [row["reading"] for row in self.store.history(self.sensor_id)]
+        self.assertEqual([r for r in rows if r["moisture_percent"] is not None], [])
 
     def test_the_probe_reports_no_air(self) -> None:
         """It is in a pot. A missing air number must read as absent."""
@@ -962,3 +1000,117 @@ class StatedAnchorsSurviveTheLimitTests(unittest.TestCase):
                    for row in self.store.plant_weights(self.plant, limit=1)
                    if row["kind"] == "thirsty"]
         self.assertEqual(len(thirsty), 2, thirsty)
+
+
+class WateringSeenByTheScaleTests(unittest.TestCase):
+    """A watering the scale weighed is still a watering.
+
+    Two rules each hid one. The threshold was a share of the pot, so a
+    13 kg pot had to gain more than a litre before anything was
+    noticed; and scale weighings were excluded outright, because a pot
+    lifted off and put back reads as a gain of the whole pot.
+
+    The second is a real hazard and is answered directly: a gain is
+    measured against the pot's recent high, so a return to where it
+    was is not a gain at all.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("white bird")["plant_id"]
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def _weigh_seconds(self, grams: int, seconds_ago: int,
+                       source: str = "scale") -> str:
+        at = (self.now - timedelta(seconds=seconds_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_plant_weight(
+            self.plant, grams, at=at, source=source)
+        return self.store.plant_weights(self.plant, limit=1)[0]["kind"]
+
+    def _weigh(self, grams: int, minutes_ago: int, source: str = "scale") -> str:
+        at = (self.now - timedelta(minutes=minutes_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        self.store.record_plant_weight(
+            self.plant, grams, at=at, source=source)
+        return self.store.plant_weights(self.plant, limit=1)[0]["kind"]
+
+    def test_a_watering_on_a_heavy_pot_is_noticed(self) -> None:
+        """694 g into 13 kg: 5 % of the pot, and unmistakable."""
+        self._weigh(13463, 120)
+        self._weigh(13289, 60)
+        self.assertEqual(self._weigh(13983, 1), "watered")
+
+    def test_the_pot_going_back_on_the_scale_is_not_a_watering(self) -> None:
+        """Lifted off, read as nearly nothing, put back.
+
+        Seconds apart, because the scale reports every half minute and
+        this is how long it takes to pick a pot up and set it down.
+        """
+        self._weigh_seconds(13463, 90)
+        self._weigh_seconds(10930, 60)
+        self.assertEqual(self._weigh_seconds(13463, 30), "reading")
+
+    def test_a_pot_watered_after_an_afternoon_of_drying_still_counts(self) -> None:
+        """The settling window must not swallow a real watering.
+
+        A pot at 700 g that dries to 540 g over the afternoon and is
+        then watered to 760 g has gained 220 g of water, even though
+        it was heavier than that this morning.
+        """
+        self._weigh(700, 300)
+        self._weigh(540, 200)
+        self.assertEqual(self._weigh(760, 100), "watered")
+
+    def test_drift_between_readings_is_not_a_watering(self) -> None:
+        """This scale wanders by a few tens of grams across a day."""
+        self._weigh(13420, 180)
+        self._weigh(13438, 120)
+        self.assertEqual(self._weigh(13463, 60), "reading")
+
+    def test_a_small_pot_is_unaffected(self) -> None:
+        """The smallest real watering here was 179 g."""
+        self._weigh(546, 60)
+        self.assertEqual(self._weigh(753, 1), "watered")
+
+
+class RemovingASensorKeepsWhatHappenedTests(unittest.TestCase):
+    """A sensor is an instrument. The care log is the past.
+
+    Removing a sensor used to delete every care event of its plant --
+    not only the ones it recorded, but every watering, note and repot
+    from any source -- and then delete the plant itself if that was
+    its last sensor, which cascades to the weighings and the
+    photographs. A probe whose battery went flat took a year of the
+    plant with it.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("white bird")["plant_id"]
+        self.sensor = self.store.seen_zigbee_device(
+            "aabbccddeeff0011", "soil")["sensor_id"]
+        self.store.manage_sensor(
+            self.sensor, "probe", None, None, None, None, 600,
+            attach_to_plant_id=self.plant)
+
+    def test_the_plant_survives_losing_its_only_sensor(self) -> None:
+        self.store.record_plant_weight(self.plant, 13463)
+        self.store.delete_sensor(self.sensor)
+        self.assertIsNotNone(self.store.plant(self.plant),
+                             "the plant was deleted along with its sensor")
+        self.assertEqual(len(self.store.plant_weights(self.plant)), 1,
+                         "the weighings cascaded away with the plant")
+
+    def test_the_care_log_survives(self) -> None:
+        """A watering the hub noticed is still a watering afterwards."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        for grams, minutes in ((540, 200), (760, 100)):
+            self.store.record_plant_weight(
+                self.plant, grams,
+                at=(now - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        before = sorted(e["kind"] for e in self.store.care_log(50, plant_id=self.plant))
+        self.assertIn("watering", before)
+        self.store.delete_sensor(self.sensor)
+        after = sorted(e["kind"] for e in self.store.care_log(50, plant_id=self.plant))
+        self.assertEqual(after, before, "removing a sensor rewrote the plant's past")

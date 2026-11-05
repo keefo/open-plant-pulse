@@ -12,11 +12,12 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional
 
 from ..weights import WeightKeeper
 from .drivers import (DRIVERS, HUMIDITY_CLUSTER, IAS_ZONE_CLUSTER, ON_OFF_CLUSTER,
-                      TEMPERATURE_CLUSTER,
+                      SOIL_POINT_NAMES, TEMPERATURE_CLUSTER,
                       TUYA_CLUSTER, ZCL_HOUSEKEEPING, tuya_datapoints, zcl_command,
                       ScaleDriver,
                       battery_percent, battery_volts, decode_frame, subject_of)
@@ -89,6 +90,23 @@ class ZigbeeService:
         # by eui alone, a device first recorded as unknown could never
         # be corrected once the hub worked out what it was.
         self._recorded: Dict[str, str] = {}
+        # Every frame a device sent, lately, with what the hub made of
+        # it. Kept in memory and nowhere else: this is for watching a
+        # datapoint move while doing something to the device, which is
+        # a question asked over minutes, not a record worth keeping.
+        self._frames: Dict[str, Deque[Dict[str, Any]]] = {}
+        # What each device last told us its settings were, and when.
+        # A setting is shown as the device last confirmed it rather
+        # than as it was last asked for -- on a battery device those
+        # are very different claims.
+        self._settings: Dict[str, Dict[str, Any]] = {}
+        # Writes waiting for the device to wake.
+        #
+        # A battery probe sleeps and hears nothing most of the time, so
+        # a setting sent the moment somebody presses Save is usually
+        # sent into the dark. It waits here until the device is heard
+        # from, which is the one moment it is listening.
+        self._to_send: Dict[str, List[str]] = {}
         # Device and cluster pairs already reported as unreadable.
         self._unread: set = set()
         # Alarm devices already told yes, so one request gets one answer.
@@ -538,6 +556,127 @@ class ZigbeeService:
             "fresh": values.get("seq") != before,
         }
 
+    FRAMES_KEPT = 80
+
+    def _remember_frame(self, reading: Reading, kind: str,
+                        values: Optional[Dict[str, Any]]) -> None:
+        """What arrived, and what the hub made of it.
+
+        Both halves matter: a frame the hub read wrongly looks exactly
+        like a frame it read rightly unless the bytes are there beside
+        the answer.
+        """
+        payload = reading.values.get("payload") or b""
+        cluster = reading.values.get("cluster")
+        points = {}
+        if int(cluster or 0) == TUYA_CLUSTER:
+            try:
+                points = tuya_datapoints(payload)
+            except Exception:
+                points = {}
+        with self._lock:
+            kept = self._frames.setdefault(reading.eui,
+                                           deque(maxlen=self.FRAMES_KEPT))
+            kept.append({
+                "at": datetime.now(timezone.utc).isoformat()
+                      .replace("+00:00", "Z"),
+                "cluster": f"0x{int(cluster or 0):04x}",
+                "bytes": payload.hex(),
+                "datapoints": [
+                    {"point": point, "value": value,
+                     "name": SOIL_POINT_NAMES.get(point)}
+                    for point, value in sorted(points.items())
+                ],
+                "read_as": values or None,
+                "lqi": reading.lqi,
+            })
+            for name, value in (values or {}).items():
+                if not name.startswith("setting:"):
+                    continue
+                self._settings.setdefault(reading.eui, {})[name[8:]] = {
+                    "value": value,
+                    "at": datetime.now(timezone.utc).isoformat()
+                          .replace("+00:00", "Z"),
+                }
+
+    def frames(self, eui: str) -> List[Dict[str, Any]]:
+        """The last frames this device sent, newest first."""
+        with self._lock:
+            return list(reversed(self._frames.get(eui, ())))
+
+    def settings(self, eui: str) -> Dict[str, Any]:
+        """What the device last said its settings were.
+
+        Shaped for a page that has to be honest about a battery
+        device: every value carries when the device confirmed it, and
+        anything queued but not yet acknowledged is named separately.
+        """
+        driver = DRIVERS.get(self._kind_for(eui))
+        known = getattr(driver, "SETTINGS", None)
+        if not known:
+            return {}
+        with self._lock:
+            confirmed = dict(self._settings.get(eui, {}))
+            waiting = list(self._to_send.get(eui, ()))
+        return {
+            "settings": [
+                {
+                    "name": name,
+                    "value": confirmed.get(name, {}).get("value"),
+                    "confirmed_at": confirmed.get(name, {}).get("at"),
+                    "lowest": low, "highest": high, "unit": unit,
+                    "step": step,
+                }
+                for name, (_point, step, (low, high), unit) in known.items()
+            ],
+            "waiting": waiting,
+        }
+
+    def configure(self, eui: str, name: str, value: float) -> Dict[str, Any]:
+        """Queues a setting for the next time the device is listening.
+
+        Not sent now, because a battery probe is almost never awake:
+        the write goes out on the device's next frame, and the page
+        says it is waiting until the device reports the new value
+        back. Saying "saved" at the moment of asking would be a
+        guess, and a wrong one most of the time.
+        """
+        kind = self._kind_for(eui)
+        driver = DRIVERS.get(kind)
+        if not getattr(driver, "SETTINGS", None):
+            raise ValueError(f"{kind} devices have no settings to change")
+        command = f"set {name} {value}"
+        # Built now so a bad name or an out-of-range number is refused
+        # while somebody is still looking at the form.
+        driver.payload_for(command)
+        with self._lock:
+            queued = self._to_send.setdefault(eui, [])
+            # One pending value per setting: the last word wins.
+            queued[:] = [q for q in queued if not q.startswith(f"set {name} ")]
+            queued.append(command)
+        # It may be awake right now -- a save often follows a reading.
+        self._flush_to(eui, kind)
+        return self.settings(eui)
+
+    def _flush_to(self, eui: str, kind: str) -> None:
+        """Sends what was waiting, now that the device has been heard."""
+        with self._lock:
+            waiting = self._to_send.get(eui)
+            if not waiting:
+                return
+            going, self._to_send[eui] = list(waiting), []
+        for command in going:
+            try:
+                self.command(eui, command, kind=kind)
+            except Exception:
+                LOG.exception("could not send %s to %s", command, eui)
+        # Ask what it now thinks, so the page shows the device's answer
+        # rather than ours.
+        try:
+            self.command(eui, "datapoints", kind=kind)
+        except Exception:
+            pass
+
     def _note_unread(self, eui: str, cluster: Optional[int], payload: bytes) -> None:
         """Says once that a device sent something the hub cannot read.
 
@@ -770,6 +909,9 @@ class ZigbeeService:
             values = decode_frame(reading.values.get("cluster"),
                                   reading.values.get("payload") or b"",
                                   kind=kind)
+            self._remember_frame(reading, kind, values)
+            # It is awake, so anything queued for it goes now.
+            self._flush_to(reading.eui, kind)
             if values is None:
                 self._note_unread(reading.eui,
                                   reading.values.get("cluster"),

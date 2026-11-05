@@ -1463,3 +1463,29 @@ class PhotoFromAnIPhoneTests(unittest.TestCase):
             "const SENDABLE_PHOTO_TYPES = new Set([")[1].split("]")[0]))
         hub = set(re.findall(r'"(image/\w+)": "\.\w+"', self.photos))
         self.assertEqual(browser, hub)
+
+
+class AnchorsStatedInTheSameSecondTests(unittest.TestCase):
+    """Three Dry weights can share a timestamp to the second.
+
+    Somebody correcting a number twice over writes three rows with the
+    same `at`. The store settles that with `ORDER BY at DESC,
+    weight_id DESC`; the chart sorted on the timestamp alone, kept the
+    API's newest-first order for the ties, and so read them backwards
+    and took the first try instead of the final one.
+
+    On the white bird that made Dry 15900 -- the same as Full -- and a
+    band whose floor is its ceiling is no band, so the chart drew none
+    and showed a bare "Full at" line instead.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.app = (here / "app.js").read_text()
+
+    def test_the_sort_breaks_ties_on_the_row_id(self) -> None:
+        self.assertIn("one.at - two.at || one.id - two.id", self.app)
+
+    def test_the_row_id_is_carried_through(self) -> None:
+        """Sorting on an id it never read would be a no-op."""
+        self.assertIn("id: w.weight_id ?? 0", self.app)

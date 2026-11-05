@@ -282,9 +282,23 @@ class LightStoreTests(unittest.TestCase):
         self.store.set_light_schedule(
             "light-a", {"enabled": True, "on": "07:00", "off": "19:00"}
         )
+        plant_id = self.store.sensor(self.sensor_ids[0])["plant_id"]
+        # The sensor first, because a plant still wearing one refuses to
+        # go; then the plant itself, which is the thing under test. It
+        # used to be enough to delete the sensor, back when that took
+        # the plant with it.
         self.store.delete_sensor(self.sensor_ids[0])
+        self.store.delete_plant(plant_id)
         self.assertIsNone(self.store.light("light-a")["plant"])
         self.assertEqual(self.store.light_assignments(), {})
+
+    def test_the_lights_stay_when_only_the_sensor_goes(self):
+        """The plant is still there, so its lamps are still its own."""
+        self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})
+        self.store.set_plant_lighting(self.sensor_ids[0], ["light-a"])
+        plant_id = self.store.sensor(self.sensor_ids[0])["plant_id"]
+        self.store.delete_sensor(self.sensor_ids[0])
+        self.assertEqual(self.store.light("light-a")["plant"]["plant_id"], plant_id)
 
     def test_the_lights_survive_replacing_the_sensor(self):
         self.store.create_light("light-a", "Neewer", "neewer-gl1c", {})

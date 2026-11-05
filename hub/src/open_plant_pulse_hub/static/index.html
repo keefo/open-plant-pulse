@@ -4,11 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Plant Pulse</title>
+  <link rel="icon" href="/monstera.svg?v=2" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="Plants">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
   <nav class="household-nav" aria-label="Primary navigation">
-    <a class="brand" href="/">Open Plant Pulse</a>
+    <a class="brand" href="/">
+      <img class="brand-mark" src="/monstera.svg" alt="" aria-hidden="true" width="40" height="40">
+      <span class="brand-name">Open Plant Pulse</span>
+    </a>
     <div class="primary-links">
       <a id="fleet-link" class="nav-link" href="/">Plants</a>
       <a id="rooms-link" class="nav-link" href="/rooms">Rooms</a>
@@ -1640,6 +1646,42 @@
       </form>
     </section>
 
+
+    <!-- A soil probe keeps its settings as numbered datapoints, the same
+         way it sends its readings. Every one the probe answers for is
+         here; the fields are built from what the driver knows rather
+         than written out, so a setting added there appears here. -->
+    <section class="sensor-settings" data-page="sensor-config zigbee-device" data-own-visibility="true" id="soil-panel" aria-labelledby="soil-panel-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">SOIL PROBE</p><h2 id="soil-panel-title">What the probe is set to</h2></div>
+        <button type="button" id="soil-ask" class="secondary-action">Ask the probe</button>
+      </div>
+      <p class="ph-explainer">
+        A battery probe sleeps, so a change waits until it next reports and
+        the hub sends it then. Each value below is what the probe itself
+        last confirmed, not what it was last asked for.
+      </p>
+      <form id="soil-form" class="sensor-settings-form"></form>
+      <output id="soil-message" aria-live="polite"></output>
+    </section>
+
+    <!-- What arrived, as it arrived, beside what the hub made of it.
+         A frame read wrongly looks exactly like a frame read rightly
+         unless the bytes are there next to the answer. -->
+    <section class="sensor-settings" data-page="sensor-config zigbee-device" data-own-visibility="true" id="frames-panel" aria-labelledby="frames-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">DEBUG</p><h2 id="frames-title">What the device is sending</h2></div>
+        <label class="inline-check"><input type="checkbox" id="frames-follow" checked> Keep up</label>
+      </div>
+      <p class="ph-explainer">
+        The last frames this device sent, newest first, with the datapoints
+        inside them and what the hub turned each frame into. A datapoint
+        nobody has explained is shown by number: that is the one worth
+        watching while doing something to the device.
+      </p>
+      <div id="frames-list" class="frames-list"></div>
+      <p id="frames-empty" class="care-log-empty" hidden>Nothing heard from this device yet.</p>
+    </section>
 
     <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-ph-panel" aria-labelledby="sensor-ph-title" hidden>
       <div class="section-heading">

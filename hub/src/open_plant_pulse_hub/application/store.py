@@ -2537,11 +2537,10 @@ class ReadingStore:
     def delete_sensor(self, sensor_id: str) -> None:
         with self._condition, self._database:
             row = self._database.execute(
-                "SELECT plant_id FROM sensors WHERE sensor_id = ?", (sensor_id,)
+                "SELECT 1 FROM sensors WHERE sensor_id = ?", (sensor_id,)
             ).fetchone()
             if row is None:
                 raise ValueError("sensor_id has not been observed")
-            plant_id = row[0]
             self._database.execute(
                 "UPDATE sensors SET replaced_by_sensor_id = NULL WHERE replaced_by_sensor_id = ?",
                 (sensor_id,),
@@ -2550,22 +2549,39 @@ class ReadingStore:
             self._database.execute(
                 "DELETE FROM report_packet2 WHERE sensor_id = ?", (sensor_id,)
             )
+            # The care log stays. What happened to a plant happened,
+            # whoever noticed it: a watering is not unwatered by
+            # retiring the probe that saw the moisture rise.
+            #
+            # This used to delete the events of the whole plant -- not
+            # merely the sensor's own, but every watering, note and
+            # repot on it, from any source and any hand. Taking one
+            # flat-battery probe off a plant would have taken a month
+            # of its history with it.
+            #
+            # The reference goes, since the sensor will not exist;
+            # events belonging to no plant at all would fail the
+            # table's own check, having then nothing to belong to, and
+            # those are the only ones removed.
             self._database.execute(
-                "DELETE FROM care_events WHERE sensor_id = ? OR (plant_id IS NOT NULL "
-                "AND plant_id = (SELECT plant_id FROM sensors WHERE sensor_id = ?))",
-                (sensor_id, sensor_id),
+                "UPDATE care_events SET sensor_id = NULL "
+                "WHERE sensor_id = ? AND plant_id IS NOT NULL",
+                (sensor_id,),
+            )
+            self._database.execute(
+                "DELETE FROM care_events WHERE sensor_id = ? AND plant_id IS NULL",
+                (sensor_id,),
             )
             self._database.execute("DELETE FROM advertisements WHERE sensor_id = ?", (sensor_id,))
             self._database.execute("DELETE FROM sensors WHERE sensor_id = ?", (sensor_id,))
-            if plant_id is not None:
-                self._database.execute(
-                    """
-                    DELETE FROM plants
-                    WHERE plant_id = ?
-                      AND NOT EXISTS (SELECT 1 FROM sensors WHERE plant_id = ?)
-                    """,
-                    (plant_id, plant_id),
-                )
+            # The plant stays too, sensor or no sensor.
+            #
+            # This deleted the plant when the sensor removed was its
+            # last, and plants cascade: the weighings, the photographs
+            # and the whole care log went with it. A plant whose probe
+            # ran its battery flat is still a plant, and a year of
+            # weighing it is still a year of weighing it. Deleting a
+            # plant is its own decision, made on the plant.
             self._history = deque(
                 (
                     (reading, received_at)
@@ -3989,11 +4005,26 @@ class ReadingStore:
             raise ValueError("care cannot have been given in the future")
         return _timestamp(when)
 
-    # What counts as a sudden gain. Proportional, because a gain that
-    # matters on a 500 g pot is noise on a 20 kg one, with a floor so a
-    # small pot's scale drift is not read as a watering.
+    # What counts as a sudden gain.
+    #
+    # Proportional, because a gain that matters on a 500 g pot is drift
+    # on a 20 kg one -- with a floor so a small pot's wander is not read
+    # as a watering, and a ceiling so a heavy one is not made blind.
+    #
+    # The ceiling is the part that was missing. On its own the fraction
+    # asked a 13 kg pot for more than a litre before it would believe
+    # anything had happened, so 694 ml went in unrecorded. Past 300 g
+    # no pot in this house wanders that far: between readings they
+    # move by a median of 15 g, and the smallest real watering seen
+    # was 179 g.
     REFILL_FRACTION = 0.08
     REFILL_FLOOR_GRAMS = 40
+    REFILL_CEILING_GRAMS = 300
+    # How long a pot coming back onto the scale takes to settle. Within
+    # this, the highest reading is the pot's real weight and the low
+    # ones are it being off the scale; outside it, the previous reading
+    # is the pot drying.
+    REFILL_SETTLE_MINUTES = 15
 
     def _is_a_refill(self, plant_id: int, grams: int, at: str) -> bool:
         """Whether this weighing is heavier than the last by enough to be water.
@@ -4006,19 +4037,48 @@ class ReadingStore:
         only fills in what would otherwise be recorded as an ordinary
         reading.
         """
+        try:
+            moment = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return False
+        # What the pot weighed before this reading.
+        #
+        # Usually the reading before it. But a pot lifted off the scale
+        # reads near nothing until it is set down, and against that the
+        # whole pot coming back looks like a gain -- this one has done
+        # it, 13.5 kg then 10930 g then 13.5 kg again. So within the
+        # minutes a lift-and-replace takes, the highest reading is
+        # taken as the pot's weight and the low ones as the pot being
+        # elsewhere. Beyond that window there is nothing to correct
+        # for: a pot that reads lower an hour later is drying, and
+        # water poured in after that is a watering.
+        since = _timestamp(moment - timedelta(minutes=self.REFILL_SETTLE_MINUTES))
         with self._condition:
             row = self._database.execute(
                 """
-                SELECT grams FROM plant_weights
-                WHERE plant_id = ? AND observed = 1 AND at < ?
-                ORDER BY at DESC, weight_id DESC LIMIT 1
+                SELECT MAX(grams) FROM plant_weights
+                WHERE plant_id = ? AND observed = 1 AND at < ? AND at >= ?
                 """,
-                (plant_id, at),
+                (plant_id, at, since),
             ).fetchone()
-        if row is None:
-            return False
-        gained = grams - row[0]
-        return gained >= max(self.REFILL_FLOOR_GRAMS, row[0] * self.REFILL_FRACTION)
+            before = row[0] if row else None
+            if before is None:
+                row = self._database.execute(
+                    """
+                    SELECT grams FROM plant_weights
+                    WHERE plant_id = ? AND observed = 1 AND at < ?
+                    ORDER BY at DESC, weight_id DESC LIMIT 1
+                    """,
+                    (plant_id, at),
+                ).fetchone()
+                if row is None:
+                    return False
+                before = row[0]
+        wanted = min(max(self.REFILL_FLOOR_GRAMS,
+                         before * self.REFILL_FRACTION),
+                     self.REFILL_CEILING_GRAMS)
+        return grams - before >= wanted
 
     def record_plant_weight(
         self,
@@ -4073,8 +4133,15 @@ class ReadingStore:
         # unless somebody has been asked and said it was not. A
         # repotting or a top dressing also adds weight, and the person
         # holding the pot knows which it was.
+        # A scale's weighings count too.
+        #
+        # They were left out because a scale reports every half minute
+        # and a pot lifted off and put back looks like a gain. Reading
+        # against the recent high answers that directly, and leaving
+        # them out meant the one plant that weighs itself was the one
+        # whose waterings the hub never noticed.
         if (detect_refill and kind == "reading" and observed
-                and source == "manual"
+                and source in ("manual", "scale")
                 and self._is_a_refill(plant_id, grams, at)):
             kind = "watered"
         with self._condition, self._database:

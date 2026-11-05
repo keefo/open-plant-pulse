@@ -541,7 +541,12 @@ async function sendZigbeeCommand(eui, command) {
     body: JSON.stringify({ eui, command }),
   });
   await refreshZigbee();
-  if (pageFromLocation() === "zigbee-device") renderZigbeeDevicePage();
+  if (pageFromLocation() === "zigbee-device") {
+    renderZigbeeDevicePage();
+    renderSoilPanel();
+    renderDeviceFrames();
+    refreshDeviceDetail();
+  }
 }
 
 /* One device's own page.
@@ -1496,7 +1501,12 @@ async function commandZigbeePlug(eui, command) {
   }
   await new Promise((resolve) => setTimeout(resolve, 500));
   await refreshZigbee();
-  if (pageFromLocation() === "zigbee-device") renderZigbeeDevicePage();
+  if (pageFromLocation() === "zigbee-device") {
+    renderZigbeeDevicePage();
+    renderSoilPanel();
+    renderDeviceFrames();
+    refreshDeviceDetail();
+  }
 }
 
 async function renderZigbeeSubject(device) {
@@ -3675,6 +3685,219 @@ function renderSensorAttach() {
   setText(document.getElementById("sensor-room"), selectedSensor.room || "no room");
 }
 
+/* How long ago, for something that happened minutes ago.
+ *
+ * describeSpan answers in days and says "hours" for anything inside
+ * one, which is the right grain for a gap between photographs and
+ * the wrong one here: a setting the probe confirmed twenty seconds
+ * ago read "confirmed hours ago", which is the page telling the
+ * reader its own news is stale.
+ */
+function describeRecent(milliseconds) {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 90) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} h ago`;
+  return `${describeSpan(milliseconds)} ago`;
+}
+
+/* Either page that is about one device. */
+function onADevicePage() {
+  const page = pageFromLocation();
+  return page === "sensor-config" || page === "zigbee-device";
+}
+
+/* A device's own settings, and the frames it is sending.
+ *
+ * Both are about one device, both are fetched together, and neither
+ * belongs in the fleet list: eighty frames each across a houseful of
+ * devices is most of a megabyte to draw a dozen rows.
+ */
+let deviceDetail = null;
+let deviceDetailFor = null;
+let deviceDetailAt = 0;
+const DEVICE_DETAIL_EVERY_MS = 4000;
+
+function sensorEui() {
+  // The device's own page names it in the URL; the sensor pages name
+  // it through the selected sensor's id. Both lead here.
+  if (pageFromLocation() === "zigbee-device") return zigbeeEuiFromLocation();
+  const id = selectedSensorId || "";
+  return id.startsWith("zigbee-") ? id.slice("zigbee-".length) : null;
+}
+
+async function refreshDeviceDetail(force) {
+  const eui = sensorEui();
+  if (eui === null || !onADevicePage()) return;
+  if (!force && deviceDetailFor === eui
+      && Date.now() - deviceDetailAt < DEVICE_DETAIL_EVERY_MS) return;
+  deviceDetailFor = eui;
+  deviceDetailAt = Date.now();
+  try {
+    const response = await fetch(
+      `/api/zigbee/device?eui=${encodeURIComponent(eui)}`);
+    if (!response.ok) return;
+    const detail = await response.json();
+    if (sensorEui() !== eui) return;
+    deviceDetail = detail;
+    renderSoilPanel();
+    renderDeviceFrames();
+  } catch (_error) {
+    // The next poll tries again; the panel keeps what it had.
+  }
+}
+
+/* The settings form, built from what the device answers for.
+ *
+ * The fields are not written out in the markup: the driver knows
+ * which settings exist, their ranges and their units, and a setting
+ * added there should appear here without anybody editing a page.
+ */
+function renderSoilPanel() {
+  const panel = document.getElementById("soil-panel");
+  const form = document.getElementById("soil-form");
+  if (panel === null || form === null) return;
+  const settings = deviceDetail?.settings || [];
+  setHidden(panel, !onADevicePage() || !settings.length);
+  if (!settings.length) return;
+  // Held while somebody is partway through it, the same way the
+  // scale's form is: the poll is four seconds away and nothing it
+  // brings is worth taking a half-typed number away.
+  if (form.contains(document.activeElement)) return;
+  const waiting = new Set(deviceDetail?.waiting?.map(
+    (command) => command.split(" ")[1]) || []);
+  const key = JSON.stringify([settings, [...waiting]]);
+  if (form.dataset.renderKey === key) return;
+  setData(form, "renderKey", key);
+  form.replaceChildren();
+  for (const setting of settings) {
+    const label = document.createElement("label");
+    const head = document.createElement("div");
+    head.className = "field-head";
+    const name = document.createElement("span");
+    setText(name, setting.name.replace(/_/g, " "));
+    head.append(name);
+    const note = document.createElement("small");
+    note.className = "field-note";
+    setText(note, waiting.has(setting.name)
+      ? "waiting for the probe to wake"
+      : setting.confirmed_at
+        ? `confirmed ${describeRecent(Date.now() - Date.parse(setting.confirmed_at))}`
+        : "never reported");
+    head.append(note);
+    label.append(head);
+    const field = document.createElement("input");
+    field.type = "number";
+    field.id = `soil-set-${setting.name}`;
+    field.min = setting.lowest;
+    field.max = setting.highest;
+    field.step = setting.step < 1 ? setting.step : 1;
+    field.value = setting.value === null ? "" : setting.value;
+    field.placeholder = setting.value === null ? "not reported" : "";
+    label.append(field);
+    const range = document.createElement("small");
+    setText(range, `${setting.lowest} to ${setting.highest} ${setting.unit}`);
+    label.append(range);
+    form.append(label);
+  }
+  const actions = document.createElement("div");
+  actions.className = "settings-actions";
+  const save = document.createElement("button");
+  save.type = "submit";
+  setText(save, "Save");
+  actions.append(save);
+  form.append(actions);
+}
+
+/* The frames themselves, newest first. */
+function renderDeviceFrames() {
+  const panel = document.getElementById("frames-panel");
+  const list = document.getElementById("frames-list");
+  if (panel === null || list === null) return;
+  setHidden(panel, !onADevicePage() || sensorEui() === null);
+  const frames = deviceDetail?.frames || [];
+  setHidden(document.getElementById("frames-empty"), frames.length > 0);
+  // A reader scrolled back through the list is reading it; the poll
+  // does not yank it out from under them.
+  if (!document.getElementById("frames-follow")?.checked) return;
+  if (!renderKeyChanged(list, frames)) return;
+  list.replaceChildren();
+  for (const frame of frames) {
+    const row = document.createElement("div");
+    row.className = "frame-row";
+    const when = document.createElement("code");
+    when.className = "frame-when";
+    setText(when, `${frame.at.slice(11, 19)}  ${frame.cluster}`);
+    row.append(when);
+    const bytes = document.createElement("code");
+    bytes.className = "frame-bytes";
+    setText(bytes, frame.bytes || "(empty)");
+    row.append(bytes);
+    if (frame.datapoints?.length) {
+      const points = document.createElement("div");
+      points.className = "frame-points";
+      for (const point of frame.datapoints) {
+        const tag = document.createElement("small");
+        setText(tag, point.name
+          ? `DP ${point.point} = ${point.value} · ${point.name}`
+          : `DP ${point.point} = ${point.value}`);
+        if (!point.name) setData(tag, "unknown", "true");
+        points.append(tag);
+      }
+      row.append(points);
+    }
+    const read = document.createElement("small");
+    read.className = "frame-read";
+    setText(read, frame.read_as
+      ? `read as ${Object.entries(frame.read_as)
+          .map(([k, v]) => `${k}=${v}`).join(", ")}`
+      : "the hub made nothing of this frame");
+    if (!frame.read_as) setData(read, "unread", "true");
+    row.append(read);
+    list.append(row);
+  }
+}
+
+async function saveSoilSettings(event) {
+  event.preventDefault();
+  const message = document.getElementById("soil-message");
+  const eui = sensorEui();
+  if (eui === null) return;
+  const settings = deviceDetail?.settings || [];
+  const asked = [];
+  for (const setting of settings) {
+    const field = document.getElementById(`soil-set-${setting.name}`);
+    if (field === null || field.value === "") continue;
+    const wanted = Number(field.value);
+    if (!Number.isFinite(wanted) || wanted === setting.value) continue;
+    asked.push({ name: setting.name, value: wanted });
+  }
+  if (!asked.length) {
+    setText(message, "Nothing changed.");
+    return;
+  }
+  setText(message, "Asking…");
+  for (const one of asked) {
+    const response = await fetch("/api/zigbee/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eui, setting: one.name, value: one.value }),
+    });
+    if (!response.ok) {
+      setText(message, await response.text() || `${one.name} was refused.`);
+      return;
+    }
+  }
+  // Deliberately not "Saved": on a sleeping device it is not, yet.
+  setText(message, asked.length === 1
+    ? `${asked[0].name.replace(/_/g, " ")} will be sent when the probe next reports.`
+    : `${asked.length} settings will be sent when the probe next reports.`);
+  await refreshDeviceDetail(true);
+}
+
 function renderScalePanel() {
   const panel = document.getElementById("scale-panel");
   if (panel === null) return;
@@ -4063,6 +4286,9 @@ async function refreshFleet() {
   renderSensorSettings();
   renderSensorAttach();
   renderScalePanel();
+  renderSoilPanel();
+  renderDeviceFrames();
+  refreshDeviceDetail();
   renderSoilPhCalibration();
   renderSettingsSensors();
   renderHouseholdNetwork();
@@ -8524,9 +8750,16 @@ function attachNearestReadout(chart, size, marks) {
 function anchorSegments(weights, startTime, endTime) {
   const stated = (weights || [])
     .filter((w) => !w.observed && ["full", "thirsty", "dry"].includes(w.kind))
-    .map((w) => ({ at: Date.parse(w.at), kind: w.kind, grams: w.grams }))
+    .map((w) => ({ at: Date.parse(w.at), kind: w.kind, grams: w.grams,
+                   id: w.weight_id ?? 0 }))
     .filter((w) => Number.isFinite(w.at))
-    .sort((a, b) => a.at - b.at);
+    // Oldest first, and for anchors stated in the same second the one
+    // written last. Three Dry weights can share a timestamp to the
+    // second -- somebody correcting a number twice over -- and reading
+    // them in the wrong order picks the first try instead of the final
+    // one. On this plant that made Dry equal Full, which is not a band
+    // at all, so the chart quietly drew none.
+    .sort((one, two) => one.at - two.at || one.id - two.id);
 
   // What was in force when the window opens: the newest of each kind
   // stated at or before it.
@@ -9626,6 +9859,20 @@ for (const id of ["plant-weight-full", "plant-weight-thirsty",
     anchorsEdited = true;
   });
 }
+document.getElementById("soil-form").addEventListener("submit", saveSoilSettings);
+document.getElementById("soil-ask").addEventListener("click", async () => {
+  // The probe only hears while it is awake, so this is a request to
+  // ask rather than a guarantee of an answer.
+  const eui = sensorEui();
+  if (eui === null) return;
+  setText(document.getElementById("soil-message"), "Asked. It answers when it wakes.");
+  await fetch("/api/zigbee/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eui, command: "datapoints" }),
+  });
+  await refreshDeviceDetail(true);
+});
 document.getElementById("plant-weight-set-anchors").addEventListener("click", setPlantAnchors);
 /* The label opens the picker by itself, which is one less thing to go wrong
  * than forwarding a click; the keyboard needs the forwarding, though, since a
