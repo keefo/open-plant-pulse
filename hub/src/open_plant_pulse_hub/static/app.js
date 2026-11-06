@@ -2982,13 +2982,25 @@ function renderPage() {
     const rightPage = element.dataset.page.split(" ").includes(page);
     const rightKind = element.dataset.sensorKind === undefined
       || element.dataset.sensorKind.split(" ").includes(shownKind);
+    /* And a section that is only about a pot on a scale. An air plant is
+     * soaked in the hand and a mounted orchid has no pot at all, so for
+     * those the weight section is a row of dashes and an empty chart
+     * about a thing that was never going to happen. Said on the plant
+     * rather than guessed from having no weighings, because a plant
+     * nobody has weighed yet needs the section in order to be weighed
+     * the first time. */
+    const askedAbout = plantIdFromLocation();
+    const knownPlant = selectedPlant && (askedAbout === null
+      || selectedPlant.plant_id === askedAbout) ? selectedPlant : null;
+    const weighed = element.dataset.needsWeighing === undefined
+      || knownPlant?.pot_is_weighed !== false;
     /* A section that decides for itself is left alone once it is on the
        right page: showing it here and letting its renderer hide it again
        is the same flip this function was written to stop, and at one
        render a second it reads as the page blinking. Off the page it is
        hidden like anything else. */
-    if (element.dataset.ownVisibility && rightPage && rightKind) return;
-    setHidden(element, !(rightPage && rightKind));
+    if (element.dataset.ownVisibility && rightPage && rightKind && weighed) return;
+    setHidden(element, !(rightPage && rightKind && weighed));
   });
   foldNotes();
   setClass(document.getElementById("fleet-link"), "active", page === "fleet");
@@ -6239,7 +6251,16 @@ function renderPlantPage() {
       ? `${weight.remaining_percent}% of its water left`
       : weight.used_grams != null
         ? `${weight.used_grams} ml used since watering`
-        : "Nothing weighed yet";
+        /* "Nothing weighed yet" is a thing to go and do. For a plant
+         * whose pot never goes on a scale it is a chore that will never
+         * be done, so it says when the water last came instead, which
+         * for that plant is the whole of what is known. */
+        : selectedPlant?.pot_is_weighed === false
+          ? (selectedPlant.last_watered_at
+              ? `Watered ${describeSeconds(
+                  (Date.now() - Date.parse(selectedPlant.last_watered_at)) / 1000)} ago`
+              : "Not watered yet")
+          : "Nothing weighed yet";
   setText(document.getElementById("plant-page-state"), state);
 
   renderPlantWeightOffset();
@@ -7294,6 +7315,8 @@ function renderPlantConfig() {
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
   setValue(document.getElementById("plant-config-watering-days"),
     selectedPlant.expected_watering_days ?? "");
+  document.getElementById("plant-config-weighed").checked =
+    selectedPlant.pot_is_weighed !== false;
   const started = document.getElementById("plant-config-started");
   setAttr(started, "max", localDate(new Date()));
   setValue(started, selectedPlant.started_at
@@ -7340,6 +7363,7 @@ async function savePlantConfig(event) {
       ppfd_umol_m2s: light === "" ? null : Number(light),
       light_hours_per_day: lightHours === "" ? null : Number(lightHours),
       // Midday local, like acquired_at, so no time zone moves the day.
+      pot_is_weighed: document.getElementById("plant-config-weighed").checked,
       started_at: (() => {
         if (!startedOn) return null;
         const [y, m, d] = startedOn.split("-").map(Number);

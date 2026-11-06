@@ -396,6 +396,9 @@ def create_server(
                         self._optional_float(payload.get("ppfd_umol_m2s")),
                         self._optional_float(payload.get("light_hours_per_day")),
                         self._optional_str(payload.get("started_at")),
+                        # Absent means yes: a client that does not know
+                        # about this should not quietly unweigh a plant.
+                        bool(payload.get("pot_is_weighed", True)),
                     )
                 elif path.startswith("/api/lights/"):
                     result = self._light_service().update_light(

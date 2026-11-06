@@ -699,7 +699,7 @@
 
 
 
-    <section class="plant-weight" data-page="plant" data-section="weight" aria-labelledby="plant-weight-title" hidden>
+    <section class="plant-weight" data-page="plant" data-section="weight" data-needs-weighing="true" aria-labelledby="plant-weight-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
         <span id="plant-weight-summary">Nothing weighed yet</span>
@@ -1019,6 +1019,16 @@
             better than an assumption.</small>
         </label>
         <div class="settings-actions"><button type="submit">Save configuration</button></div>
+        <label class="switch-row" for="plant-config-weighed">
+          <input id="plant-config-weighed" class="switch" type="checkbox" checked>
+          <div>
+            <strong>This pot goes on the scale</strong>
+            <small>Turn off for a plant that is never weighed &mdash; an air plant
+              soaked in the hand, or an orchid mounted on a plank. The pot weight
+              section and the watering it works out from the weight are hidden,
+              and watering is logged with the button in the care log instead.</small>
+          </div>
+        </label>
         <output id="plant-config-message"></output>
       </form>
       <div class="section-heading section-subheading">

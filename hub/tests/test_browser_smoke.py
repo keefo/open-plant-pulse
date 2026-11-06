@@ -739,6 +739,66 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(tools.complaints, [])
 
 
+    def test_a_plant_that_is_never_weighed_loses_the_weight_section(self) -> None:
+        """And a weighed plant keeps it, including after hopping between them.
+
+        The flag is read off the plant, and the plant in memory lags the
+        URL for a moment while the next one loads -- so it is only
+        trusted when it is the plant the address is asking about.
+        Without that, stepping from the air plant to a weighed one took
+        the weight section away from the weighed one too.
+        """
+        tools = self.devtools()
+        self.open_page(tools, self.base_url + "/")
+        seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, awaitPromise=True,
+                                     expression="""
+            (async () => {
+              const plants = (await (await fetch("/api/plants")).json()).items;
+              if (plants.length < 2) return JSON.stringify({ skipped: true });
+              // Take one off the scale for the length of this test.
+              const [unweighed, weighed] = plants;
+              const put = (plant, on) => fetch(`/api/plants/${plant.plant_id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  display_name: plant.display_name,
+                  room_id: plant.room_id ?? null,
+                  pot_is_weighed: on,
+                }),
+              });
+              await put(unweighed, false);
+              await put(weighed, true);
+              const look = () => ({
+                shown: !document.querySelector(".plant-weight").hidden,
+                name: document.getElementById("plant-page-name").textContent,
+              });
+              const go = async (id) => {
+                history.pushState({}, "", `/plants/${id}`);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+                await refresh();
+                // renderPage runs on the poll that follows the load, so the
+                // sections are judged with the plant that has just arrived.
+                await refresh();
+                await new Promise((r) => setTimeout(r, 600));
+                return look();
+              };
+              return JSON.stringify({
+                skipped: false,
+                onUnweighed: await go(unweighed.plant_id),
+                thenWeighed: await go(weighed.plant_id),
+                backAgain: await go(unweighed.plant_id),
+              });
+            })()""")["result"]["value"])
+        if seen["skipped"]:
+            self.skipTest("this hub has no unweighed plant to look at")
+        self.assertFalse(seen["onUnweighed"]["shown"],
+                         "a plant that is never weighed still shows the weight section")
+        self.assertTrue(seen["thenWeighed"]["shown"],
+                        "a weighed plant lost the section after the unweighed one")
+        self.assertFalse(seen["backAgain"]["shown"],
+                         "the section came back on a plant that is never weighed")
+        self.assertEqual(tools.complaints, [])
+
     def test_the_dashboard_heading_keeps_its_sort_on_one_row(self) -> None:
         """"Plants" and the sort menu share a line on a phone.
 

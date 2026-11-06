@@ -55,6 +55,27 @@ class ManualPlantTests(unittest.TestCase):
         self.assertIsNotNone(plant["created_at"])
         self.assertEqual([p["plant_id"] for p in self.store.plants()], [plant["plant_id"]])
 
+    def test_a_plant_says_whether_its_pot_goes_on_the_scale(self) -> None:
+        """Most do. An air plant and a mounted orchid do not.
+
+        For those the pot weight section is a row of dashes and an
+        empty chart about a thing that was never going to happen. It is
+        said on the plant rather than guessed from having no weighings:
+        a plant nobody has weighed yet needs that section in order to
+        be weighed the first time.
+        """
+        plant = self.store.create_plant("Air plant", self.room["room_id"])
+        self.assertTrue(plant["pot_is_weighed"], "a new plant is weighed unless told otherwise")
+
+        unweighed = self.store.update_plant(
+            plant["plant_id"], "Air plant", self.room["room_id"], pot_is_weighed=False)
+        self.assertFalse(unweighed["pot_is_weighed"])
+        self.assertFalse(self.store.plant(plant["plant_id"])["pot_is_weighed"])
+
+        again = self.store.update_plant(
+            plant["plant_id"], "Air plant", self.room["room_id"], pot_is_weighed=True)
+        self.assertTrue(again["pot_is_weighed"], "it can be put back on the scale")
+
     def test_its_care_is_recorded_against_the_plant_itself(self) -> None:
         plant = self.store.create_plant("Fiddle fig")
 

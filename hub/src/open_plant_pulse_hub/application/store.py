@@ -5172,7 +5172,8 @@ class ReadingStore:
                        plants.purchase_place,
                        plants.ppfd_umol_m2s, plants.light_hours_per_day,
                        plants.started_at,
-                       plants.weight_offset_grams
+                       plants.weight_offset_grams,
+                       plants.pot_is_weighed
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 {"" if include_archived else "WHERE plants.archived = 0"}
@@ -5223,7 +5224,8 @@ class ReadingStore:
                        plants.purchase_place,
                        plants.ppfd_umol_m2s, plants.light_hours_per_day,
                        plants.started_at,
-                       plants.weight_offset_grams
+                       plants.weight_offset_grams,
+                       plants.pot_is_weighed
                 FROM plants
                 LEFT JOIN rooms ON rooms.room_id = plants.room_id
                 WHERE plants.plant_id = ?
@@ -5587,6 +5589,7 @@ class ReadingStore:
         ppfd_umol_m2s: Optional[float] = None,
         light_hours_per_day: Optional[float] = None,
         started_at: Optional[str] = None,
+        pot_is_weighed: bool = True,
     ) -> Dict[str, Any]:
         if self.plant(plant_id) is None:
             raise ValueError("unknown plant")
@@ -5613,12 +5616,12 @@ class ReadingStore:
                                   profile_id = ?, variety = ?, acquired_at = ?,
                                   purchase_price_cents = ?, purchase_place = ?,
                                   ppfd_umol_m2s = ?, light_hours_per_day = ?,
-                                  started_at = ?
+                                  started_at = ?, pot_is_weighed = ?
                 WHERE plant_id = ?
                 """,
                 (display_name, room_id, expected_watering_days, profile_id, variety,
                  acquired_at, purchase_price_cents, purchase_place, ppfd_umol_m2s,
-                 light_hours_per_day, started_at, plant_id),
+                 light_hours_per_day, started_at, 1 if pot_is_weighed else 0, plant_id),
             )
             # A sensor watching it shows the same name, profile and room, or
             # its pages and the plant's disagree about the same plant.
@@ -5732,6 +5735,11 @@ class ReadingStore:
             # pot, a saucer. Taken off a weighing, never off a typed
             # anchor.
             "weight_offset_grams": int(row[21] or 0),
+            # Whether this plant's pot goes on a scale at all. An air
+            # plant is soaked in the hand and an orchid on a plank has
+            # no pot, and for those the weight section is a row of
+            # dashes about a thing that was never going to happen.
+            "pot_is_weighed": bool(row[22]),
         }
 
     def rebuild_journey(self, sensor_id: str) -> Dict[str, Any]:

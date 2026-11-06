@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 65
+DATABASE_SCHEMA_VERSION = 66
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -1615,6 +1615,22 @@ MIGRATIONS: Dict[int, str] = {
         ALTER TABLE sensors DROP COLUMN firmware_update_percent;
         ALTER TABLE sensors DROP COLUMN firmware_update_error;
         ALTER TABLE sensors DROP COLUMN firmware_update_started_at;
+    """,
+    66: """
+        /* Whether this plant sits in a pot that gets weighed.
+
+           Most do, and the weight is the best thing the hub knows about
+           them. Two here do not: an air plant, which is held in the hand
+           and soaked, and an orchid about to be mounted on a plank. For
+           those the pot weight section is a row of dashes and a chart
+           with nothing in it, and a dash reads as a reading that failed
+           rather than one that was never going to exist.
+
+           Not inferred from having no weighings, which would be the
+           tempting rule: a plant nobody has weighed yet needs the
+           section visible in order to be weighed the first time. So it
+           is said rather than guessed, and defaults to yes. */
+        ALTER TABLE plants ADD COLUMN pot_is_weighed INTEGER NOT NULL DEFAULT 1;
     """,
 }
 
