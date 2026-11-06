@@ -101,3 +101,41 @@ last and should be nearly free by then.
 The test for finishing: the count at the top of this file comes down.
 If it has not, the system was added beside the old one rather than
 replacing it, which this project does not do.
+
+## Done
+
+Finished in two commits. The counts, which were the test:
+
+                                    before    after
+    distinct hex outside :root         117        72
+    hard-coded hex uses                170        81
+    literal font-size                  132         2
+    literal border-radius               78        22
+    1px solid borders                   61        42
+    box-shadow uses                     16        31
+    dark mode rules                      0         1
+
+Dark mode is the twenty-line token flip the ramps were for. Every
+page was then swept in both modes for contrast: 6,427 elements over
+thirteen routes, no pair under 3:1.
+
+What the sweep taught, which the proposal did not anticipate:
+
+- **An eight-digit hex is a colour and an alpha.** Replacing
+  `#17211b` with a token inside `#17211b55` left `var(--text)55`,
+  which is not a colour, so six declarations were silently dropped --
+  a dialog's shadow, the backdrop, the pot's drop shadow. Caught by
+  reading the file back, not by looking at a page.
+- **An illustration is not a surface.** The pot drawing keeps its own
+  greens and blues after dark, the way the photograph on a card does,
+  so the labels sitting on it need a fixed ink rather than the text
+  colour. Three labels went pale-on-pale before this was separated
+  out.
+- **One anchor had no rule at all** and fell back to `#0000ee`, which
+  nobody notices on white and nobody can read on black. There is a
+  base `a` colour now.
+
+The remaining 72 hexes are the places a fixed colour is the right
+answer: the chart series, the care-event dots, the pot illustration,
+the calendar's heat scale. They are pictures rather than interface,
+and a picture does not invert.

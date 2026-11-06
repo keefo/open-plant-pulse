@@ -9,7 +9,7 @@
  * rounded corner, or one inset in a scrolling box -- overrides only
  * outline-offset below, and keeps the colour and the width.
  */
-:focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 
 /* Two ramps, and names for what things are rather than what colour.
  *
@@ -46,6 +46,12 @@
      other -- a plant can be brim full and ailing. The bar turns the
      warning yellow as it empties, which is the same yellow the rest
      of the page uses for "soon". */
+  /* What is legible on a filled brand button, either way round. */
+  --on-brand: #ffffff;
+  /* Ink for labels sitting on the pot illustration, which keeps its
+     own light palette after dark. */
+  --on-vessel: #0d3b28;
+
   --fill-water: #2f85ba;
   --fill-low:   #d98324;
 
@@ -73,19 +79,64 @@
   --t-2xl: 27px;
   --t-3xl: 40px;
 
-  --ink:   var(--n900);
-  --muted: var(--n600);
-  --paper: var(--canvas);
-  --panel: var(--surface);
-  --line:  var(--n200);
-  --leaf:  var(--brand);
-  --water: var(--info);
   --sun:   #d9a327;
   --gold:  #d5a72e;
-  --coral: var(--alarm);
+}
+
+/* After dark.
+ *
+ * This is the whole of it, and that is the point of the ramps: the
+ * rules above do not know which way round they are. The neutral ramp
+ * inverts, the brand lifts (a dark background needs a lighter green
+ * to hold the same contrast, not the same green), the washes become
+ * deep tints rather than pale ones, and the shadows go black because
+ * a grey shadow on a dark surface is a grey smear.
+ *
+ * It follows the system. There is no switch in the interface, because
+ * nobody wants this hub to be the one place that disagrees with their
+ * phone at midnight. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --n0:  #1b201d;
+    --n50: #141815;
+    --n100:#222825;
+    --n200:#2d3531;
+    --n400:#8a978f;
+    --n600:#a9b5ae;
+    --n900:#f0f4f1;
+
+    --brand:      #49b586;
+    --brand-ink:  #9fe0c3;
+    --brand-wash: #15362a;
+    --info:       #6ab3dd;
+    --info-wash:  #13303f;
+    --warn:       #e7b170;
+    --warn-ink:   #e7b170;
+    --warn-wash:  #3a2a14;
+    --alarm:      #e58a6e;
+    /* The button fill lightens after dark, so its text must darken. */
+    --on-brand:   #08251a;
+    --alarm-wash: #3b211a;
+
+    --fill-water: #4aa3d4;
+    --fill-low:   #e0a052;
+
+    --sun:  #e0b451;
+    --gold: #e0b451;
+
+    --sh-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --sh-2: 0 2px 6px rgba(0, 0, 0, .45), 0 10px 28px rgba(0, 0, 0, .5);
+  }
+  /* A photograph lit for a white page is a lamp on a dark one. */
+  .fleet-card-cover img, .photo-tile img { filter: brightness(.92); }
 }
 
 * { box-sizing: border-box; }
+/* No anchor falls back to the browser's own blue. One did -- a sensor
+   name on the alerts tab -- and #0000ee on a dark page is a link
+   nobody can read. A link is the brand colour unless a rule says
+   otherwise. */
+a { color: var(--brand); }
 [hidden] { display: none !important; }
 /* The graph paper is gone. It was a texture for warming up flat
    design and it dates the page on its own; a card lifted off a plain
@@ -108,20 +159,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 .household-nav, .topbar, .hub-health, main { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
-.household-nav { min-height: 54px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
-.brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font: 600 18px Georgia, "Times New Roman", serif; text-decoration: none; white-space: nowrap; }
+.household-nav { min-height: 60px; display: flex; align-items: center; gap: 10px; }
+.brand { display: inline-flex; align-items: center; gap: 9px; color: var(--text); font-size: var(--t-lg); font-weight: 650; letter-spacing: -.01em; text-decoration: none; white-space: nowrap; }
 /* The leaf beside the name. Sized from the text rather than in pixels,
    so the two keep their proportions if the nav's type ever changes --
    and in the markup as well, so it holds its place while the file is
    still loading rather than shoving the name sideways when it lands. */
 .brand-mark { width: 40px; height: 40px; flex: none; display: block; }
-.primary-links { display: flex; flex: 1; gap: 6px; margin-left: 18px; }
-.nav-link { padding: 8px 12px; border-radius: 5px; color: var(--muted); text-decoration: none; }
-.nav-link:hover, .nav-link.active { color: var(--leaf); background: #e5f1e8; }
-.hub-health { margin-bottom: 40px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: #ffffffcc; font-size: 12px; }
-.hub-health strong { color: var(--ink); }
-.fleet-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
-.fleet-overview .section-heading p:last-child { margin: 0; color: var(--muted); }
+.primary-links { display: flex; gap: 2px; margin-left: 16px; padding: 3px; border-radius: var(--r-pill); background: var(--n100); }
+.nav-link { padding: 7px 15px; border-radius: var(--r-pill); color: var(--dim); font-weight: 550; text-decoration: none; }
+.nav-link:hover { color: var(--text); }
+.nav-link.active { color: var(--text); background: var(--surface); box-shadow: var(--sh-1); }
+.hub-health { margin-bottom: 40px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 12px; border-radius: var(--r-ctl); color: var(--dim); background: color-mix(in srgb, var(--surface) 80%, transparent); font-size: var(--t-xs); box-shadow: var(--sh-1); }
+.hub-health strong { color: var(--text); }
+.fleet-overview { padding: 30px; background: transparent; }
+.fleet-overview .section-heading p:last-child { margin: 0; color: var(--dim); }
 /* auto-fill, not auto-fit: an empty track is kept rather than collapsed, so
    the one plant with a sensor is a tile the size of every other tile instead
    of a banner across the window. The two grids share the rhythm. */
@@ -133,10 +185,10 @@ body {
    button above it. Dashed and quiet: it is the one card that is not a
    plant, and it should read as the empty place at the end of a shelf
    rather than compete with the photographs. */
-.fleet-card-add { align-content: center; justify-items: center; gap: 6px; min-height: 165px; border-style: dashed; border-color: var(--line); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
-.fleet-card-add:hover { border-style: solid; border-color: var(--leaf); color: var(--leaf); }
-.fleet-card-add strong { font-size: 15px; font-weight: 600; }
-.fleet-card-add-mark { font-size: 30px; line-height: 1; font-weight: 300; }
+.fleet-card-add { align-content: center; justify-items: center; gap: 6px; min-height: 165px; border-style: dashed; border-color: var(--n200); background: transparent; color: var(--dim); font: inherit; cursor: pointer; }
+.fleet-card-add:hover { border-style: solid; border-color: var(--brand); color: var(--brand); }
+.fleet-card-add strong { font-size: var(--t-md); font-weight: 600; }
+.fleet-card-add-mark { font-size: var(--t-2xl); line-height: 1; font-weight: 300; }
 .fleet-card strong { font-size: var(--t-lg); font-weight: 640; letter-spacing: -.01em; }
 .fleet-card code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-sm); font-family: inherit; }
 /* The care-marks row, which is the card's own direct child. Written
@@ -144,7 +196,7 @@ body {
    fill, and 8px of margin on a fill inside an 8px clipped track put
    it exactly out of sight: the bar drew, in blue, below the pixels
    anyone could see. The marks inherit the size and colour. */
-.fleet-card > span { margin-top: 8px; color: var(--muted); font-size: xx-small; }
+.fleet-card > span { margin-top: 8px; color: var(--dim); font-size: xx-small; }
 /* Watered, fed and weighed as marks: the words are the same on every card
    and the dates are what differ, so the dates get the room. */
 /* How full the pot is.
@@ -162,10 +214,10 @@ body {
 .care-mark { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; white-space: nowrap; }
 .care-mark svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #3f5a64; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .care-mark svg.filled { fill: #3f5a64; stroke: none; }
-.care-mark i { font-style: normal; color: var(--ink); }
+.care-mark i { font-style: normal; color: var(--text); }
 /* The two tags sit together: what the pot has left, and what it drinks. */
 .fleet-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 
 /* The selects the page uses outside a form, which the browser would
    otherwise draw in its own style beside everything else here: the same
@@ -173,10 +225,10 @@ body {
    rather than left to the platform. */
 #plant-sort, #plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit {
   padding: 9px 30px 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--ink);
-  background-color: white;
+  border: 1px solid var(--n200);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  background-color: var(--surface);
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23566' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   background-repeat: no-repeat;
   background-position: right 10px center;
@@ -188,32 +240,32 @@ body {
   cursor: pointer;
 }
 #plant-sort:hover, #plant-weight-unit:hover,
-#plant-weight-full-unit:hover, #plant-weight-thirsty-unit:hover { border-color: var(--leaf); }
+#plant-weight-full-unit:hover, #plant-weight-thirsty-unit:hover { border-color: var(--brand); }
 /* The unit sits beside a number field, so it is sized to its two words
    rather than stretched to the row's input width. */
 #plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit { padding-block: 10px; }
-.fleet-card small { width: fit-content; padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-size: xx-small; font-weight: 700; text-transform: capitalize; }
-.fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: #9a3f29; background: #f7e5df; }
+.fleet-card small { width: fit-content; padding: 4px 8px; border-radius: var(--r-card); color: var(--brand); background: var(--brand-wash); font-size: xx-small; font-weight: 700; text-transform: capitalize; }
+.fleet-card small[data-state="stale"], .fleet-card small:not([data-state="healthy"]) { color: var(--alarm); background: var(--alarm-wash); }
 /* The cover, when a plant has one: a fixed band so a grid of cards stays a
    grid whatever shape the photographs are. */
-.fleet-card-cover { width: 100%; height: 150px; margin-bottom: 4px; border-radius: 6px; object-fit: cover; background: #eceff0; }
+.fleet-card-cover { width: 100%; height: 150px; margin-bottom: 4px; border-radius: var(--r-ctl); object-fit: cover; background: var(--n100); }
 /* The same band, waiting for a photograph. */
-.fleet-card-cover-blank { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); background: #f3f6f3; }
+.fleet-card-cover-blank { display: flex; align-items: center; justify-content: center; border: 1px dashed var(--n200); background: var(--n50); }
 .fleet-card-cover-blank svg { width: 34px; height: 34px; fill: none; stroke: #b9c7bc; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 /* How much it drinks is not a verdict on it, so it is water-coloured rather
    than caught by the rule above that reddens anything not "healthy". */
-.fleet-card small[data-state="rate"] { color: #2b6c86; background: #e4eff4; text-transform: none; }
+.fleet-card small[data-state="rate"] { color: var(--info); background: var(--info-wash); text-transform: none; }
 /* Soon enough to act on reads warm; further off reads like any other fact. */
 .fleet-card small.fleet-card-due { text-transform: none; }
-.fleet-card small[data-state="later"] { color: #2a754a; background: #e5f1e8; }
-.fleet-card small[data-state="now"] { color: #8a4a12; background: #f8ecd9; }
+.fleet-card small[data-state="later"] { color: var(--brand); background: var(--brand-wash); }
+.fleet-card small[data-state="now"] { color: var(--warn-ink); background: var(--warn-wash); }
 /* Having no sensor is a fact about a plant, not a fault with it. */
-.fleet-card small[data-state="manual"] { color: var(--muted); background: #eceff0; }
+.fleet-card small[data-state="manual"] { color: var(--dim); background: var(--n100); }
 /* A pot with water left reads as well as a sensor reporting in; one nearly
    empty reads like any other thing that wants attention today. */
-.fleet-card small[data-state="watered"] { color: var(--leaf); background: #e5f1e8; }
-.fleet-card small[data-state="thirsty"] { color: #9a3f29; background: #f7e5df; }
+.fleet-card small[data-state="watered"] { color: var(--brand); background: var(--brand-wash); }
+.fleet-card small[data-state="thirsty"] { color: var(--alarm); background: var(--alarm-wash); }
 /* A measurement is not a word to capitalise: "47% water left", not "47% Water
    Left", and millilitres keep their small l. */
 .fleet-card small[data-state="watered"], .fleet-card small[data-state="thirsty"],
@@ -222,8 +274,8 @@ body {
    otherwise draw itself. This rule once shared a selector list with two
    classes that had gone, and removing dead selectors took the live one
    with it -- the forms went back to browser buttons for a few minutes. */
-button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; font: inherit; cursor: pointer; }
-.settings-panel { padding: 20px; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+button { padding: 8px 12px; border: 1px solid var(--n200); border-radius: var(--r-ctl); color: var(--text); background: var(--surface); font: inherit; cursor: pointer; }
+.settings-panel { padding: 20px; display: grid; gap: 10px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--sh-1); }
 /* The five-column neighbours table held this whole page at 399px on every
    phone width: a table will not shrink below its columns, and as a grid item
    of this panel its min-content became the panel's floor. It scrolls inside
@@ -235,14 +287,14 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; c
  * The settings forms were left on the browser's own inputs while the plant
  * and sensor forms had styled ones, so the same kind of field looked like
  * two different things depending on which page it was on. */
-.settings-panel > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.settings-panel > label { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .settings-panel input:not(.switch):not([type="hidden"]),
 .settings-panel select,
 .settings-panel textarea {
-  width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px;
-  background: white; color: var(--ink); font: inherit;
+  width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl);
+  background: var(--surface); color: var(--text); font: inherit;
 }
-.settings-panel input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
+.settings-panel input[readonly] { color: var(--text); background: var(--n100); cursor: default; }
 /* A field as wide as the panel says nothing about what goes in it.
    Width is the cheapest hint a form has: four characters of Kelvin in
    a box the width of a paragraph reads as a box somebody forgot to
@@ -256,41 +308,41 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; c
 .settings-panel input[inputmode="numeric"] { max-width: 12rem; }
 .settings-panel input[data-kind="mac"] { max-width: 21rem; }  /* 17 characters */
 .settings-panel textarea { min-height: 72px; resize: vertical; }
-.settings-panel small, .settings-panel output { color: var(--muted); }
+.settings-panel small, .settings-panel output { color: var(--dim); }
 .inline-control { display: flex; align-items: center; gap: 10px; }
 .inline-control input { width: 100px; }
 /* Both controls, not just the one that happened to be here first. A select
    added beside an input inherited nothing and kept the browser's own look. */
 .inline-control input,
-.inline-control select { padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
-.inline-control button { color: white; background: var(--leaf); border-color: var(--leaf); }
-.empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--line); color: var(--muted); text-align: center; background: white; }
-dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); padding: 0; box-shadow: 0 20px 80px #17211b55; }
-dialog::backdrop { background: #17211b88; }
-.danger { color: #9a3f29; }
-.topbar { min-height: 132px; display: flex; align-items: center; justify-content: space-between; gap: 28px; border-bottom: 1px solid var(--line); }
-.eyebrow { margin: 0 0 5px; color: var(--leaf); font-size: 12px; font-weight: 700; }
+.inline-control select { padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
+.inline-control button { color: var(--on-brand); background: var(--brand); border-color: var(--brand); }
+.empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--n200); color: var(--dim); text-align: center; background: var(--surface); }
+dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--n200); border-radius: var(--r-card); color: var(--text); padding: 0; box-shadow: 0 20px 80px rgba(18, 23, 20, .33); }
+dialog::backdrop { background: rgba(18, 23, 20, .53); }
+.danger { color: var(--alarm); }
+.topbar { min-height: 120px; display: flex; align-items: center; justify-content: space-between; gap: 28px; }
+.eyebrow { margin: 0 0 5px; color: var(--brand); font-size: var(--t-xs); font-weight: 700; }
 h1, h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
-h1 { font-size: 28px; }
-h2 { font-size: 24px; }
+h1 { font-size: var(--t-2xl); }
+h2 { font-size: var(--t-2xl); }
 .plant-identity { display: grid; gap: 4px; }
-.profile-control { display: flex; align-items: center; gap: 9px; min-height: 28px; color: var(--muted); font-size: 12px; }
-.profile-control strong { color: var(--ink); }
+.profile-control { display: flex; align-items: center; gap: 9px; min-height: 28px; color: var(--dim); font-size: var(--t-xs); }
+.profile-control strong { color: var(--text); }
 .profile-control span { font-style: italic; }
 .topbar-aside { display: flex; align-items: center; gap: 20px; }
 .connection { display: flex; align-items: center; justify-content: flex-end; gap: 11px; min-width: 285px; }
 .connection-copy { display: grid; gap: 2px; }
-.connection-copy strong { font-size: 14px; }
-.connection-copy span { color: var(--muted); font-size: 12px; }
+.connection-copy strong { font-size: var(--t-md); }
+.connection-copy span { color: var(--dim); font-size: var(--t-xs); }
 /* Battery: an outline with a terminal nub, filled to the charge. Sized to the
    12px text beside it, and drawn in the text colour so it follows the theme. */
 /* The gauge carries its own layout. It was scoped to the connection block
    in the sensor-as-plant topbar, so when the battery moved to the sensor's
    own page it lost its shape and drew as bare text. */
-.battery { --battery-level: var(--leaf); display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.battery { --battery-level: var(--brand); display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .battery[data-level="low"] { --battery-level: var(--sun); }
-.battery[data-level="critical"] { --battery-level: var(--coral); }
-.battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: 3px; }
+.battery[data-level="critical"] { --battery-level: var(--alarm); }
+.battery-glyph { position: relative; flex: none; width: 21px; height: 10px; margin-right: 3px; border: 1px solid currentColor; border-radius: var(--r-ctl); }
 .battery-glyph::after { content: ""; position: absolute; top: 50%; right: -4px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: currentColor; transform: translateY(-50%); }
 .battery-fill { position: absolute; top: 1px; bottom: 1px; left: 1px; width: calc((100% - 2px) * var(--charge, 0) / 100); border-radius: 1.5px; background: var(--battery-level); }
 .battery[data-level="unknown"] .battery-glyph { opacity: 0.5; }
@@ -299,7 +351,7 @@ h2 { font-size: 24px; }
    outline is a ring of hard drop shadows on the wrapper, since the clip that
    cuts the bolt shape would clip a shadow drawn on the bolt itself. */
 .battery-bolt { position: absolute; top: -1px; left: 50%; width: 7px; height: 10px; transform: translateX(-50%); filter: drop-shadow(0.75px 0 0 currentColor) drop-shadow(-0.75px 0 0 currentColor) drop-shadow(0 0.75px 0 currentColor) drop-shadow(0 -0.75px 0 currentColor); }
-.battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--panel); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
+.battery-bolt::before { content: ""; position: absolute; inset: 0; background: var(--surface); clip-path: polygon(64% 0, 6% 58%, 44% 58%, 34% 100%, 94% 40%, 56% 40%); }
 /* The voltage is one thing, so it breaks before the separator or not at
    all. In a narrow figure card it was wrapping between the number and its
    unit, leaving a line ending "4.05" and the next beginning "V". */
@@ -315,41 +367,41 @@ main > * { min-width: 0; }
 /* Standing beside the pot's response, the two conclusions the hub draws read
    as a pair: same rule above and below, same tinted ground, and this one
    keeps the larger type because it is the answer to the bigger question. */
-.plant-assessment { min-height: 112px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--line); background: #f8fbf7; }
+.plant-assessment { min-height: 112px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--n200); background: var(--n50); }
 .plant-assessment > div { padding-left: 16px; border-left: 5px solid var(--sun); }
 .plant-assessment strong { display: block; font: 500 40px Georgia, "Times New Roman", serif; }
-.plant-assessment > p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
-.plant-assessment[data-level="thriving"] > div { border-color: var(--leaf); }
+.plant-assessment > p { margin: 0; color: var(--dim); font-size: var(--t-md); line-height: 1.5; }
+.plant-assessment[data-level="thriving"] > div { border-color: var(--brand); }
 .plant-assessment[data-level="watch"] > div { border-color: var(--sun); }
-.plant-assessment[data-level="stressed"] > div { border-color: var(--coral); }
-.plant-assessment[data-level="critical"] > div { border-color: #a52f2f; }
+.plant-assessment[data-level="stressed"] > div { border-color: var(--alarm); }
+.plant-assessment[data-level="critical"] > div { border-color: var(--alarm); }
 /* Before a verdict exists, the panel is a placeholder. It keeps its
    place in the page -- the reader should see where the answer will
    appear -- but at the size of a caption and in the colour of an
    absence, not the size and colour of a conclusion. */
 .plant-assessment[data-level="waiting"] > div,
-.drainage-assessment[data-level="learning"] > div { border-left-color: var(--line); }
+.drainage-assessment[data-level="learning"] > div { border-left-color: var(--n200); }
 .plant-verdicts .plant-assessment[data-level="waiting"] strong,
 .plant-verdicts .drainage-assessment[data-level="learning"] strong,
 .plant-assessment[data-level="waiting"] strong,
 .drainage-assessment[data-level="learning"] strong {
-  font-size: 19px; color: var(--muted);
+  font-size: var(--t-xl); color: var(--dim);
 }
 .plant-assessment[data-level="waiting"], .drainage-assessment[data-level="learning"] { min-height: 0; }
 .primary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.metric { min-height: 142px; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; justify-content: space-between; }
-.metric > span { color: var(--muted); font-size: 13px; font-weight: 600; }
-.metric strong { display: flex; align-items: baseline; gap: 5px; font-size: 34px; font-weight: 600; }
+.metric { min-height: 142px; padding: 18px; background: var(--surface); border-radius: var(--r-ctl); display: flex; flex-direction: column; justify-content: space-between; box-shadow: var(--sh-1); }
+.metric > span { color: var(--dim); font-size: var(--t-sm); font-weight: 600; }
+.metric strong { display: flex; align-items: baseline; gap: 5px; font-size: var(--t-3xl); font-weight: 600; }
 .metric b { font: inherit; }
-.metric small { color: var(--muted); font-size: 13px; font-weight: 500; }
-.hero-metric { grid-row: span 2; min-height: 392px; background: #f8fcfd; border-color: #a9cad6; }
+.metric small { color: var(--dim); font-size: var(--t-sm); font-weight: 500; }
+.hero-metric { grid-row: span 2; min-height: 392px; background: var(--n50); border-color: #a9cad6; }
 .moisture { gap: 14px; }
 .moisture-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.moisture-heading > span { color: var(--muted); font-size: 13px; font-weight: 600; }
-.moisture-heading strong { font-size: 42px; }
-.moisture-heading small { color: var(--muted); }
-.moisture-pot-shell { filter: drop-shadow(0 0 3px #17211b8f) drop-shadow(0 10px 9px #17211b61); }
-.moisture-vessel { --fill: 0%; --target-low: 55%; --target-size: 15%; --cycle-low: 35%; --cycle-size: 35%; --refill: 35%; position: relative; min-height: 238px; overflow: hidden; border: 4px solid #506c62; background: #edf3f3; box-shadow: inset 0 0 0 4px #ffffffaa; clip-path: polygon(2% 0, 98% 0, 91% 91%, 89% 96%, 85% 100%, 15% 100%, 11% 96%, 9% 91%); }
+.moisture-heading > span { color: var(--dim); font-size: var(--t-sm); font-weight: 600; }
+.moisture-heading strong { font-size: var(--t-3xl); }
+.moisture-heading small { color: var(--dim); }
+.moisture-pot-shell { filter: drop-shadow(0 0 3px rgba(18, 23, 20, .56)) drop-shadow(0 10px 9px rgba(18, 23, 20, .38)); }
+.moisture-vessel { --fill: 0%; --target-low: 55%; --target-size: 15%; --cycle-low: 35%; --cycle-size: 35%; --refill: 35%; position: relative; min-height: 238px; overflow: hidden; border: 4px solid #506c62; background: var(--n100); box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--surface) 67%, transparent); clip-path: polygon(2% 0, 98% 0, 91% 91%, 89% 96%, 85% 100%, 15% 100%, 11% 96%, 9% 91%); }
 .moisture-fill { position: absolute; z-index: 1; inset-inline: 0; bottom: 0; height: var(--fill); background: linear-gradient(180deg, #4aa9c8, #277b9d); transition: height 700ms ease; }
 /* The surface, as two waves rather than one.
  *
@@ -377,20 +429,20 @@ main > * { min-width: 0; }
 /* The comfortable cycle is the green zone: anywhere in it the plant is fine.
    The after-watering target is only a bracket at its edge, what a watering
    should reach, not where the soil has to stay. */
-.moisture-cycle-band { position: absolute; z-index: 2; inset-inline: 7px; bottom: var(--cycle-low); height: var(--cycle-size); border-block: 2px solid #2a754a; background: #bfe2c9a6; }
-.moisture-target-band { position: absolute; z-index: 3; right: 11%; width: 8px; bottom: var(--target-low); height: var(--target-size); border: 2px solid #2a754a; border-left: 0; }
-.moisture-cycle-band span, .moisture-target-band span, .moisture-refill-line span { position: absolute; padding: 2px 5px; color: #214b34; background: #f8fcfdee; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.moisture-cycle-band { position: absolute; z-index: 2; inset-inline: 7px; bottom: var(--cycle-low); height: var(--cycle-size); border-block: 2px solid var(--brand); background: #bfe2c9a6; }
+.moisture-target-band { position: absolute; z-index: 3; right: 11%; width: 8px; bottom: var(--target-low); height: var(--target-size); border: 2px solid var(--brand); border-left: 0; }
+.moisture-cycle-band span, .moisture-target-band span, .moisture-refill-line span { position: absolute; padding: 2px 5px; color: var(--on-vessel); background: #f8fcfdee; font-size: var(--t-xs); font-weight: 700; white-space: nowrap; }
 /* The pot narrows toward its base, so labels keep clear of the slanted walls. */
 .moisture-cycle-band span { top: 3px; left: 10%; }
 .moisture-target-band span { top: 3px; right: 14px; font-weight: 600; }
 .moisture-refill-line span { right: 10%; }
-.moisture-refill-line { position: absolute; z-index: 4; inset-inline: 7px; bottom: var(--refill); border-top: 2px dashed #b46e18; }
-.moisture-refill-line span { bottom: 3px; color: #7a4a0e; }
+.moisture-refill-line { position: absolute; z-index: 4; inset-inline: 7px; bottom: var(--refill); border-top: 2px dashed var(--warn-ink); }
+.moisture-refill-line span { bottom: 3px; color: #8a4b12; }  /* fixed, like the rest of the vessel's labels */
 .moisture-vessel[data-phase="critically-dry"] { border-color: #9e3d2d; }
 .moisture-vessel[data-phase="too-wet"] { border-color: #194b6c; }
 .moisture-caption { display: grid; gap: 2px; }
-.moisture-caption b { color: var(--ink); font-size: 15px; }
-.moisture-caption span { color: var(--muted); font-size: 11px; }
+.moisture-caption b { color: var(--text); font-size: var(--t-md); }
+.moisture-caption span { color: var(--dim); font-size: var(--t-xs); }
 /* The reading, floating on the line it belongs to.
  *
  * It bobs on the longer of the two waves and leans with it, a beat behind,
@@ -411,9 +463,9 @@ main > * { min-width: 0; }
      follows the water down at the same pace the water falls. */
   position: absolute; z-index: 4; left: 50%; translate: -50% 0;
   bottom: var(--fill); margin-bottom: 4px;
-  padding: 1px 6px; border-radius: 8px;
+  padding: 1px 6px; border-radius: var(--r-card);
   color: #10465c; background: #ffffffee;
-  font-size: 10px; font-weight: 700; font-style: normal; letter-spacing: 0.02em;
+  font-size: var(--t-xs); font-weight: 700; font-style: normal; letter-spacing: 0.02em;
   animation: water-bob 14s ease-in-out infinite;
   transition: bottom 700ms ease;
 }
@@ -430,24 +482,24 @@ main > * { min-width: 0; }
 @keyframes water-drift { from { background-position-x: 0; } to { background-position-x: 60px; } }
 @keyframes water-drift-back { from { background-position-x: 0; } to { background-position-x: -86px; } }
 @media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .moisture-fill i, .moisture-waterline, .care-event.new { animation: none; transition: none; } }
-.soil-temp { border-top: 4px solid var(--coral); }
+.soil-temp { border-top: 4px solid var(--alarm); }
 /* Lit for what is being measured, not for how it is going -- so it goes
    out when there is no reading to be about. */
-.metric[data-reading="none"] { border-top-color: var(--line); }
+.metric[data-reading="none"] { border-top-color: var(--n200); }
 .root-zone-gauge { min-height: 190px; gap: 9px; }
 /* Beside the pot: soil temperature above, the moisture month below. */
 .primary-grid .soil-temp, .primary-grid .moisture-trend { grid-column: span 2; }
-.moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--water); }
+.moisture-trend { min-height: 190px; gap: 6px; border-top: 4px solid var(--info); }
 .moisture-trend-chart { margin-top: 0; }
 .moisture-trend-empty { min-height: 110px; }
 /* Any chart that draws a comfortable band or a refill line, not a named
    list of them: each new chart that reused these classes was getting an
    invisible line and a black label until its id was added here. */
 .history-chart .trend-cycle { fill: #bfe2c9a6; }
-.history-chart .trend-cycle-edge { stroke: #2a754a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.history-chart .trend-cycle-label { fill: #214b34; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
-.history-chart .trend-refill { stroke: #b46e18; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
-.history-chart .trend-refill-label { fill: #7a4a0e; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+.history-chart .trend-cycle-edge { stroke: var(--brand); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.history-chart .trend-cycle-label { fill: var(--brand-ink); font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
+.history-chart .trend-refill { stroke: var(--warn-ink); stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.history-chart .trend-refill-label { fill: var(--warn-ink); font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 /* The reserve below thirsty is painted by a gradient defined per chart, so it
    carries no fill here; only the floor it runs down to is drawn. */
 .history-chart .trend-dry { stroke: #a33a2c; stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -455,71 +507,71 @@ main > * { min-width: 0; }
    is not a reading and not a threshold, it is the reason the bands
    either side of it disagree. */
 .history-chart .trend-repot { stroke: #8a8578; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.history-chart .trend-repot-label { fill: #6f6a5e; font-size: 10px; font-weight: 600; }
+.history-chart .trend-repot-label { fill: #6f6a5e; font-size: var(--t-xs); font-weight: 600; }
 /* Filled where the scale called the reading settled, hollow where it did
    not. A scale that never settles is the thing being looked for, so those
    points are shown rather than dropped. */
-.history-chart .weight-point.settled { fill: #2a754a; }
-.history-chart .weight-point.unsettled { fill: #ffffff; stroke: #b46e18; stroke-width: 1.2; }
+.history-chart .weight-point.settled { fill: var(--brand); }
+.history-chart .weight-point.unsettled { fill: #ffffff; stroke: var(--warn-ink); stroke-width: 1.2; }
 .history-chart .trend-dry-label { fill: #8a2f23; font: 700 10px "Avenir Next", "Gill Sans", sans-serif; }
 #plant-weight-chart .history-line, .moisture-trend-chart .history-line { stroke-width: 2; }
 .root-zone-gauge .range-track { margin-top: 3px; }
 .root-zone-gauge .range-status { min-height: 17px; }
 .care-log, .watering-calendar, .plant-journey, .plant-weight,
 .climate-history, .plant-lighting-summary, .plant-verdicts,
-.plant-light, .plant-photos { padding: 24px; background: #fbfdfa; border: 1px solid var(--line); border-radius: 6px; }
+.plant-light, .plant-photos { padding: 24px; background: var(--surface); border-radius: var(--r-card); box-shadow: var(--sh-1); }
 .climate-history-heading { align-items: center; }
-.history-range-selector { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: #edf2ec; }
-.history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; }
-.history-range-selector button[aria-pressed="true"] { color: white; background: var(--leaf); }
-.climate-history-status { min-height: 18px; margin: -10px 0 14px; color: var(--muted); font-size: 12px; }
-.climate-history-status.error { color: #a34831; }
+.history-range-selector { display: flex; padding: 3px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--n100); }
+.history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.history-range-selector button[aria-pressed="true"] { color: var(--on-brand); background: var(--brand); }
+.climate-history-status { min-height: 18px; margin: -10px 0 14px; color: var(--dim); font-size: var(--t-xs); }
+.climate-history-status.error { color: var(--alarm); }
 /* As many columns as fit, not always two: a thermometer has two
    measurements and fills a row, a scale has one and used to sit in
    the left half with the right half empty. */
 .climate-chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
-.climate-chart-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.climate-chart-card { min-width: 0; padding: 16px; border-radius: var(--r-ctl); background: var(--surface); box-shadow: var(--sh-1); }
 .climate-chart-card header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.climate-chart-card header > span { color: var(--muted); font-size: 13px; font-weight: 700; }
-.climate-chart-card header strong { font-size: 25px; }
+.climate-chart-card header > span { color: var(--dim); font-size: var(--t-sm); font-weight: 700; }
+.climate-chart-card header strong { font-size: var(--t-2xl); }
 .climate-chart-card header b { font: inherit; }
-.climate-chart-card header small { margin-left: 4px; color: var(--muted); font-size: 11px; }
+.climate-chart-card header small { margin-left: 4px; color: var(--dim); font-size: var(--t-xs); }
 .history-chart { width: 100%; height: auto; margin-top: 10px; overflow: visible; }
-.history-chart .grid-line { stroke: #e5ebe3; stroke-width: 1; }
+.history-chart .grid-line { stroke: var(--n100); stroke-width: 1; }
 .history-chart .ideal-band { fill: #bfe2c9a6; }
 .history-chart .ideal-edge { stroke: #57956a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.history-chart .ideal-band-label { fill: #214b34; font: 700 11px "Avenir Next", "Gill Sans", sans-serif; }
+.history-chart .ideal-band-label { fill: var(--brand-ink); font: 700 11px "Avenir Next", "Gill Sans", sans-serif; }
 .history-range-status { margin-top: 10px; }
-.history-chart .axis-label { fill: var(--muted); font: 11px "Avenir Next", "Gill Sans", sans-serif; }
-.history-chart .history-line { fill: none; stroke: var(--water); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.history-chart .history-point { fill: var(--water); stroke: none; }
-.history-chart .latest-point { fill: white; stroke: var(--water); stroke-width: 2; }
-.history-chart-empty { min-height: 170px; margin: 10px 0 0; display: grid; place-items: center; color: var(--muted); text-align: center; }
-.drainage-assessment { min-height: 104px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--line); background: #f7fafb; }
+.history-chart .axis-label { fill: var(--dim); font: 11px "Avenir Next", "Gill Sans", sans-serif; }
+.history-chart .history-line { fill: none; stroke: var(--info); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.history-chart .history-point { fill: var(--info); stroke: none; }
+.history-chart .latest-point { fill: white; stroke: var(--info); stroke-width: 2; }
+.history-chart-empty { min-height: 170px; margin: 10px 0 0; display: grid; place-items: center; color: var(--dim); text-align: center; }
+.drainage-assessment { min-height: 104px; padding: 20px 24px; display: grid; grid-template-columns: minmax(180px, .7fr) 2fr; align-items: center; gap: 28px; border-block: 1px solid var(--n200); background: var(--n50); }
 .drainage-assessment > div { padding-left: 16px; border-left: 5px solid var(--sun); }
 .drainage-assessment strong { display: block; font: 500 30px Georgia, "Times New Roman", serif; }
-.watering-interval { display: block; margin-top: 4px; color: var(--water); font-size: 11px; font-weight: 700; line-height: 1.4; }
-.drainage-assessment > p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
-.drainage-assessment[data-level="suitable"] > div { border-color: var(--leaf); }
-.drainage-assessment[data-level="unsuitable"] > div { border-color: var(--coral); }
+.watering-interval { display: block; margin-top: 4px; color: var(--info); font-size: var(--t-xs); font-weight: 700; line-height: 1.4; }
+.drainage-assessment > p { margin: 0; color: var(--dim); font-size: var(--t-md); line-height: 1.5; }
+.drainage-assessment[data-level="suitable"] > div { border-color: var(--brand); }
+.drainage-assessment[data-level="unsuitable"] > div { border-color: var(--alarm); }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 22px; }
 .section-heading h1 { margin: 2px 0 4px; }
-.section-heading > span { color: var(--muted); font-size: 12px; }
+.section-heading > span { color: var(--dim); font-size: var(--t-xs); }
 .watering-calendar { min-width: 0; }
 .watering-calendar-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding: 4px 0 10px; }
 .watering-calendar-scroll:focus-visible { outline-offset: 3px; }
 .watering-calendar-layout { width: 766px; display: grid; grid-template-columns: 24px 742px; grid-template-rows: 18px 95px; }
-.watering-calendar-months { display: grid; grid-template-columns: repeat(53, 11px); gap: 3px; color: var(--muted); font-size: 10px; }
+.watering-calendar-months { display: grid; grid-template-columns: repeat(53, 11px); gap: 3px; color: var(--dim); font-size: var(--t-xs); }
 .watering-calendar-months span { white-space: nowrap; }
-.watering-calendar-weekdays { position: relative; color: var(--muted); font-size: 9px; }
+.watering-calendar-weekdays { position: relative; color: var(--dim); font-size: var(--t-xs); }
 .watering-calendar-weekdays span { position: absolute; right: 5px; }
 .watering-calendar-weekdays span:nth-child(1) { top: 14px; }
 .watering-calendar-weekdays span:nth-child(2) { top: 42px; }
 .watering-calendar-weekdays span:nth-child(3) { top: 70px; }
 .watering-calendar-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 11px); grid-template-columns: repeat(53, 11px); gap: 3px; }
-.watering-calendar-day, .watering-calendar-legend i { width: 11px; height: 11px; flex: 0 0 11px; border: 1px solid #d8dfd6; border-radius: 2px; background: #e8ede7; }
-.watering-calendar-day[data-state="watered"], .watering-calendar-legend i[data-state="watered"] { border-color: #225f83; background: var(--water); }
-.watering-calendar-legend i[data-state="moisture"][data-level="1"] { border-color: #bed6c4; background: #dcecdf; }
+.watering-calendar-day, .watering-calendar-legend i { width: 11px; height: 11px; flex: 0 0 11px; border: 1px solid var(--n200); border-radius: 2px; background: var(--n100); }
+.watering-calendar-day[data-state="watered"], .watering-calendar-legend i[data-state="watered"] { border-color: #225f83; background: var(--info); }
+.watering-calendar-legend i[data-state="moisture"][data-level="1"] { border-color: #bed6c4; background: var(--brand-wash); }
 .watering-calendar-legend i[data-state="moisture"][data-level="2"] { border-color: #77ad85; background: #91c49d; }
 .watering-calendar-legend i[data-state="moisture"][data-level="3"] { border-color: #276f43; background: #3e985d; }
 .watering-calendar-day[data-state="drying"][data-level="1"], .watering-calendar-legend i[data-state="drying"][data-level="1"] { border-color: #c69a23; background: #e0b83f; }
@@ -535,54 +587,54 @@ main > * { min-width: 0; }
 }
 .watering-calendar-day[data-future="true"] { opacity: .3; }
 .watering-calendar-day[data-outside-year="true"] { visibility: hidden; }
-.watering-calendar-legend { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10px; }
-.journey-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--line); }
-.journey-stats > div { min-height: 112px; padding: 20px; display: grid; align-content: center; gap: 4px; border-right: 1px solid var(--line); }
+.watering-calendar-legend { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 8px; color: var(--dim); font-size: var(--t-xs); }
+.journey-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--n200); }
+.journey-stats > div { min-height: 112px; padding: 20px; display: grid; align-content: center; gap: 4px; border-right: 1px solid var(--n200); }
 .journey-stats > div:last-child { border-right: 0; }
 .journey-stats strong { font: 500 36px Georgia, "Times New Roman", serif; font-variant-numeric: tabular-nums; }
-.journey-stats span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.journey-stats span { color: var(--dim); font-size: var(--t-xs); font-weight: 600; }
 .care-log-list { position: relative; display: grid; gap: 0; padding-left: 24px; }
-.care-log-list::before { content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px; width: 1px; background: var(--line); }
-.care-event { position: relative; display: grid; grid-template-columns: 120px 1fr; gap: 5px 18px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.care-log-list::before { content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px; width: 1px; background: var(--n200); }
+.care-event { position: relative; display: grid; grid-template-columns: 120px 1fr; gap: 5px 18px; padding: 16px 0; border-bottom: 1px solid var(--n200); }
 .care-event.new { animation: care-event-arrival 650ms ease-out; }
 .care-event:last-child { border-bottom: 0; }
-.care-event::before { content: ""; position: absolute; left: -22px; top: 22px; width: 9px; height: 9px; border-radius: 50%; background: var(--water); box-shadow: 0 0 0 4px #dcecf2; }
-.care-event.fertilizing::before { background: var(--sun); box-shadow: 0 0 0 4px #f4e8c5; }
-.care-event.watering_due::before { background: var(--coral); box-shadow: 0 0 0 4px #f3dfd9; }
-.care-event.drainage_assessment::before { background: var(--leaf); box-shadow: 0 0 0 4px #dcecdf; }
-.care-event.lighting::before { background: var(--gold); box-shadow: 0 0 0 4px #f5ead0; }
+.care-event::before { content: ""; position: absolute; left: -22px; top: 22px; width: 9px; height: 9px; border-radius: 50%; background: var(--info); box-shadow: 0 0 0 4px var(--info-wash); }
+.care-event.fertilizing::before { background: var(--sun); box-shadow: 0 0 0 4px var(--warn-wash); }
+.care-event.watering_due::before { background: var(--alarm); box-shadow: 0 0 0 4px var(--alarm-wash); }
+.care-event.drainage_assessment::before { background: var(--brand); box-shadow: 0 0 0 4px var(--brand-wash); }
+.care-event.lighting::before { background: var(--gold); box-shadow: 0 0 0 4px var(--warn-wash); }
 /* A reading rather than an event: the same water blue the use chart uses. */
 /* Soil, so brown: a repot is the one entry about what the plant is in
    rather than what it was given. */
-.care-event.repotting::before { background: #9a7b53; box-shadow: 0 0 0 4px #efe6d9; }
-.care-event.observation::before { background: #7fb6cf; box-shadow: 0 0 0 4px #dceaf1; }
-.care-event time { grid-row: span 2; color: var(--muted); font-size: 12px; }
+.care-event.repotting::before { background: #9a7b53; box-shadow: 0 0 0 4px var(--warn-wash); }
+.care-event.observation::before { background: #7fb6cf; box-shadow: 0 0 0 4px var(--info-wash); }
+.care-event time { grid-row: span 2; color: var(--dim); font-size: var(--t-xs); }
 .care-event-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.care-event-heading strong { font-size: 15px; }
-.care-event-heading span { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.care-event p, .care-log-empty { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.care-event-heading strong { font-size: var(--t-md); }
+.care-event-heading span { color: var(--dim); font-size: var(--t-xs); white-space: nowrap; }
+.care-event p, .care-log-empty { margin: 0; color: var(--dim); font-size: var(--t-sm); line-height: 1.5; }
 .care-log-empty { padding: 12px 0; }
 @keyframes care-event-arrival { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 .raw-report-scroll { width: 100%; overflow-x: auto; }
-.range-track { position: relative; height: 12px; border-radius: 2px; background: #e5eae3; box-shadow: inset 0 0 0 1px #d9ded7; }
+.range-track { position: relative; height: 12px; border-radius: 2px; background: var(--n100); box-shadow: inset 0 0 0 1px var(--n200); }
 .ideal-range { position: absolute; inset-block: 0; background: #9bcda9; box-shadow: 0 0 0 1px #57956a; }
-.value-marker { position: absolute; top: -6px; width: 3px; height: 24px; margin-left: -1px; background: var(--ink); border-radius: 1px; box-shadow: 0 0 0 2px white; }
-.range-labels { display: grid; grid-template-columns: 1fr auto 1fr; color: var(--muted); font-size: 11px; }
+.value-marker { position: absolute; top: -6px; width: 3px; height: 24px; margin-left: -1px; background: var(--text); border-radius: 1px; box-shadow: 0 0 0 2px white; }
+.range-labels { display: grid; grid-template-columns: 1fr auto 1fr; color: var(--dim); font-size: var(--t-xs); }
 .range-labels span:last-child { text-align: right; }
-.ideal-label { padding: 2px 6px; color: #326143; background: #e0f0e3; border-radius: 3px; font-weight: 700; }
-.range-status { margin: 0; color: var(--muted); font-size: 13px; }
-.range-status.in-range { color: var(--leaf); font-weight: 700; }
-.range-status.out-range { color: #a34831; font-weight: 700; }
-.sensor-settings { padding: 24px; display: grid; gap: 20px; border: 1px solid var(--line); border-radius: 6px; background: #f8faf6; }
+.ideal-label { padding: 2px 6px; color: var(--brand-ink); background: var(--brand-wash); border-radius: var(--r-ctl); font-weight: 700; }
+.range-status { margin: 0; color: var(--dim); font-size: var(--t-sm); }
+.range-status.in-range { color: var(--brand); font-weight: 700; }
+.range-status.out-range { color: var(--alarm); font-weight: 700; }
+.sensor-settings { padding: 24px; display: grid; gap: 20px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--sh-1); }
 .sensor-settings .section-heading { margin-bottom: 0; }
-.sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-xs); }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
-.sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
-.sensor-settings-form output { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
-.sensor-settings-form input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
+.sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
+.sensor-settings-form output { grid-column: 1 / -1; color: var(--dim); font-size: var(--t-xs); }
+.sensor-settings-form input[readonly] { color: var(--text); background: var(--n100); cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
-.settings-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
+.settings-actions button { color: var(--on-brand); background: var(--brand); border-color: var(--brand); }
 
 @media (max-width: 760px) {
   .household-nav { align-items: stretch; flex-wrap: wrap; padding: 10px 0; }
@@ -600,7 +652,7 @@ main > * { min-width: 0; }
   .hero-metric { grid-column: span 2; grid-row: auto; min-height: 360px; }
   .journey-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey-stats > div:nth-child(even) { border-right: 0; }
-  .journey-stats > div:not(:nth-last-child(-n+1)) { border-bottom: 1px solid var(--line); }
+  .journey-stats > div:not(:nth-last-child(-n+1)) { border-bottom: 1px solid var(--n200); }
   .climate-chart-grid { grid-template-columns: 1fr; }
 }
 
@@ -608,7 +660,7 @@ main > * { min-width: 0; }
   .household-nav, .topbar, .hub-health, main { width: min(100% - 24px, 1180px); }
   .metric { min-height: 126px; padding: 14px; }
   .metric strong { font-size: 1.1em; }
-  .moisture-heading strong { font-size: 36px; }
+  .moisture-heading strong { font-size: var(--t-3xl); }
   .moisture-vessel { min-height: 220px; }
   .care-log, .watering-calendar, .plant-journey, .plant-weight,
   .climate-history, .fleet-overview, .sensor-settings,
@@ -618,7 +670,7 @@ main > * { min-width: 0; }
   .history-range-selector button { flex: 1; padding-inline: 4px; }
   .profile-control { align-items: flex-start; flex-wrap: wrap; }
   .plant-assessment { min-height: 140px; padding: 18px 4px; grid-template-columns: 1fr; gap: 14px; }
-  .plant-assessment strong { font-size: 34px; }
+  .plant-assessment strong { font-size: var(--t-3xl); }
   .drainage-assessment { min-height: 140px; padding: 18px 4px; grid-template-columns: 1fr; gap: 14px; }
   .care-event { grid-template-columns: 1fr; }
   .care-event time { grid-row: auto; }
@@ -632,53 +684,53 @@ main > * { min-width: 0; }
 
 /* A switch, built on a real checkbox so it keeps its keyboard behaviour and
    announces itself correctly; only its appearance is replaced. */
-.switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; display: inline-block; position: relative; width: 52px; min-width: 52px; max-width: 52px; height: 30px; padding: 0; margin: 0; border: 0; border-radius: 999px; background: #cfd8d1; cursor: pointer; transition: background 160ms ease; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 26px; height: 26px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #17211b40; transition: transform 160ms ease; }
+.switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; display: inline-block; position: relative; width: 52px; min-width: 52px; max-width: 52px; height: 30px; padding: 0; margin: 0; border: 0; border-radius: 999px; background: var(--n200); cursor: pointer; transition: background 160ms ease; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 26px; height: 26px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 4px rgba(18, 23, 20, .25); transition: transform 160ms ease; }
 .switch:hover { background: #c3ccc5; }
-.switch:checked { background: var(--leaf); }
+.switch:checked { background: var(--brand); }
 .switch:checked:hover { background: #15613f; }
 .switch:checked::after { transform: translateX(22px); }
 .switch:disabled { cursor: not-allowed; opacity: 0.5; }
 .switch-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 6px 0; cursor: pointer; }
 .switch-row > div { display: grid; gap: 2px; }
 .switch-row strong { font-weight: 600; }
-.switch-row small { color: var(--muted); }
+.switch-row small { color: var(--dim); }
 .sensor-identity { display: grid; justify-items: end; gap: 3px; }
-.config-revision { padding: 3px 9px; border-radius: 12px; color: var(--muted); background: #eef1ec; font-size: 12px; font-weight: 700; }
+.config-revision { padding: 3px 9px; border-radius: var(--r-card); color: var(--dim); background: var(--n100); font-size: var(--t-xs); font-weight: 700; }
 .config-revision.just-changed { animation: revision-landed 1600ms ease-out; }
 @keyframes revision-landed {
-  0% { color: white; background: var(--leaf); transform: scale(1.06); }
-  60% { color: white; background: var(--leaf); transform: scale(1); }
-  100% { color: var(--muted); background: #eef1ec; }
+  0% { color: var(--on-brand); background: var(--brand); transform: scale(1.06); }
+  60% { color: var(--on-brand); background: var(--brand); transform: scale(1); }
+  100% { color: var(--dim); background: var(--n100); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .config-revision.just-changed { animation: none; color: var(--leaf); background: #e5f1e8; }
+  .config-revision.just-changed { animation: none; color: var(--brand); background: var(--brand-wash); }
 }
 @media (prefers-reduced-motion: reduce) {
   .switch, .switch::after { transition: none; }
 }
 
 /* Settings */
-.settings-page { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
-.primary-action { padding: 11px 18px; border: 1px solid var(--leaf); border-radius: 5px; color: white; background: var(--leaf); text-decoration: none; font-weight: 700; white-space: nowrap; }
+.settings-page { padding: 30px; background: transparent; }
+.primary-action { padding: 11px 18px; border: 1px solid var(--brand); border-radius: var(--r-ctl); color: var(--on-brand); background: var(--brand); text-decoration: none; font-weight: 700; white-space: nowrap; }
 .primary-action:hover { background: #125638; }
-.secondary-action { padding: 10px 17px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; text-align: center; white-space: nowrap; }
-.secondary-action:hover { border-color: var(--leaf); color: var(--leaf); }
+.secondary-action { padding: 10px 17px; border: 1px solid var(--n200); border-radius: var(--r-ctl); color: var(--text); background: var(--surface); text-decoration: none; font-weight: 700; text-align: center; white-space: nowrap; }
+.secondary-action:hover { border-color: var(--brand); color: var(--brand); }
 /* The bar scrolls on its own rather than widening the page: on a phone seven
    tabs do not fit, and a flex row that cannot shrink pushes every panel below
    it off the right edge of the screen. */
-.settings-tabs { margin: 18px 0; padding-bottom: 10px; display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
-.settings-tab { flex: 0 0 auto; padding: 8px 14px; border-radius: 5px; color: var(--muted); text-decoration: none; white-space: nowrap; }
-.settings-tab:hover { background: #e5f1e8; }
-.settings-tab.active { color: white; background: var(--leaf); }
+.settings-tabs { margin: 18px 0; padding: 3px; display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; border-radius: var(--r-pill); background: var(--n100); }
+.settings-tab { flex: 0 0 auto; padding: 7px 15px; border-radius: var(--r-pill); color: var(--dim); font-weight: 550; text-decoration: none; white-space: nowrap; }
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { color: var(--text); background: var(--surface); box-shadow: var(--sh-1); }
 .settings-panel-group { display: grid; gap: 14px; }
 .settings-sensor-list { display: grid; gap: 12px; }
-.settings-sensor { padding: 19px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.settings-sensor { padding: 19px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--sh-1); }
 .settings-sensor-body { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .settings-sensor-heading { display: flex; align-items: center; gap: 10px; }
-.settings-sensor-heading strong { font-size: 20px; }
-.settings-sensor-heading small { padding: 4px 8px; border-radius: 12px; color: var(--leaf); background: #e5f1e8; font-weight: 700; }
-.settings-sensor code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.settings-sensor-heading strong { font-size: var(--t-xl); }
+.settings-sensor-heading small { padding: 4px 8px; border-radius: var(--r-card); color: var(--brand); background: var(--brand-wash); font-weight: 700; }
+.settings-sensor code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-xs); }
 /* flex-shrink: 0 keeps the buttons their own size; wrap and min-width: 0 are
    what let the row admit it is out of room and break onto a second line,
    instead of its 346px min-content widening the page around it. */
@@ -694,40 +746,40 @@ main > * { min-width: 0; }
    across the days it covers, and the gaps are the days nobody measured. */
 .water-use-bar { fill: #7fb6cf; }
 .water-use-findings:empty { display: none; }
-.water-use-finding { margin-top: 14px; padding: 14px 16px; border-left: 3px solid #7fb6cf; border-radius: 0 6px 6px 0; background: #f1f6f9; }
-.water-use-finding p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.water-use-finding { margin-top: 14px; padding: 14px 16px; border-left: 3px solid #7fb6cf; border-radius: 0 6px 6px 0; background: var(--info-wash); }
+.water-use-finding p { margin: 4px 0 0; color: var(--dim); font-size: var(--t-md); }
 /* A plant not drinking with a full pot is the one worth stopping at. */
-.water-use-finding[data-code="drinking_less_while_full"] { border-left-color: var(--coral); background: #faefeb; }
+.water-use-finding[data-code="drinking_less_while_full"] { border-left-color: var(--alarm); background: var(--alarm-wash); }
 .water-use .journey-stats { margin-bottom: 18px; }
-.weight-trend { margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
-.weight-trend > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.weight-trend { margin-bottom: 18px; padding: 16px; border-radius: var(--r-ctl); background: var(--surface); box-shadow: var(--sh-1); }
+.weight-trend > span { display: block; margin-bottom: 8px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .weight-trend .history-chart { width: 100%; height: auto; }
-.weight-trend .history-chart-empty { margin: 0; color: var(--muted); font-size: 13px; }
+.weight-trend .history-chart-empty { margin: 0; color: var(--dim); font-size: var(--t-sm); }
 .weight-trend .range-status { margin-top: 6px; }
-.weight-watered-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.weight-watered-check { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-sm); white-space: nowrap; }
 /* A date needs its ten characters and a calendar button; the row's 100px
    entry width clips it to "2026-1(". */
 #plant-weight-date { width: auto; min-width: 158px; }
 /* A tick box, not one of the row's 100px entry fields. */
 .weight-watered-check input { width: auto; margin: 0; padding: 0; }
 .plant-weight-anchors { flex-wrap: wrap; margin-bottom: 16px; }
-.plant-weight-anchors label { color: var(--muted); font-size: 12px; font-weight: 700; }
-.plant-weight-anchors output { color: var(--muted); font-size: 13px; }
+.plant-weight-anchors label { color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.plant-weight-anchors output { color: var(--dim); font-size: var(--t-sm); }
 
 /* A plant whose weight arrives by itself. The manual form stays on the
    page rather than vanishing: somebody will still lift the pot onto a
    kitchen scale now and then, and a form that disappears cannot be argued
    with. It is dimmed and inert until asked for. */
-.plant-weight-scale { margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
-.plant-weight-scale-who { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
-.plant-weight-scale-who a { color: var(--leaf); font-weight: 700; }
+.plant-weight-scale { margin-bottom: 16px; padding: 14px 16px; border: 1px solid var(--n200); border-radius: var(--r-card); background: var(--canvas); }
+.plant-weight-scale-who { margin: 0 0 10px; color: var(--text); font-size: var(--t-md); }
+.plant-weight-scale-who a { color: var(--brand); font-weight: 700; }
 .plant-weight-scale .inline-control { margin-bottom: 8px; }
-.plant-weight-scale label { color: var(--muted); font-size: 12px; font-weight: 700; }
-.plant-weight-scale output { color: var(--muted); font-size: 13px; }
-.plant-weight-scale-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.plant-weight-scale label { color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.plant-weight-scale output { color: var(--dim); font-size: var(--t-sm); }
+.plant-weight-scale-note { margin: 0 0 10px; color: var(--dim); font-size: var(--t-xs); line-height: 1.5; }
 .plant-weight-scale-actions { margin-bottom: 10px; }
-.plant-weight-scale-actions button { color: white; background: var(--leaf); border-color: var(--leaf); }
-.plant-weight-scale-actions output { color: var(--muted); font-size: 13px; }
+.plant-weight-scale-actions button { color: var(--on-brand); background: var(--brand); border-color: var(--brand); }
+.plant-weight-scale-actions output { color: var(--dim); font-size: var(--t-sm); }
 /* A pot with a scale under it is not weighed by hand, so the form for
    doing so is put away rather than dimmed: a greyed-out form still
    asks to be read before it can be dismissed. "Weigh by hand anyway",
@@ -735,10 +787,10 @@ main > * { min-width: 0; }
 .plant-weight-entry.is-automatic { display: none; }
 
 .plant-weight-entry { flex-wrap: wrap; margin-bottom: 16px; }
-.plant-weight-entry label { color: var(--muted); font-size: 12px; font-weight: 700; }
-.plant-weight-entry button { color: white; background: var(--leaf); border-color: var(--leaf); }
-.plant-weight-entry output { color: var(--muted); font-size: 13px; }
-.settings-note { margin: 0 0 18px; padding: 16px 19px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: white; line-height: 1.55; }
+.plant-weight-entry label { color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.plant-weight-entry button { color: var(--on-brand); background: var(--brand); border-color: var(--brand); }
+.plant-weight-entry output { color: var(--dim); font-size: var(--t-sm); }
+.settings-note { margin: 0 0 18px; padding: 16px 19px; border: 1px dashed var(--n200); border-radius: var(--r-card); color: var(--dim); background: var(--surface); line-height: 1.55; }
 .usage-count { margin: 0; font: 500 30px Georgia, "Times New Roman", serif; }
 }
 @keyframes row-spin { to { transform: rotate(360deg); } }
@@ -752,55 +804,55 @@ main > * { min-width: 0; }
 .light-fields { display: grid; gap: 10px; }
 .light-fields label { font-weight: 700; }
 .light-state { font-weight: 700; }
-.light-state[data-level="on"] { color: var(--leaf); }
-.light-state[data-level="off"] { color: var(--ink); }
-.light-state[data-level="unknown"] { color: var(--muted); }
-.light-state[data-level="alert"] { color: #a34831; }
-.light-alert { padding: 8px 10px; border-left: 4px solid #a34831; color: #a34831; background: #fbefeb; font-size: 13px; }
-.light-card small { color: var(--muted); }
+.light-state[data-level="on"] { color: var(--brand); }
+.light-state[data-level="off"] { color: var(--text); }
+.light-state[data-level="unknown"] { color: var(--dim); }
+.light-state[data-level="alert"] { color: var(--alarm); }
+.light-alert { padding: 8px 10px; border-left: 4px solid var(--alarm); color: var(--alarm); background: var(--alarm-wash); font-size: var(--t-sm); }
+.light-card small { color: var(--dim); }
 .light-actions { flex-wrap: wrap; justify-content: flex-end; }
 .light-actions button:disabled { opacity: .55; cursor: progress; }
 .plant-lighting-summary { display: grid; gap: 12px; }
 .plant-lighting-summary .section-heading { margin-bottom: 0; }
-.lighting-window { margin: 0; font-size: 18px; font-weight: 700; }
+.lighting-window { margin: 0; font-size: var(--t-xl); font-weight: 700; }
 .lighting-lights { display: grid; gap: 8px; }
-.lighting-light { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.lighting-light { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--n200); }
 .lighting-light-text { display: grid; gap: 2px; min-width: 0; }
 .lighting-heading-actions { display: flex; align-items: center; gap: 16px; }
-.lighting-all { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
-.lighting-light-text small { color: var(--muted); }
-.lighting-choices { grid-column: 1 / -1; display: grid; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: white; }
-.lighting-choices legend { padding: 0 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.sensor-settings-form label.lighting-choice { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 14px; font-weight: 400; }
+.lighting-all { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: var(--t-sm); font-weight: 700; cursor: pointer; }
+.lighting-light-text small { color: var(--dim); }
+.lighting-choices { grid-column: 1 / -1; display: grid; gap: 8px; margin: 0; padding: 12px 14px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); }
+.lighting-choices legend { padding: 0 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.sensor-settings-form label.lighting-choice { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: var(--t-md); font-weight: 400; }
 .sensor-settings-form .lighting-choice input { width: auto; }
-.lighting-choice input:disabled + span { color: var(--muted); }
-.lighting-empty { margin: 0; color: var(--muted); }
-.lighting-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; }
+.lighting-choice input:disabled + span { color: var(--dim); }
+.lighting-empty { margin: 0; color: var(--dim); }
+.lighting-note { grid-column: 1 / -1; margin: 0; color: var(--dim); font-size: var(--t-xs); }
 
 @media (max-width: 440px) {
-  .plant-lighting-summary { padding: 16px; }
+  .plant-lighting-summary { background: var(--surface); box-shadow: var(--sh-1); border-radius: var(--r-card); padding: 16px; }
 }
 
 /* Photographs of a plant. The tiles are a fixed shape and the pictures are
    cropped into them, because a row of different aspect ratios reads as a
    mess however good the photographs are. */
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
-.photo-tile { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
-.photo-tile[data-cover="true"] { border-color: var(--leaf); box-shadow: 0 0 0 1px var(--leaf); }
-.photo-tile img { display: block; width: 100%; height: 180px; border-radius: 6px; object-fit: cover; background: #eceff0; }
-.photo-tile figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+.photo-tile { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--n200); border-radius: var(--r-card); background: var(--surface); }
+.photo-tile[data-cover="true"] { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.photo-tile img { display: block; width: 100%; height: 180px; border-radius: var(--r-ctl); object-fit: cover; background: var(--n100); }
+.photo-tile figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dim); font-size: var(--t-xs); }
 .photo-tile figcaption div { display: flex; align-items: center; gap: 10px; }
 /* A date that reads as text until it is used. */
-.photo-date { padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; }
-.photo-date:hover, .photo-date:focus { border-color: var(--line); background: white; }
+.photo-date { padding: 2px 4px; border: 1px solid transparent; border-radius: var(--r-ctl); color: var(--dim); background: transparent; font: inherit; font-size: var(--t-xs); }
+.photo-date:hover, .photo-date:focus { border-color: var(--n200); background: var(--surface); }
 .photo-date[data-undated="true"] { font-style: italic; }
-.photo-follow-latest { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.photo-follow-latest { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .photo-follow-latest input { width: auto; margin: 0; }
-.photo-date-field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
-.photo-date-field input { padding: 9px 11px; border: 1px solid var(--line); border-radius: 5px; font: inherit; font-weight: 400; }
-.photo-tile figcaption strong { color: var(--leaf); }
-.link-button { padding: 0; border: 0; color: var(--muted); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
-.link-button:hover { color: var(--ink); }
+.photo-date-field { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.photo-date-field input { padding: 9px 11px; border: 1px solid var(--n200); border-radius: var(--r-ctl); font: inherit; font-weight: 400; }
+.photo-tile figcaption strong { color: var(--brand); }
+.link-button { padding: 0; border: 0; color: var(--dim); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.link-button:hover { color: var(--text); }
 /* Out of sight but still a real control, so the label can open it and the
    keyboard can still reach it. A display:none input is not always clickable. */
 /* Read aloud, not read: a group of checkboxes wants a name for anyone
@@ -808,49 +860,49 @@ main > * { min-width: 0; }
    at it. */
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 #plant-photo-add { cursor: pointer; }
-#plant-photo-message { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; }
+#plant-photo-message { display: block; margin-bottom: 10px; color: var(--dim); font-size: var(--t-sm); }
 
 /* The forecast: what has happened drawn solid, what is expected dashed, and
    the spread between the fastest and slowest it has drunk as a band. */
-.forecast-cone { fill: #cfe3ec99; }
-.forecast-line { stroke: #2b6c86; stroke-width: 2; stroke-dasharray: 6 4; fill: none; vector-effect: non-scaling-stroke; }
+.forecast-cone { fill: color-mix(in srgb, var(--info-wash) 60%, transparent); }
+.forecast-line { stroke: var(--info); stroke-width: 2; stroke-dasharray: 6 4; fill: none; vector-effect: non-scaling-stroke; }
 .forecast-missing-list { margin: 0; padding-left: 18px; display: grid; gap: 10px; }
 .forecast-missing-list li strong { display: block; }
-.forecast-missing-list li span { color: var(--muted); font-size: 14px; }
+.forecast-missing-list li span { color: var(--dim); font-size: var(--t-md); }
 .forecast .journey-stats { margin-bottom: 18px; }
 /* A caveat about the figures rather than a reason there are none. */
 .forecast-cautions:empty { display: none; }
-.forecast-cautions { margin-bottom: 18px; padding: 14px 16px 14px 34px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: #faf4e6; }
+.forecast-cautions { margin-bottom: 18px; padding: 14px 16px 14px 34px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: var(--warn-wash); }
 
 /* Arranging the sections.
    Each one shrinks to a tile with its name on it, because a page of
    full-height panels cannot be dragged into order: the thing being moved
    and the place it is going are never on screen together. */
-.arrange-bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 14px 18px; border: 1px solid var(--leaf); border-radius: 8px; background: #eef6f0; }
-.arrange-bar p { margin: 0; color: var(--muted); font-size: 13px; max-width: 48ch; }
-main.arranging [data-section] { min-height: 0; margin-bottom: 10px; padding: 0; border: 1px dashed var(--line); border-radius: 8px; background: white; cursor: grab; touch-action: none; }
+.arrange-bar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 14px 18px; border: 1px solid var(--brand); border-radius: var(--r-card); background: var(--n100); }
+.arrange-bar p { margin: 0; color: var(--dim); font-size: var(--t-sm); max-width: 48ch; }
+main.arranging [data-section] { min-height: 0; margin-bottom: 10px; padding: 0; border: 1px dashed var(--n200); border-radius: var(--r-card); background: var(--surface); cursor: grab; touch-action: none; }
 main.arranging [data-section] > * { display: none; }
-main.arranging [data-section]::before { content: attr(data-section-title); display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 16px; color: var(--ink); font-weight: 700; }
-main.arranging [data-section]::after { content: "⠿"; position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--muted); }
+main.arranging [data-section]::before { content: attr(data-section-title); display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 16px; color: var(--text); font-weight: 700; }
+main.arranging [data-section]::after { content: "⠿"; position: absolute; top: 50%; right: 16px; transform: translateY(-50%); color: var(--dim); }
 main.arranging [data-section] { position: relative; }
 /* Where it would land if the finger lifted now: a gap the size of the tile
    being carried, so the column already looks the way it is about to. */
-.section-gap { margin-bottom: 10px; border: 2px dashed var(--leaf); border-radius: 8px; background: #eef6f0; }
+.section-gap { margin-bottom: 10px; border: 2px dashed var(--brand); border-radius: var(--r-card); background: var(--n100); }
 /* Carried rather than slid: lifted off the column, tilted a little, and
    following the finger. */
-main.arranging [data-section].dragging { border-color: var(--leaf); background: white; box-shadow: 0 12px 28px #17211b2e; cursor: grabbing; rotate: -0.6deg; }
+main.arranging [data-section].dragging { border-color: var(--brand); background: var(--surface); box-shadow: 0 12px 28px rgba(18, 23, 20, .18); cursor: grabbing; rotate: -0.6deg; }
 
 /* The care log's controls: fold it away, and choose what it holds. */
 .care-log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 14px; }
 /* A switch for a list, not an action: the same weight as the labels beside
    it, with a caret saying which way it goes. */
-.care-log-toggle { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.care-log-toggle { padding: 0; border: 0; background: none; color: var(--dim); font: inherit; font-size: var(--t-xs); font-weight: 700; cursor: pointer; }
 .care-log-toggle::before { content: "▾ "; }
 .care-log-toggle[aria-expanded="false"]::before { content: "▸ "; }
-.care-log-toggle:hover { color: var(--ink); }
-.care-log-toggle:focus-visible { border-radius: 3px; }
+.care-log-toggle:hover { color: var(--text); }
+.care-log-toggle:focus-visible { border-radius: var(--r-ctl); }
 .care-log-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 0; padding: 0; border: 0; }
-.care-log-kinds label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.care-log-kinds label { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-sm); }
 /* A kind this plant has none of: still choosable, not worth reading. */
 .care-log-kinds label[data-empty="true"] { opacity: 0.55; }
 .care-log-kinds input { width: auto; margin: 0; }
@@ -861,24 +913,24 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* Every weighing, folded away: a list for correcting a mistake, not for
    reading. */
 .weighing-log { margin-bottom: 16px; }
-.weighing-log summary { color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
+.weighing-log summary { color: var(--dim); font-size: var(--t-xs); font-weight: 700; cursor: pointer; }
 .weighing-log-list { margin-top: 10px; display: grid; gap: 2px; }
-.weighing-row { display: grid; grid-template-columns: minmax(150px, auto) 90px 1fr auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 4px; font-size: 13px; }
-.weighing-row:nth-child(odd) { background: #f3f6f3; }
-.weighing-row time, .weighing-row span { color: var(--muted); }
+.weighing-row { display: grid; grid-template-columns: minmax(150px, auto) 90px 1fr auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: var(--r-ctl); font-size: var(--t-sm); }
+.weighing-row:nth-child(odd) { background: var(--n100); }
+.weighing-row time, .weighing-row span { color: var(--dim); }
 
 /* pH calibration: the figures first, then the one number to type. */
-.ph-explainer { margin: 0 0 16px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.ph-explainer { margin: 0 0 16px; color: var(--dim); font-size: var(--t-sm); line-height: 1.6; }
 .ph-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); grid-auto-rows: 1fr; gap: 12px; margin: 0 0 16px; }
-.ph-figures div { display: flex; flex-direction: column; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
-.ph-figures dt { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.ph-figures dd { margin: 0; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: none; }
+.ph-figures div { display: flex; flex-direction: column; padding: 12px 14px; border-radius: var(--r-card); background: var(--n100); }
+.ph-figures dt { margin: 0 0 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.ph-figures dd { margin: 0; font-size: var(--t-xl); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: none; }
 /* A phrase in a figure is still a phrase: it wraps between its words
    and is set smaller, because "battery · end device" at twenty pixels
    is shouting a detail. Numbers keep the larger size. */
 .ph-figures dd:not(:has(code)) { line-height: 1.25; }
 /* A correction found at one conductivity is not promised at another. */
-.ph-caution { margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: #faf4e6; color: var(--ink); font-size: 13px; line-height: 1.6; }
+.ph-caution { margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid var(--sun); border-radius: 0 6px 6px 0; background: var(--warn-wash); color: var(--text); font-size: var(--t-sm); line-height: 1.6; }
 
 
 
@@ -887,23 +939,23 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .sensor-identity-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
 /* Giving a sensor a plant: a sentence, then the choice and the verb. */
-.sensor-attach { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; }
-.sensor-attach label { display: block; margin-bottom: 10px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.sensor-attach { margin: 0 0 18px; padding: 14px 16px; border-radius: var(--r-card); background: var(--n100); }
+.sensor-attach label { display: block; margin-bottom: 10px; color: var(--dim); font-size: var(--t-sm); font-weight: 700; }
 .sensor-attach-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 /* The input is listed as well as the select. This block held only a select
    and a button until a name field was added to it, and nothing in the
    cascade reached the new control: the rules that style inputs elsewhere
    are scoped to ancestors this block does not have. */
 .sensor-attach-row select,
-.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 4px; background: white; font: inherit; }
+.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
 .sensor-attach-row button { flex: 0 0 auto; }
 
 /* The battery sits in a figure box on the sensor page, so it is sized to
    the figures around it rather than to a line of status text. */
-.ph-figures .battery { font-size: 20px; font-weight: 700; gap: 8px; }
-.ph-figures .battery-glyph { width: 30px; height: 15px; border-radius: 4px; border-width: 2px; }
+.ph-figures .battery { font-size: var(--t-xl); font-weight: 700; gap: 8px; }
+.ph-figures .battery-glyph { width: 30px; height: 15px; border-radius: var(--r-ctl); border-width: 2px; }
 .ph-figures .battery-glyph::after { right: -5px; width: 3px; height: 6px; }
-.sensor-plant-link { color: var(--leaf); text-decoration: none; border-bottom: 2px solid transparent; }
+.sensor-plant-link { color: var(--brand); text-decoration: none; border-bottom: 2px solid transparent; }
 .sensor-plant-link:hover { border-bottom-color: currentColor; }
 
 /* The readout that follows the pointer across a chart's dots. The targets
@@ -911,9 +963,9 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .point-target { fill: transparent; cursor: pointer; }
 .point-sheet { fill: transparent; cursor: crosshair; }
 .point-readout { pointer-events: none; transition: opacity .12s ease; }
-.point-readout-bubble { fill: var(--ink); opacity: .92; }
-.point-readout-value { fill: white; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.point-readout-when { fill: #cfd8d1; font-size: 10px; }
+.point-readout-bubble { fill: var(--text); opacity: .92; }
+.point-readout-value { fill: white; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+.point-readout-when { fill: var(--n200); font-size: var(--t-xs); }
 
 
 /* The scan for new devices.
@@ -980,8 +1032,8 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
  * layout at all: no flex, no gap, no wrapping. */
 .zigbee-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .zigbee-actions .spacer { margin-left: auto; }
-.zigbee-waiting { border-left: 3px solid var(--leaf); padding-left: 10px; }
-.zigbee-device-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.zigbee-waiting { border-left: 3px solid var(--brand); padding-left: 10px; }
+.zigbee-device-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-xs); color: var(--dim); }
 
 
 /* The Zigbee scale's page echoes the scale's own, so the same device does
@@ -1001,34 +1053,34 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .nav-button {
   display: inline-block;
   padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--ink);
-  background: white;
+  border: 1px solid var(--n200);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  background: var(--surface);
   text-decoration: none;
   font: inherit;
   cursor: pointer;
 }
-.nav-button:hover { border-color: var(--leaf); }
+.nav-button:hover { border-color: var(--brand); }
 
 /* A page of panels needs the same spacing a settings group gets; without it
    the panels sit flush against each other with only their borders between. */
 
 /* The neighbour table. Rows of key facts read better as a table than as
    lines of text, which is what they were. */
-.zigbee-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-.zigbee-table th { text-align: left; padding: 6px 10px 6px 0; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
-.zigbee-table td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.zigbee-table td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.section-subheading { margin: 18px 0 0; font-size: 13px; font-weight: 700; }
+.zigbee-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: var(--t-sm); }
+.zigbee-table th { text-align: left; padding: 6px 10px 6px 0; color: var(--dim); font-size: var(--t-xs); letter-spacing: .04em; text-transform: uppercase; border-bottom: 1px solid var(--n200); }
+.zigbee-table td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--n200); vertical-align: top; }
+.zigbee-table td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-xs); }
+.section-subheading { margin: 18px 0 0; font-size: var(--t-sm); font-weight: 700; }
 
 /* The weight is why the page exists, so it gets a card of its own rather
    than a cell among the housekeeping figures. Built from the same border,
    radius and background as those figures so it belongs to the same page. */
-.zigbee-reading { padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f6f8f5; text-align: center; }
+.zigbee-reading { padding: 18px 20px 16px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--sh-1); text-align: center; }
 .zigbee-reading-number { margin: 0; font-size: clamp(48px, 10vw, 80px); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
-.zigbee-reading-unit { margin-left: .1em; font-size: .3em; color: var(--muted); font-weight: 400; }
-.zigbee-reading-state { margin: 8px 0 0; line-height: 1.4; min-height: 1.4em; color: var(--muted); font-size: 13px; }
+.zigbee-reading-unit { margin-left: .1em; font-size: .3em; color: var(--dim); font-weight: 400; }
+.zigbee-reading-state { margin: 8px 0 0; line-height: 1.4; min-height: 1.4em; color: var(--dim); font-size: var(--t-sm); }
 
 /* Its own class, not the household's.
    Borrowing .fleet-overview put a second element with that class earlier in
@@ -1048,18 +1100,18 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    unused: `--series` went undefined, `stroke: var(--series)` resolved
    to none, and every chart became a scatter of black dots. The count
    here has to match SERIES_COLOURS in app.js. */
-.series-0 { --series: #246a9a; }
+.series-0 { --series: var(--info); }
 .series-1 { --series: #c2622d; }
-.series-2 { --series: #19734c; }
+.series-2 { --series: var(--brand); }
 .series-3 { --series: #8a4f9e; }
 .series-4 { --series: #a3341f; }
 .series-5 { --series: #4a5a66; }
 
 /* The question asked when a weighing jumps. */
-.weighing-question { max-width: 420px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); }
+.weighing-question { max-width: 420px; padding: 0; border: 1px solid var(--n200); border-radius: var(--r-card); background: var(--surface); color: var(--text); }
 .weighing-question form { display: grid; gap: 12px; padding: 20px; }
-.weighing-question h2 { margin: 0; font-size: 19px; }
-.weighing-question p { margin: 0; color: var(--muted); }
+.weighing-question h2 { margin: 0; font-size: var(--t-xl); }
+.weighing-question p { margin: 0; color: var(--dim); }
 .weighing-question::backdrop { background: rgba(20, 28, 22, 0.35); }
 
 /* The Box page's grouped controls.
@@ -1072,16 +1124,16 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
  * Scoped to this page on purpose: the box was asked for as a thing of
  * its own, and no other panel groups its fields this way. */
 #settings-box-panel #box-gains,
-#settings-box-panel #box-printer-settings { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfa; }
+#settings-box-panel #box-printer-settings { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--n50); }
 #settings-box-panel #box-gains h3,
-#settings-box-panel #box-printer-settings h3 { margin: 0; font-size: 14px; }
+#settings-box-panel #box-printer-settings h3 { margin: 0; font-size: var(--t-md); }
 #settings-box-panel #box-gains > label,
-#settings-box-panel #box-printer-settings > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+#settings-box-panel #box-printer-settings > label { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 /* Kp, Ki and Kd are one setting read together, so they share a line
    on a desktop and stack when there is no room. auto-fit rather than
    a width to guess at. */
 #settings-box-panel .box-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
-#settings-box-panel .box-field-row > label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+#settings-box-panel .box-field-row > label { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 #settings-box-panel #box-gains > p { margin: 0; }
 #settings-box-panel #box-gains > svg { width: 100%; height: auto; }
 
@@ -1089,31 +1141,31 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    rather than forcing the page sideways. */
 .alert-rule-form { display: grid; gap: 8px; margin-top: 12px; }
 .alert-rule-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
-.alert-field { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.alert-field select, .alert-field input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 5px; font: inherit; color: var(--ink); text-transform: none; letter-spacing: normal; }
+.alert-field { display: grid; gap: 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.alert-field select, .alert-field input { padding: 7px 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); font: inherit; color: var(--text); text-transform: none; letter-spacing: normal; }
 .alert-field input { width: 90px; }
-.alert-check { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+.alert-check { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: var(--t-xs); }
 #zigbee-alert-rules .settings-sensor-heading { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
 
 /* The address and the button that fills it, on one line. */
 .alerts-address { display: flex; gap: 8px; align-items: center; }
 .alerts-address input { flex: 1 1 auto; min-width: 0; }
 .alerts-address button { white-space: nowrap; }
-#alerts-topic { margin: 2px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+#alerts-topic { margin: 2px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-xs); }
 
-.room-page { padding: 30px; display: grid; gap: 14px; border: 1px solid var(--line); background: #f8faf6; }
-.room-page .section-heading p:last-child { margin: 0; color: var(--muted); }
+.room-page { padding: 30px; display: grid; gap: 14px; background: transparent; }
+.room-page .section-heading p:last-child { margin: 0; color: var(--dim); }
 .room-page .section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
-.room-page .settings-sensor-heading a { color: var(--ink); font-weight: 700; text-decoration: none; }
-.room-page .settings-sensor-heading a:hover { color: var(--leaf); text-decoration: underline; }
-.open-room { padding: 7px 14px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: white; text-decoration: none; font-weight: 700; }
-.open-room:hover { border-color: var(--leaf); color: var(--leaf); }
+.room-page .settings-sensor-heading a { color: var(--text); font-weight: 700; text-decoration: none; }
+.room-page .settings-sensor-heading a:hover { color: var(--brand); text-decoration: underline; }
+.open-room { padding: 7px 14px; border: 1px solid var(--n200); border-radius: var(--r-ctl); color: var(--text); background: var(--surface); text-decoration: none; font-weight: 700; }
+.open-room:hover { border-color: var(--brand); color: var(--brand); }
 /* A room's name on the overview is the way into its page. */
 .room-card-heading h2 a { color: inherit; text-decoration: none; }
-.room-card-heading h2 a:hover { color: var(--leaf); text-decoration: underline; }
+.room-card-heading h2 a:hover { color: var(--brand); text-decoration: underline; }
 
-.rooms-overview { padding: 30px; border: 1px solid var(--line); background: #f8faf6; }
-.rooms-overview .section-heading p:last-child { margin: 0; color: var(--muted); }
+.rooms-overview { padding: 30px; background: transparent; }
+.rooms-overview .section-heading p:last-child { margin: 0; color: var(--dim); }
 
 /* Rooms, side by side. A room is a smaller thing than a plant page, so the
    cards are narrower and the chart inside one is a glance rather than a
@@ -1123,14 +1175,14 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    worth looking at. Each card is still sized by its own content, so a
    room with no sensor stays short. */
 .rooms-grid { display: grid; grid-template-columns: 1fr; align-items: start; gap: 16px; }
-.room-card { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.room-card-heading h2 { margin: 0 0 2px; font-size: 20px; }
+.room-card { padding: 16px 18px; border: 1px solid var(--n200); border-radius: var(--r-card); background: var(--surface); }
+.room-card-heading h2 { margin: 0 0 2px; font-size: var(--t-xl); }
 .room-card-heading { margin-bottom: 12px; }
 /* Who measured the air, in the heading beside the room's own line.
    The sensor's name is the only part worth clicking, so only it is
    underlined. */
-.room-card-measured { margin: 2px 0 0; font-size: 11px; }
-.room-card-measured a { color: var(--leaf); text-decoration: none; }
+.room-card-measured { margin: 2px 0 0; font-size: var(--t-xs); }
+.room-card-measured a { color: var(--brand); text-decoration: none; }
 .room-card-measured a:hover { text-decoration: underline; }
 .room-figures { margin: 0 0 10px; }
 /* Three across on a phone, where the grid's 168px minimum gives one.
@@ -1142,8 +1194,8 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 @media (max-width: 560px) {
   .room-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .room-figures div { padding: 10px 8px; }
-  .room-figures dt { font-size: 10px; letter-spacing: 0; }
-  .room-figures dd { font-size: 16px; overflow-wrap: anywhere; }
+  .room-figures dt { font-size: var(--t-xs); letter-spacing: 0; }
+  .room-figures dd { font-size: var(--t-lg); overflow-wrap: anywhere; }
 }
 
 
@@ -1166,15 +1218,15 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .plant-light-gauge .range-track { position: relative; }
 .light-bands { position: absolute; inset: 0; display: flex; border-radius: inherit; overflow: hidden; }
 .light-band { display: block; height: 100%; }
-.light-band[data-band="too-little"] { background: #d8dbd5; }
-.light-band[data-band="getting-by"] { background: #e6dfc0; }
+.light-band[data-band="too-little"] { background: var(--n200); }
+.light-band[data-band="getting-by"] { background: var(--warn-wash); }
 .light-band[data-band="healthy"] { background: #cfe3c4; }
 .light-band[data-band="vigorous"] { background: #f0dca8; }
 .light-band[data-band="scorching"] { background: #eec6b4; }
 
 /* Next watering and water use are parts of the pot's weight rather than
    subjects of their own: one pot, one question, asked three ways. */
-.plant-weight-part { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.plant-weight-part { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--n200); }
 .plant-weight-part-heading h3 { margin: 0; font: 500 20px Georgia, "Times New Roman", serif; }
 
 /* A figure wears its unit: small, muted, sitting on the baseline at the
@@ -1192,7 +1244,7 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 0.34em;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--dim);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
@@ -1201,16 +1253,16 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* Which lamps are over this plant, in the plant page's status block. An
    answer, not a control: the switches are on the configuration page,
    because a lamp on a schedule is switched by its schedule. */
-.plant-page-lighting { color: var(--muted); font-size: 12px; text-decoration: none; }
-.plant-page-lighting:hover { color: var(--ink); text-decoration: underline; }
+.plant-page-lighting { color: var(--dim); font-size: var(--t-xs); text-decoration: none; }
+.plant-page-lighting:hover { color: var(--text); text-decoration: underline; }
 
 /* The plant's verdict and the pot's, side by side: both are what the hub
    concludes rather than what it measured, and either alone invites the
    wrong question -- a thriving plant in a pot that drains badly is a
    thing worth seeing in one glance. */
 .plant-verdicts-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
-.verdict-of { margin: 0 0 2px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.plant-verdicts .plant-assessment strong { font-size: 32px; }
+.verdict-of { margin: 0 0 2px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.plant-verdicts .plant-assessment strong { font-size: var(--t-3xl); }
 
 /* Boxed like the photographs panel, because the two verdicts belong to
    each other: read loose on the page they looked like two unrelated
@@ -1220,37 +1272,37 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* A button that is a picture. The word survives as the accessible label
    and the tooltip; only its width is given up. Sized to the 24px pointer
    target a finger needs, which is larger than the glyph inside it. */
-.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: var(--r-ctl); background: none; color: var(--dim); cursor: pointer; }
 .icon-button svg { width: 15px; height: 15px; }
-.icon-button:hover { color: var(--ink); background: white; border-color: var(--line); }
+.icon-button:hover { color: var(--text); background: var(--surface); border-color: var(--n200); }
 .icon-button:focus-visible { outline-offset: 1px; }
 /* Throwing a photograph away is the one action here that cannot be undone,
    so it colours like one when reached for. */
-.icon-button[data-danger]:hover { color: var(--coral); border-color: var(--coral); }
+.icon-button[data-danger]:hover { color: var(--alarm); border-color: var(--alarm); }
 .photo-actions { display: flex; align-items: center; gap: 2px; }
-.photo-actions strong { font-size: 11px; font-weight: 700; color: var(--leaf); }
+.photo-actions strong { font-size: var(--t-xs); font-weight: 700; color: var(--brand); }
 
 /* The filled star marks the photograph that is the cover. Gold, because
    it is the one good thing on the tile and the bin beside it is the one
    dangerous one; they should not look alike. */
-.icon-glyph { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; color: var(--muted); }
+.icon-glyph { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; color: var(--dim); }
 .icon-glyph svg { width: 15px; height: 15px; }
 .icon-glyph[data-filled] { color: var(--sun); }
 
 /* Reading the light bar with a pointer: a hairline where the cursor is,
    and a sentence under it saying what a day of that much light does. */
-.light-probe { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; pointer-events: none; }
+.light-probe { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; pointer-events: none; }
 .plant-light-gauge .range-track { cursor: crosshair; }
-.light-hint { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font-size: 12px; line-height: 1.5; }
+.light-hint { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); color: var(--text); font-size: var(--t-xs); line-height: 1.5; }
 
 /* The lamp's own switch, sitting with Edit and Remove. Pushed left of
    them so the thing that changes the lamp is not next to the thing that
    deletes it. */
 .light-power { display: inline-flex; align-items: center; margin-right: auto; }
 .light-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
-.light-working { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.light-working { margin-left: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 400; }
 /* The age a date works out to, beside the field that sets it. */
-.field-note { color: var(--muted); font-size: 11px; font-weight: 400; }
+.field-note { color: var(--dim); font-size: var(--t-xs); font-weight: 400; }
 /* A field's name and a note about it, on one line: the label is a grid,
    so two children would be two rows and the input below would stop
    lining up with the field beside it. */
@@ -1261,17 +1313,17 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    Monospaced and dense, because it is read by comparing one line
    against the next, and a datapoint nobody has named is marked so
    it stands out -- that is the one worth watching. */
-.frames-list { display: grid; gap: 6px; max-height: 420px; overflow-y: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fbfcfb; }
-.frame-row { display: grid; gap: 2px; padding: 6px 8px; border-radius: 4px; background: white; border: 1px solid var(--line); }
-.frame-when { color: var(--muted); font-size: 11px; }
-.frame-bytes { overflow-wrap: anywhere; color: var(--ink); font-size: 11px; }
+.frames-list { display: grid; gap: 6px; max-height: 420px; overflow-y: auto; padding: 8px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--n50); }
+.frame-row { display: grid; gap: 2px; padding: 6px 8px; border-radius: var(--r-ctl); background: var(--surface); border: 1px solid var(--n200); }
+.frame-when { color: var(--dim); font-size: var(--t-xs); }
+.frame-bytes { overflow-wrap: anywhere; color: var(--text); font-size: var(--t-xs); }
 .frame-points { display: flex; flex-wrap: wrap; gap: 4px 10px; }
-.frame-points small { color: #2a754a; font-size: 11px; font-weight: 600; }
-.frame-points small[data-unknown] { color: #8a4a12; }
-.frame-read { color: var(--muted); font-size: 11px; }
-.frame-read[data-unread] { color: #9a3f29; }
+.frame-points small { color: var(--brand); font-size: var(--t-xs); font-weight: 600; }
+.frame-points small[data-unknown] { color: var(--warn-ink); }
+.frame-read { color: var(--dim); font-size: var(--t-xs); }
+.frame-read[data-unread] { color: var(--alarm); }
 /* A checkbox that reads as one line with its words. */
-.inline-check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 400; }
 
 /* The photographs fold down to one row, at every width. A year of
    pictures pushes every other section off the screen on a phone and
@@ -1295,14 +1347,14 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 .photo-viewer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(16, 22, 16, 0.92); }
 .photo-viewer[hidden] { display: none; }
 .photo-viewer-frame { position: relative; max-width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; }
-.photo-viewer img { max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; border-radius: 6px; background: #0b0f0b; }
+.photo-viewer img { max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; border-radius: var(--r-ctl); background: #0b0f0b; }
 /* The date sits on the picture rather than under it: scrolling through a
    year, the eye stays in one place and only the date changes. */
-.photo-viewer-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 12px; color: #e8efe6; }
+.photo-viewer-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 12px; color: var(--n100); }
 .photo-viewer-bar strong { font: 500 20px Georgia, "Times New Roman", serif; }
-.photo-viewer-bar span { color: #9fb09c; font-size: 13px; }
+.photo-viewer-bar span { color: #9fb09c; font-size: var(--t-sm); }
 #photo-viewer-since { margin-left: 8px; }
-.photo-viewer-step, .photo-viewer-close { position: absolute; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid rgba(232, 239, 230, 0.25); border-radius: 50%; background: rgba(16, 22, 16, 0.6); color: #e8efe6; font-size: 20px; cursor: pointer; }
+.photo-viewer-step, .photo-viewer-close { position: absolute; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid rgba(232, 239, 230, 0.25); border-radius: 50%; background: rgba(16, 22, 16, 0.6); color: var(--n100); font-size: var(--t-xl); cursor: pointer; }
 .photo-viewer-step:hover, .photo-viewer-close:hover { background: rgba(232, 239, 230, 0.16); }
 .photo-viewer-step:disabled { opacity: 0.25; cursor: default; }
 .photo-viewer-step[data-step="newer"] { top: 16px; left: 50%; transform: translateX(-50%); }
@@ -1321,15 +1373,15 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* The scrubber: every photograph at its date along the whole span, so
    distance on it means elapsed time rather than position in a list. */
 .photo-track { position: relative; height: 34px; margin-top: 10px; cursor: pointer; touch-action: none; }
-.photo-track:focus-visible { border-radius: 4px; }
+.photo-track:focus-visible { border-radius: var(--r-ctl); }
 .photo-track-line { position: absolute; left: 0; right: 0; top: 16px; height: 2px; background: rgba(232, 239, 230, 0.22); }
 .photo-track-ticks { position: absolute; inset: 0; }
 /* A tick is a date, not a slot. Several on the same day overlap, which is
    the honest picture of having photographed a plant three times that
    afternoon. */
 .photo-track-tick { position: absolute; top: 9px; width: 2px; height: 16px; margin-left: -1px; background: rgba(232, 239, 230, 0.45); border-radius: 1px; }
-.photo-track-tick[data-current] { top: 3px; width: 3px; height: 28px; margin-left: -1.5px; background: #e8efe6; }
-.photo-track-ends { display: flex; justify-content: space-between; color: #7e8f7c; font-size: 11px; }
+.photo-track-tick[data-current] { top: 3px; width: 3px; height: 28px; margin-left: -1.5px; background: var(--n100); }
+.photo-track-ends { display: flex; justify-content: space-between; color: #7e8f7c; font-size: var(--t-xs); }
 /* A stretch of time with no photographs, drawn where the track was
    squeezed, so the compression is declared rather than hidden. */
 .photo-track-gap { position: absolute; top: 15px; width: 14px; height: 4px; margin-left: -7px; background: repeating-linear-gradient(90deg, rgba(232,239,230,0.5) 0 2px, transparent 2px 4px); }
@@ -1343,10 +1395,10 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    Clamped rather than hidden, so the subject stays readable and the
    page does not change height much when one is opened. */
 .settings-note[data-foldable] { position: relative; cursor: pointer; padding-right: 38px; }
-.settings-note[data-foldable]::after { content: "\25be"; position: absolute; top: 14px; right: 16px; color: var(--muted); transition: transform 120ms ease-out; }
+.settings-note[data-foldable]::after { content: "\25be"; position: absolute; top: 14px; right: 16px; color: var(--dim); transition: transform 120ms ease-out; }
 .settings-note[data-folded] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .settings-note[data-folded]::after { transform: rotate(-90deg); }
-.settings-note[data-foldable]:hover { border-color: var(--muted); }
+.settings-note[data-foldable]:hover { border-color: var(--dim); }
 /* Devices found on the radio but not added, under the scan button. Set
    apart from the list above it because they are a question, not a state. */
 .zigbee-found { margin-top: 12px; }
@@ -1357,32 +1409,32 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
    at one size and one colour is a list with no answer in it -- the eye
    has nowhere to land, which is what made this panel hard to read. */
 .zigbee-row { gap: 4px; }
-.zigbee-row-name { color: var(--ink); font-size: 17px; font-weight: 650; }
-.zigbee-row-what { color: var(--muted); font-size: 13px; }
-.zigbee-row-status { display: flex; align-items: center; gap: 7px; color: var(--leaf); font-size: 13px; }
+.zigbee-row-name { color: var(--text); font-size: var(--t-lg); font-weight: 650; }
+.zigbee-row-what { color: var(--dim); font-size: var(--t-sm); }
+.zigbee-row-status { display: flex; align-items: center; gap: 7px; color: var(--brand); font-size: var(--t-sm); }
 /* The dot takes the line's own colour, so health is legible at a glance
    and still spelt out for anyone who does not see the difference. */
 .zigbee-row-status::before { content: ""; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.zigbee-row-status.is-silent { color: var(--coral); }
-.zigbee-row-eui { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.zigbee-row-status.is-silent { color: var(--alarm); }
+.zigbee-row-eui { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-xs); }
 
 /* A found device is a question, so it looks like one rather than like a
    device in use that happens to sit lower down the page. */
-.zigbee-waiting { border-color: #e4cf92; background: #fffdf4; }
+.zigbee-waiting { border-color: #e4cf92; background: var(--warn-wash); }
 
 /* The plug's switch. Big enough to be the point of the page, because
    for a device whose whole job is to be on or off, the control is the
    reading. */
 .zigbee-plug { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 4px 0 14px; }
-.zigbee-switch { display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); cursor: pointer; font: inherit; }
-.zigbee-switch-track { position: relative; width: 52px; height: 30px; border-radius: 999px; background: #d3dbd4; transition: background .18s ease; }
-.zigbee-switch-knob { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0003; transition: transform .18s ease; }
-.zigbee-switch[aria-checked="true"] .zigbee-switch-track { background: var(--leaf); }
+.zigbee-switch { display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; border: 1px solid var(--n200); border-radius: 999px; background: var(--surface); cursor: pointer; font: inherit; }
+.zigbee-switch-track { position: relative; width: 52px; height: 30px; border-radius: 999px; background: var(--n200); transition: background .18s ease; }
+.zigbee-switch-knob { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 3px #0003; transition: transform .18s ease; }
+.zigbee-switch[aria-checked="true"] .zigbee-switch-track { background: var(--brand); }
 .zigbee-switch[aria-checked="true"] .zigbee-switch-knob { transform: translateX(22px); }
-.zigbee-switch-label { min-width: 2.4em; font-size: 16px; font-weight: 650; }
+.zigbee-switch-label { min-width: 2.4em; font-size: var(--t-lg); font-weight: 650; }
 /* Unknown is not off. A plug the hub has not heard from is drawn
    neither way, so the page never claims a state it was not told. */
-.zigbee-switch[aria-checked="mixed"] .zigbee-switch-track { background: repeating-linear-gradient(135deg, #d3dbd4, #d3dbd4 5px, #c2ccc3 5px, #c2ccc3 10px); }
+.zigbee-switch[aria-checked="mixed"] .zigbee-switch-track { background: repeating-linear-gradient(135deg, var(--n200), var(--n200) 5px, #c2ccc3 5px, #c2ccc3 10px); }
 .zigbee-switch[aria-checked="mixed"] .zigbee-switch-knob { transform: translateX(11px); }
 .zigbee-switch[disabled] { opacity: .55; cursor: not-allowed; }
 .zigbee-plug-note { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -1394,7 +1446,7 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 
 /* An address among the figures: it is a fact, so it is set like the
    others, but kept monospaced because every character of it matters. */
-.ph-figures dd code { display: inline-block; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.ph-figures dd code { display: inline-block; font-size: var(--t-sm); line-height: 1.4; overflow-wrap: anywhere; }
 
 /* Which sensor the charts below belong to. Shown only where a room has
    more than one, because naming the only sensor in a room is noise. */
@@ -1415,19 +1467,19 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
 /* The legend, which is also the switch. Hidden when there is only one
    sensor: naming the only line is noise. */
 .chart-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
-.chart-legend-entry { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); cursor: pointer; font: inherit; font-size: 13px; }
-.chart-legend-entry b { color: var(--muted); font-weight: 650; }
+.chart-legend-entry { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--n200); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: var(--t-sm); }
+.chart-legend-entry b { color: var(--dim); font-weight: 650; }
 .chart-legend-swatch { width: 11px; height: 11px; border-radius: 50%; background: var(--series); }
 /* Switched off: the line is gone from the chart and the entry says so
    by going grey, rather than by disappearing and leaving no way back. */
-.chart-legend-entry[aria-pressed="false"] { color: var(--muted); background: #f1f4f0; }
-.chart-legend-entry[aria-pressed="false"] .chart-legend-swatch { background: var(--line); }
+.chart-legend-entry[aria-pressed="false"] { color: var(--dim); background: var(--n100); }
+.chart-legend-entry[aria-pressed="false"] .chart-legend-swatch { background: var(--n200); }
 
 /* A leak sensor's one answer, large enough to read from the doorway.
    Dry is the quiet state and looks it; wet has to interrupt. */
-.zigbee-leak-state { margin: 4px 0 10px; font-size: 30px; font-weight: 700; color: var(--leaf); }
-.zigbee-leak-state[data-wet="true"] { color: var(--coral); }
-.zigbee-leak-state[data-wet="unknown"] { color: var(--muted); font-size: 20px; }
+.zigbee-leak-state { margin: 4px 0 10px; font-size: var(--t-2xl); font-weight: 700; color: var(--brand); }
+.zigbee-leak-state[data-wet="true"] { color: var(--alarm); }
+.zigbee-leak-state[data-wet="unknown"] { color: var(--dim); font-size: var(--t-xl); }
 
 /* A button nobody can press should look like one.
  *
@@ -1438,4 +1490,4 @@ main.arranging [data-section].dragging { border-color: var(--leaf); background: 
  * rule it tied with `.inline-control button` on specificity and lost
  * on order. A component wanting its own disabled look is more specific
  * and still wins. */
-button:disabled { color: var(--muted); background: #eef2ed; border-color: var(--line); cursor: not-allowed; }
+button:disabled { color: var(--dim); background: var(--n100); border-color: var(--n200); cursor: not-allowed; }
