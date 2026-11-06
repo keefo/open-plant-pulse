@@ -3090,9 +3090,31 @@ function navigate(path) {
   refresh();
 }
 
+/* Which profile a plant is judged against.
+ *
+ * Five places asked this and three of them forgot the plant. A probe
+ * in a pot can carry a profile of its own, but when it does not -- and
+ * a probe paired to a plant usually does not -- the plant is the thing
+ * that knows what it is. Skipping it fell straight through to the
+ * hub's default, so monstera aurea, recorded as a monstera since the
+ * day it was added, with a probe that had never been told, was judged
+ * against bird of paradise limits and reported thriving by the wrong
+ * standard.
+ *
+ * The order is how specific the answer is: this probe, then this
+ * plant, then the house's default. */
+function profileIdFor(sensor, plant) {
+  return sensor?.profile_id || plant?.profile_id || profiles?.default_profile;
+}
+
+function plantOfSensor(sensor) {
+  if (sensor?.plant_id == null) return null;
+  return householdPlants.find((plant) => plant.plant_id === sensor.plant_id) || null;
+}
+
 function sensorState(sensor) {
   const latest = sensor.latest?.reading;
-  const profileId = sensor.profile_id || profiles?.default_profile;
+  const profileId = profileIdFor(sensor, plantOfSensor(sensor));
   const profile = profiles?.profiles?.[profileId];
   const moistureLow = profile?.watering?.refill_below;
   const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];
@@ -4370,7 +4392,7 @@ function renderProfileRanges() {
     clearProbeReadouts();
     return;
   }
-  const profileId = selectedSensor?.profile_id || profiles.default_profile;
+  const profileId = profileIdFor(selectedSensor, selectedPlant);
   const profile = profiles.profiles[profileId];
   renderMoistureVessel(profile);
   renderMoistureTrend(profile);
@@ -4927,7 +4949,7 @@ function airSources() {
     sources,
     at: new Date(Math.max(...newest)).toISOString(),
     stamp: sources.map((source) => source.observed_at).join(","),
-    profileId: selectedSensor?.profile_id || selectedPlant?.profile_id,
+    profileId: profileIdFor(selectedSensor, selectedPlant),
   };
 }
 
@@ -5559,7 +5581,7 @@ async function refreshWateringCalendar() {
   const plantId = selectedPlant?.plant_id;
   if (!plantId) return;
   const range = wateringCalendarRange(latestReadingAt || new Date().toISOString());
-  const profileId = selectedSensor?.profile_id || profiles.default_profile;
+  const profileId = profileIdFor(selectedSensor, selectedPlant);
   const requestKey = [
     plantId,
     range.year,
@@ -5599,7 +5621,7 @@ async function refreshPotResponse() {
     if (!response.ok) throw new Error("pot response request failed");
     drainageAssessments = (await response.json()).items;
     if (profiles) {
-      const profileId = selectedSensor?.profile_id || profiles.default_profile;
+      const profileId = profileIdFor(selectedSensor, selectedPlant);
       renderDrainageAssessment(profiles.profiles[profileId]);
     }
   } catch (_error) {
@@ -6026,7 +6048,7 @@ function renderPlantLight() {
   if (!section) return;
   const days = (selectedPlant && selectedPlant.light_days) || [];
   const profile = profiles?.profiles?.[
-    selectedPlant?.profile_id || profiles?.default_profile];
+    profileIdFor(selectedSensor, selectedPlant)];
   const metric = profile?.light?.dli_mol_m2_day;
 
   /* One number, and it is always a whole day.
@@ -6173,7 +6195,7 @@ function plantStage(plant) {
   const months = plantAgeMonths(subject);
   if (months == null) return "established";
   const profile = profiles?.profiles?.[
-    subject?.profile_id || profiles?.default_profile];
+      profileIdFor(null, subject)];
   const grownUp = profile?.light?.dli_mol_m2_day?.established_after_months;
   if (!grownUp) return "established";
   return months < grownUp ? "young" : "established";
@@ -6253,7 +6275,7 @@ function wireLightTrack() {
 
 function lightMetric() {
   const profile = profiles?.profiles?.[
-    selectedPlant?.profile_id || profiles?.default_profile];
+    profileIdFor(selectedSensor, selectedPlant)];
   return profile?.light?.dli_mol_m2_day || null;
 }
 
