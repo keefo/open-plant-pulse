@@ -9014,6 +9014,21 @@ async function poll() {
   window.setTimeout(poll, 1000);
 }
 document.getElementById("add-plant").addEventListener("click", addPlant);
+/* Watering by hand, for a plant that is never weighed.
+ *
+ * This button went in October: a weighing records the watering by
+ * itself, from the jump in weight, and that is the better record
+ * because it carries the weight with it and cannot be forgotten.
+ * Two ways to say one thing invite them to disagree.
+ *
+ * All true of a plant on a scale, and none of it true of the air
+ * plant, which is never weighed. There was no jump to read, so there
+ * was no way to say it had been watered at all.
+ *
+ * The two cannot disagree in any case: a watering is stored under
+ * watering-plant-<id>-<day> with INSERT OR IGNORE, so the button and
+ * the weight write one row between them on any given day. */
+document.getElementById("plant-watered").addEventListener("click", () => recordPlantCare("watering"));
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-repotted").addEventListener("click", () => recordPlantCare("repotting"));
 document.getElementById("plant-note").addEventListener("click", () => recordPlantCare("note"));
