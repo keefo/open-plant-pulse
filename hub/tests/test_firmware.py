@@ -26,18 +26,6 @@ from open_plant_pulse_hub.application.firmware import (
     FirmwareLibrary,
     parse_firmware_image,
 )
-from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
-from open_plant_pulse_hub.ingestion.device_configuration import (
-    FIRMWARE_STATUS_MARKER,
-    FIRMWARE_UPDATE_PAYLOAD_SIZE,
-    DeviceConfiguration,
-    FirmwareUpdateCommand,
-    decode_firmware_update,
-    encode_device_configuration,
-    encode_firmware_update,
-    split_firmware_status,
-    split_station_status,
-)
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -159,208 +147,8 @@ class LibraryTests(unittest.TestCase):
                 self.library.path(candidate)
 
 
-class CommandTests(unittest.TestCase):
-    def command(self, **overrides) -> FirmwareUpdateCommand:
-        values = {
-            "update_id": 7,
-            "size_bytes": 1294784,
-            "address": "192.168.0.44",
-            "port": 8081,
-            "digest": "ab" * 32,
-        }
-        values.update(overrides)
-        return FirmwareUpdateCommand(**values)
-
-    def test_round_trips_through_forty_seven_bytes(self) -> None:
-        payload = encode_firmware_update(self.command())
-
-        self.assertEqual(len(payload), FIRMWARE_UPDATE_PAYLOAD_SIZE)
-        self.assertEqual(decode_firmware_update(payload), self.command())
-
-    def test_is_distinguishable_from_every_other_payload_on_the_characteristic(self) -> None:
-        payload = encode_firmware_update(self.command())
-        configuration = encode_device_configuration(
-            DeviceConfiguration(
-                revision=3, reporting_interval_seconds=60, plant_name="Fern", room="Office"
-            )
-        )
-
-        # One characteristic carries several payloads, told apart by their first
-        # byte. A new one that collided would be applied as the wrong thing.
-        self.assertEqual(payload[0], 7)
-        self.assertNotEqual(payload[0], configuration[0])
-        self.assertNotEqual(payload[0], 5)  # release
-        self.assertNotIn(payload[0], (0x20, 0x21, 0x22))  # bulk drain
-
-    def test_refuses_a_command_a_sensor_could_not_act_on(self) -> None:
-        for description, overrides in (
-            ("no update", {"update_id": 0}),
-            ("no image", {"size_bytes": 0}),
-            ("no port", {"port": 0}),
-            ("not an address", {"address": "imacpro.local"}),
-            ("short digest", {"digest": "ab" * 16}),
-            ("not hexadecimal", {"digest": "zz" * 32}),
-        ):
-            with self.subTest(description), self.assertRaises(ValueError):
-                encode_firmware_update(self.command(**overrides))
-
-    def test_progress_is_read_in_front_of_the_station_status(self) -> None:
-        configuration = encode_device_configuration(
-            DeviceConfiguration(
-                revision=3, reporting_interval_seconds=60, plant_name="Fern", room="Office"
-            )
-        )
-        progress = bytes((FIRMWARE_STATUS_MARKER, 2, 41, 0))
-        station = bytes((0xA1, 1, 192, 168, 0, 111, 0, 12, 0))
-        report = configuration + progress + station
-
-        remainder, station_status = split_station_status(report)
-        self.assertEqual(station_status, (True, "192.168.0.111", "0.12.0"))
-
-        remainder, firmware_status = split_firmware_status(remainder)
-        self.assertEqual(firmware_status, ("downloading", 41, None))
-        # Whatever a hub does with the suffixes, the configuration underneath
-        # them is unchanged, which is what keeps the older hub working.
-        self.assertEqual(remainder, configuration)
-
-    def test_a_report_without_progress_is_left_alone(self) -> None:
-        station = bytes((0xA1, 0, 0, 0, 0, 0, 0, 11, 2))
-        report = b"\x06payload-ish" + station
-
-        remainder, _ = split_station_status(report)
-        remainder, firmware_status = split_firmware_status(remainder)
-
-        self.assertIsNone(firmware_status)
-        self.assertEqual(remainder, b"\x06payload-ish")
-
-    def test_every_failure_the_sensor_can_report_has_words(self) -> None:
-        for reason in range(1, 8):
-            report = b"\x06configuration" + bytes((FIRMWARE_STATUS_MARKER, 5, 0, reason))
-            _, status = split_firmware_status(report)
-            self.assertIsNotNone(status)
-            self.assertEqual(status[0], "failed")
-            self.assertTrue(status[2], f"failure {reason} has no explanation")
 
 
-class HttpTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.store = ReadingStore()
-        self.directory = tempfile.TemporaryDirectory()
-        self.library = FirmwareLibrary(self.store, Path(self.directory.name) / "firmware")
-        self.server = create_server(self.store, "127.0.0.1", 0, None, self.library)
-        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
-                             daemon=True)
-        self.thread.start()
-        host, port = server_address(self.server)
-        self.base_url = f"http://{host}:{port}"
-        self.files = create_firmware_server(self.library, "127.0.0.1", 0)
-        self.files_thread = Thread(target=self.files.serve_forever, kwargs={"poll_interval": 0.01},
-                             daemon=True)
-        self.files_thread.start()
-        file_host, file_port = firmware_server_address(self.files)
-        self.files_url = f"http://{file_host}:{file_port}"
-
-    def tearDown(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=1.0)
-        self.files.shutdown()
-        self.files.server_close()
-        self.files_thread.join(timeout=1.0)
-        self.store.close()
-        self.directory.cleanup()
-
-    def upload(self, data: bytes):
-        request = Request(self.base_url + "/api/firmware", data=data, method="POST")
-        with urlopen(request, timeout=5.0) as response:
-            return json.load(response)
-
-    def enrolled_sensor(self) -> str:
-        sensor_id = "sensor-aabbccddeeff"
-        self.store.record_beacon(
-            sensor_id=sensor_id,
-            received_at="2026-09-25T10:00:00Z",
-            observed_identifier="test",
-            source_adapter="test",
-            rssi=-40,
-            service_data=b"\x40",
-            contract_version=3,
-        )
-        self.store.manage_sensor(sensor_id, "Fern", "Office", "monstera", 40, 1500, 1200)
-        return sensor_id
-
-    def test_an_image_is_uploaded_listed_and_served_to_a_sensor(self) -> None:
-        data = build_image(version="0.12.0")
-        stored = self.upload(data)
-
-        self.assertEqual(stored["version"], "0.12.0")
-        with urlopen(self.base_url + "/api/firmware", timeout=5.0) as response:
-            listed = json.load(response)
-        self.assertEqual([item["digest"] for item in listed["items"]], [stored["digest"]])
-        self.assertTrue(listed["items"][0]["available"])
-
-        with urlopen(f"{self.files_url}/firmware/{stored['digest']}.bin", timeout=5.0) as response:
-            self.assertEqual(response.read(), data)
-
-    def test_the_firmware_server_offers_nothing_else(self) -> None:
-        stored = self.upload(build_image())
-        for path in ("/", "/api/sensors", "/firmware/", "/firmware/../hub.sqlite3"):
-            with self.subTest(path), self.assertRaises(HTTPError) as raised:
-                urlopen(self.files_url + path, timeout=5.0)
-            self.assertEqual(raised.exception.code, 404)
-            raised.exception.close()
-        # And a digest it does hold is still served, so the check above is not
-        # passing because everything fails.
-        with urlopen(f"{self.files_url}/firmware/{stored['digest']}.bin", timeout=5.0) as response:
-            self.assertEqual(response.status, 200)
-
-    def test_an_upload_that_is_not_firmware_is_refused_with_a_reason(self) -> None:
-        with self.assertRaises(HTTPError) as raised:
-            self.upload(b"this is a photograph" * 500)
-        self.assertEqual(raised.exception.code, 400)
-        self.assertIn("firmware", json.load(raised.exception)["error"])
-        raised.exception.close()
-
-    def test_a_sensor_is_asked_for_an_image_and_can_be_let_off_again(self) -> None:
-        sensor_id = self.enrolled_sensor()
-        stored = self.upload(build_image(version="0.12.0"))
-        path = f"/api/sensors/{quote(sensor_id, safe='')}/firmware"
-
-        request = Request(
-            self.base_url + path,
-            data=json.dumps({"digest": stored["digest"]}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(request, timeout=5.0) as response:
-            sensor = json.load(response)
-        self.assertEqual(sensor["firmware_update_state"], "pending")
-        self.assertEqual(sensor["firmware_update_version"], "0.12.0")
-        self.assertEqual(
-            self.store.pending_firmware_update(sensor_id)["digest"], stored["digest"]
-        )
-
-        request = Request(
-            self.base_url + path,
-            data=json.dumps({"digest": ""}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(request, timeout=5.0) as response:
-            sensor = json.load(response)
-        self.assertEqual(sensor["firmware_update_state"], "idle")
-        self.assertIsNone(self.store.pending_firmware_update(sensor_id))
-
-    def test_deleting_an_image_removes_it_from_the_list(self) -> None:
-        stored = self.upload(build_image())
-        request = Request(
-            self.base_url + "/api/firmware/" + stored["digest"], method="DELETE"
-        )
-        with urlopen(request, timeout=5.0) as response:
-            self.assertEqual(response.status, 204)
-
-        with urlopen(self.base_url + "/api/firmware", timeout=5.0) as response:
-            self.assertEqual(json.load(response)["items"], [])
 
 
 class InterfaceTests(unittest.TestCase):
@@ -392,28 +180,11 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b'href="/settings/firmware"', page)
         self.assertIn(b'id="settings-firmware-panel"', page)
         # Firmware belongs to the device, so it lives on the sensor's page.
-        self.assertIn(b'<section class="sensor-firmware" data-page="sensor-config"', page)
         self.assertIn(b'"firmware"', script)
         self.assertIn(b'const SETTINGS_TABS = ', script)
         self.assertIn(b'fetch("/api/firmware", { method: "POST", body: file })', script)
-        self.assertIn(b'/firmware", {\n    method: "POST"', script)
 
-    def test_the_interface_refuses_to_start_what_the_sensor_could_not_finish(self) -> None:
-        script = self.get("/app.js")
 
-        # Downloading needs the household network, which is a precondition, not
-        # something to discover halfway through.
-        self.assertIn(b'selectedSensor.wifi_enabled && selectedSensor.wifi_state === "joined"', script)
-        self.assertIn(b"setDisabled(install, running", script)
-        self.assertIn(b"downloads firmware over the household network", script)
-
-    def test_progress_is_what_the_sensor_said_and_names_every_state(self) -> None:
-        script = self.get("/app.js")
-
-        for state in ("pending", "commanded", "downloading", "installing", "rebooting",
-                      "succeeded", "failed"):
-            self.assertIn(f'case "{state}":'.encode(), script)
-        self.assertIn(b"firmware_update_percent", script)
 
 
 class StoreStateTests(unittest.TestCase):

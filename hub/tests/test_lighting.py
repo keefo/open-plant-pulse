@@ -7,8 +7,8 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
-from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
+from open_plant_pulse_hub.application import ReadingStore
+from fake_sensors import place_sensors
 from open_plant_pulse_hub.lighting.driver import (CONFIRMED, UNCONFIRMED,
                                                   FakeLight, LightDriver)
 from open_plant_pulse_hub.lighting.neewer_gl1c import (
@@ -25,10 +25,6 @@ from open_plant_pulse_hub.lighting.wemo_switch import WemoSwitch, parse_binary_s
 from open_plant_pulse_hub.lighting.zigbee_plug import ZigbeePlugLight
 from open_plant_pulse_hub.web import create_server, server_address
 
-
-FIXTURE_PATH = (
-    Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
-)
 
 
 def at(hhmm: str) -> datetime:
@@ -178,7 +174,7 @@ def enroll(store, sensor_id, name):
 class LightStoreTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_ids = [item["sensor_id"] for item in self.store.sensors("unclaimed")]
         enroll(self.store, self.sensor_ids[0], "Strelitzia")
         enroll(self.store, self.sensor_ids[1], "Monstera")
@@ -344,7 +340,7 @@ class LightingCareLogTests(unittest.TestCase):
 
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enroll(self.store, self.sensor_id, "Strelitzia")
         self.store.create_light("light-a", "Lamp A", "wemo-switch", {})
@@ -501,7 +497,7 @@ class SchedulerTests(unittest.TestCase):
 
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_ids = [item["sensor_id"] for item in self.store.sensors("unclaimed")]
         enroll(self.store, self.sensor_ids[0], "Strelitzia")
         enroll(self.store, self.sensor_ids[1], "Monstera")
@@ -694,7 +690,7 @@ class DriverRegistryTests(unittest.TestCase):
 class LightApiTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enroll(self.store, self.sensor_id, "Strelitzia")
         self.lights = LightService(self.store, {"fake": FakeLight, **DRIVERS}, threaded=False)

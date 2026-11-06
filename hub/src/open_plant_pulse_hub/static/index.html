@@ -55,8 +55,6 @@
     </div>
   </header>
 
-  <section id="hub-health" class="hub-health" data-page="fleet" aria-live="polite"></section>
-
   <main>
     <div id="arrange-bar" class="arrange-bar" hidden>
       <p>Drag a section to move it, or focus one and use the arrow keys. This
@@ -77,7 +75,6 @@
         <div>
           <p class="eyebrow">HOUSEHOLD</p>
           <h1 id="rooms-title">Rooms</h1>
-          <p>What the air is doing in each room, and what is growing in it.</p>
         </div>
       </div>
       <div id="rooms-grid" class="rooms-grid"></div>
@@ -163,29 +160,35 @@
 
     <section class="fleet-overview" data-page="fleet" aria-labelledby="fleet-title">
       <div class="section-heading">
-        <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1><p>Choose a plant to open it. Those with a sensor show what it measures.</p></div>
+        <div><p class="eyebrow">HOUSEHOLD</p><h1 id="fleet-title">Plants</h1></div>
         <div class="settings-sensor-actions">
           <label class="fleet-sort" for="plant-sort">Sort by
             <select id="plant-sort">
               <option value="name">Name</option>
               <option value="thirst">Thirstiest first</option>
+              <option value="drinks">Drinks the most</option>
               <option value="watered">Longest since watering</option>
               <option value="room">Room</option>
               <option value="profile">Kind of plant</option>
             </select>
           </label>
-          <button id="add-plant" class="secondary-action" type="button">Add a plant</button>
         </div>
       </div>
-      <div id="fleet-grid" class="fleet-grid"></div>
+      <div id="fleet-grid" class="fleet-grid">
+        <!-- Kept in the markup rather than built by the script: it is
+             always there, always last, and never needs updating. The
+             script moves it to the end after each sort. -->
+        <button id="add-plant" class="fleet-card fleet-card-add" type="button">
+          <span class="fleet-card-add-mark" aria-hidden="true">+</span>
+          <strong>Add a plant</strong>
+        </button>
+      </div>
     </section>
     <section class="settings-page" data-page="settings" aria-labelledby="settings-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">HUB SETTINGS</p><h1 id="settings-title">Settings</h1></div>
-        <a class="primary-action" href="/onboarding">Add a sensor</a>
       </div>
       <div class="settings-tabs" role="tablist">
-        <a id="settings-tab-sensors" class="settings-tab" href="/settings/sensors" role="tab">Sensors</a>
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
@@ -194,11 +197,6 @@
         <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
         <a id="settings-tab-alerts" class="settings-tab" href="/settings/alerts" role="tab">Alerts</a>
         <a id="settings-tab-box" class="settings-tab" href="/settings/box" role="tab">Box</a>
-      </div>
-
-      <div id="settings-sensors-panel" class="settings-panel-group">
-        <div id="settings-sensor-list" class="settings-sensor-list"></div>
-        <p class="settings-note">A sensor belongs to one hub. To move one to a different hub, forget it here, or power-cycle it five times if this hub is unreachable. Either way it returns to onboarding and must be added again.</p>
       </div>
 
 
@@ -531,74 +529,12 @@
       </div>
     </section>
 
-    <section class="onboarding-page" data-page="onboarding" aria-labelledby="onboarding-title" hidden>
-      <div class="onboarding-card">
-        <header class="onboarding-header">
-          <h1 id="onboarding-title">Add a sensor</h1>
-          <span id="onboarding-step-label">Step 1 of 4</span>
-        </header>
-        <div id="onboarding-progress" class="onboarding-progress" role="img" aria-label="Step 1 of 4"></div>
-
-        <div id="onboarding-step-find" class="onboarding-step">
-          <h2>Power on your new sensor</h2>
-          <p>It does not need Wi-Fi yet. A new sensor announces itself over Bluetooth for as long as it is unclaimed.</p>
-          <p id="onboarding-scan-state" class="scan-state" aria-live="polite"><span class="scan-pulse" aria-hidden="true"></span><span id="onboarding-scan-text">Checking the Bluetooth scanner…</span></p>
-          <div id="onboarding-candidates" class="onboarding-candidates"></div>
-        </div>
-
-        <div id="onboarding-step-pair" class="onboarding-step" hidden>
-          <h2>Claiming the sensor</h2>
-          <p>Nothing to type. A sensor that belongs to nobody is claimed by the first hub that asks, and this one is asking now.</p>
-          <div class="onboarding-notice">
-            <strong>From now on it is yours alone.</strong>
-            <p>Once claimed, this sensor refuses every other hub. Moving it elsewhere means releasing it here first, or resetting the sensor itself.</p>
-          </div>
-          <p id="onboarding-pair-state" class="pair-state" aria-live="polite">Claiming…</p>
-        </div>
-
-        <form id="onboarding-step-details" class="onboarding-step" hidden>
-          <h2>Name the plant</h2>
-          <label for="onboarding-plant">Which plant</label>
-          <select id="onboarding-plant"></select>
-          <small id="onboarding-plant-note">Put this sensor on a plant the hub
-            already knows and it keeps everything recorded about it so far.</small>
-          <label for="onboarding-name">Plant name</label>
-          <input id="onboarding-name" maxlength="80" required>
-          <label for="onboarding-room">Room</label>
-          <select id="onboarding-room" required></select>
-          <small id="onboarding-room-note"></small>
-          <label for="onboarding-profile">Plant profile</label>
-          <select id="onboarding-profile"></select>
-          <label for="onboarding-interval">Reports every</label>
-          <select id="onboarding-interval"></select>
-          <label class="switch-row" for="onboarding-wifi">
-            <input id="onboarding-wifi" class="switch" type="checkbox">
-            <div><strong>Turn on this sensor's web console</strong></div>
-          </label>
-          <small id="onboarding-wifi-note">Readings reach the hub over Bluetooth either way. Leaving it off keeps the radio idle and the battery lasting longer.</small>
-          <output id="onboarding-message" aria-live="polite"></output>
-        </form>
-
-        <div id="onboarding-step-done" class="onboarding-step" hidden>
-          <h2 id="onboarding-done-title">Sensor is set up</h2>
-          <p>It belongs to this hub and to no other.</p>
-          <div id="onboarding-summary" class="onboarding-summary"></div>
-          <p class="settings-note">This sensor now refuses every other hub. To move it, release it from Settings, or reset the sensor itself.</p>
-        </div>
-
-        <footer class="onboarding-footer">
-          <p id="onboarding-hint">Not seeing it? Move the sensor closer to this computer.</p>
-          <button id="onboarding-back" type="button">Cancel</button>
-          <button id="onboarding-next" type="button" class="primary">Continue</button>
-        </footer>
-      </div>
-    </section>
 
     <!-- The sections below need a soil probe, and say so by their
          sensor kind rather than by each one testing for a sensor.
          A plant that is weighed but not probed showed four panels of
          "waiting for a reading" that would wait for ever. -->
-    <section class="primary-grid" data-page="plant" data-section="readings" data-sensor-kind="bthome soil" aria-label="Primary plant measurements" hidden>
+    <section class="primary-grid" data-page="plant" data-section="readings" data-sensor-kind="soil" aria-label="Primary plant measurements" hidden>
       <article class="metric hero-metric moisture">
         <div class="moisture-heading">
           <span>Soil moisture index</span>
@@ -694,7 +630,7 @@
          one, so they are read together. The ids and classes are the ones
          the renderers already reach for; only the wrapper changed. -->
     <section class="plant-verdicts" data-page="plant"
-             data-section="assessment" data-sensor-kind="bthome soil"
+             data-section="assessment" data-sensor-kind="soil"
              aria-labelledby="plant-verdicts-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">ASSESSMENT</p><h2 id="plant-verdicts-title">How it is doing</h2></div>
@@ -719,48 +655,6 @@
       </div>
     </section>
 
-    <section class="chemistry" data-page="plant" data-section="chemistry" data-sensor-kind="bthome" aria-label="Soil chemistry measurements" hidden>
-      <div class="section-heading"><div><p class="eyebrow">SOIL</p><h2>Soil chemistry</h2></div><span id="chemistry-profile">Loading plant profile</span></div>
-      <p id="chemistry-measured" class="chemistry-measured" hidden></p>
-      <article id="pore-ec-card" class="chemistry-gauge pore-ec-gauge" data-status="none" aria-live="polite">
-        <div class="chemistry-value"><span>Nutrient level</span><strong><b id="nutrient-level">--</b><small id="nutrient-level-basis"></small></strong></div>
-        <div class="chemistry-value"><span>Pore-water EC</span><strong><b id="pore-ec">--</b><small> µS/cm</small><small id="pore-ec-target"></small></strong></div>
-        <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
-        <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
-        <p class="range-status">Waiting for reading</p>
-        <p id="pore-ec-basis" class="pore-ec-note"></p>
-        <p id="pore-ec-dry-note" class="pore-ec-note pore-ec-dry-note" hidden></p>
-        <svg id="pore-ec-chart" class="history-chart pore-ec-chart" viewBox="0 0 640 170" role="img" aria-label="Pore-water conductivity over the last 30 days" hidden></svg>
-        <p id="pore-ec-chart-empty" class="history-chart-empty">Waiting for readings from a pot wet enough to estimate from</p>
-        <p id="pore-ec-chart-note" class="pore-ec-note" hidden></p>
-      </article>
-      <div class="chemistry-grid">
-        <article class="chemistry-gauge probe-chemistry bulk-ec">
-          <div class="chemistry-value"><span>Measured EC (bulk)</span><strong><b id="conductivity">--</b><small> µS/cm</small></strong></div>
-          <p class="range-status">The probe's raw reading: soil, water and air between its needles together. Pore-water EC above is estimated from it; the plant's target does not apply to it.</p>
-          <svg id="bulk-ec-chart" class="history-chart bulk-ec-chart" viewBox="0 0 640 150" role="img" aria-label="Measured bulk conductivity over the last two days" hidden></svg>
-          <p id="bulk-ec-chart-empty" class="history-chart-empty">Waiting for conductivity readings</p>
-          <p id="bulk-ec-chart-note" class="bulk-ec-note" hidden></p>
-        </article>
-        <article class="chemistry-gauge probe-chemistry" data-metric="soil_ph">
-          <div class="chemistry-value"><span>pH</span><strong><b id="ph">--</b></strong></div>
-          <p class="range-status">Unverified · trustworthy after a one-time check against a pH strip or kit</p>
-        </article>
-        <article class="chemistry-gauge probe-chemistry" data-metric="nitrogen_mg_kg">
-          <div class="chemistry-value"><span>Nitrogen</span><strong><b id="nitrogen">--</b><small> mg/kg</small></strong></div>
-          <p class="range-status">Probe estimate, trend only</p>
-        </article>
-        <article class="chemistry-gauge probe-chemistry" data-metric="phosphorus_mg_kg">
-          <div class="chemistry-value"><span>Phosphorus</span><strong><b id="phosphorus">--</b><small> mg/kg</small></strong></div>
-          <p class="range-status">Probe estimate, trend only</p>
-        </article>
-        <article class="chemistry-gauge probe-chemistry" data-metric="potassium_mg_kg">
-          <div class="chemistry-value"><span>Potassium</span><strong><b id="potassium">--</b><small> mg/kg</small></strong></div>
-          <p class="range-status">Probe estimate, trend only</p>
-        </article>
-      </div>
-      <p id="chemistry-guidance" class="chemistry-guidance"></p>
-    </section>
 
     <!-- data-own-visibility: renderPage decides which sections belong to
          the page being shown, but whether this one has anything to say
@@ -1539,43 +1433,6 @@
     </section>
 
 
-    <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-settings-panel" aria-labelledby="sensor-settings-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">PROBE</p><h2 id="sensor-settings-title">Reporting</h2></div>
-      </div>
-      <form id="sensor-settings-form" class="sensor-settings-form">
-        <label>Hub reporting interval
-          <select id="detail-setting-reporting-interval" required>
-            <option value="30">Every 30 seconds</option>
-            <option value="60">Every minute</option>
-            <option value="300">Every 5 minutes</option>
-            <option value="900">Every 15 minutes</option>
-            <option value="1800">Every 30 minutes</option>
-            <option value="3600">Every hour</option>
-            <option value="10800">Every 3 hours</option>
-            <option value="21600">Every 6 hours</option>
-            <option value="43200">Every 12 hours</option>
-            <option value="86400">Every 24 hours</option>
-          </select>
-          <small>The interval requested by the hub. Changes are sent when the sensor next reports.</small>
-        </label>
-        <label>Sensor reporting interval
-          <input id="sensor-reporting-interval" value="Not synced yet" readonly aria-readonly="true">
-          <small>Read-only interval confirmed by the sensor after configuration is written and read back.</small>
-        </label>
-        <label class="switch-row" for="detail-console-toggle">
-          <input id="detail-console-toggle" class="switch" type="checkbox">
-          <div>
-            <strong>Web console on this sensor</strong>
-            <small id="detail-console-state">Readings reach the hub over Bluetooth either way.</small>
-            <a id="detail-console-link" class="console-link" target="_blank" rel="noopener" hidden></a>
-          </div>
-        </label>
-        <p id="device-config-status" class="configuration-delivery" aria-live="polite"></p>
-        <div class="settings-actions"><button type="submit">Save configuration</button></div>
-        <output id="sensor-settings-message"></output>
-      </form>
-    </section>
 
 
     <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="scale" id="scale-panel" aria-labelledby="scale-panel-title" hidden>
@@ -1683,68 +1540,11 @@
       <p id="frames-empty" class="care-log-empty" hidden>Nothing heard from this device yet.</p>
     </section>
 
-    <section class="sensor-settings" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-ph-panel" aria-labelledby="sensor-ph-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-ph-title">pH calibration</h2></div>
-      </div>
-      <p class="ph-explainer">
-        The probe answers pH on a scale of its own. Measure the liquid it is
-        sitting in with strips or a meter, type that number here, and the hub
-        corrects every reading by the difference. The probe is read for pH a
-        couple of times a day, so calibrate against the last reading it took.
-      </p>
-      <dl class="ph-figures">
-        <div><dt>Probe reads</dt><dd id="ph-raw">--</dd></div>
-        <div><dt>Shown as</dt><dd id="ph-corrected">--</dd></div>
-        <div><dt>Offset</dt><dd id="ph-offset">--</dd></div>
-        <div><dt>Measured</dt><dd id="ph-measured-at">--</dd></div>
-      </dl>
-      <p id="ph-caution" class="ph-caution" hidden></p>
-      <form id="sensor-ph-form" class="sensor-settings-form">
-        <label>True pH of what it is in
-          <input id="ph-reference" type="number" min="0" max="14" step="0.1" placeholder="7.0">
-          <small id="ph-reference-note">Taken against the probe's last pH reading and the conductivity at the time.</small>
-        </label>
-        <div class="settings-actions">
-          <button type="submit">Calibrate</button>
-          <button id="ph-clear" class="secondary-action" type="button">Clear</button>
-        </div>
-        <output id="sensor-ph-message"></output>
-      </form>
-    </section>
 
 
-    <section class="sensor-firmware" data-page="sensor-config" data-sensor-kind="bthome" id="sensor-firmware-panel" aria-labelledby="sensor-firmware-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">SENSOR</p><h2 id="sensor-firmware-title">Firmware</h2></div>
-        <span id="firmware-current">Version not reported yet</span>
-      </div>
-      <p id="firmware-update-state" class="configuration-delivery" aria-live="polite">No update in progress.</p>
-      <div id="firmware-progress" class="firmware-progress" hidden><i id="firmware-progress-bar"></i></div>
-      <div class="inline-control">
-        <label for="firmware-choice" class="firmware-choice-label">Install</label>
-        <select id="firmware-choice"></select>
-        <button id="firmware-install" type="button">Send to sensor</button>
-        <button id="firmware-cancel" class="danger" type="button" hidden>Cancel</button>
-      </div>
-      <p id="firmware-precondition" class="settings-note"></p>
-    </section>
 
-    <details class="raw-report-log" id="raw-report-log" data-page="sensor-config" data-sensor-kind="bthome" hidden>
-      <summary>
-        <div><p class="eyebrow">TEMPORARY DEBUG</p><h2 id="raw-report-title">Raw sensor reports</h2></div>
-        <span>Latest 50 · newest first</span>
-      </summary>
-      <div class="raw-report-scroll" tabindex="0" aria-label="Raw sensor report log">
-        <table>
-          <thead><tr><th>Received</th><th>Report</th><th>Status</th><th>RSSI</th><th>Source</th><th>Service data</th></tr></thead>
-          <tbody id="raw-report-list">
-            <tr><td class="raw-report-empty" colspan="6">No raw BLE reports stored yet.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </details>
   </main>
+  <section id="hub-health" class="hub-health" data-page="fleet" aria-live="polite"></section>
   <!-- Looking through a plant's photographs without leaving the page.
        Newer is up and older is down, because that is the order they are
        in and the question is almost always "what did it look like

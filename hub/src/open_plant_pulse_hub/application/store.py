@@ -226,7 +226,7 @@ def _minutes_of_day(text: Any) -> Optional[int]:
 
 
 PLANT_SECTIONS = (
-    "readings", "air", "soil", "assessment", "chemistry", "light",
+    "readings", "air", "soil", "assessment", "light",
     "calendar", "weight", "journey", "photos", "care-log",
 )
 

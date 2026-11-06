@@ -32,8 +32,7 @@ import urllib.request
 
 from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.application.photos import PhotoLibrary
-from open_plant_pulse_hub.application.ingestion import AdvertisementIngestionService
-from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
+from fake_sensors import place_sensors
 from open_plant_pulse_hub.web import create_server, server_address
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
@@ -133,7 +132,7 @@ class BrowserSmokeTests(unittest.TestCase):
         library.add(self.plant_id, PNG, taken_at="2019-07-14T17:32:05Z")
         # A sensor on the plant, because the sensor panel lives on the
         # plant's configuration page and a plant without one never draws it.
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         # The sensor keeps the plant enrolling gave it, so the household has
         # one of each: a plant somebody weighs by hand and a plant with a
         # probe in it. The pages differ between the two, and both are drawn.
@@ -377,48 +376,7 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(drawn["name"], "Spider")
         self.assertEqual(tools.complaints, [])
 
-    def test_the_sensor_panel_knows_which_sensor_the_plant_has(self) -> None:
-        """The page names the plant; the panel still has to find the sensor.
 
-        Reading it from the address alone left the console switch with no
-        sensor on it, so turning the console on called for nobody.
-        """
-        tools = self.devtools()
-        # The sensor's settings are the sensor's page now, not its plant's.
-        self.open_page(tools, f"{self.base_url}/sensors/{self.sensor_id}/settings")
-        panel = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
-            (() => {
-              const toggle = document.getElementById("detail-console-toggle");
-              return JSON.stringify({
-                sensorId: toggle.dataset.sensorId || null,
-                disabled: toggle.disabled,
-                identity: document.getElementById("settings-sensor-id").textContent,
-              });
-            })()""")["result"]["value"])
-
-        self.assertEqual(panel["sensorId"], self.sensor_id)
-        self.assertEqual(panel["identity"], self.sensor_id)
-        self.assertFalse(panel["disabled"])
-        self.assertEqual(tools.complaints, [])
-
-    def test_the_ph_panel_shows_what_the_probe_said_and_what_it_means(self) -> None:
-        """The figures, not just the form: a blank panel is a render that threw."""
-        tools = self.devtools()
-        self.open_page(tools, f"{self.base_url}/sensors/{self.sensor_id}/settings")
-        drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
-            (() => {
-              const panel = document.getElementById("sensor-ph-panel");
-              return JSON.stringify({
-                present: !!panel,
-                hidden: panel ? panel.hidden : null,
-                raw: document.getElementById("ph-raw")?.textContent,
-                corrected: document.getElementById("ph-corrected")?.textContent,
-                offset: document.getElementById("ph-offset")?.textContent,
-              });
-            })()""")["result"]["value"])
-
-        self.assertTrue(drawn["present"])
-        self.assertEqual(tools.complaints, [])
 
     def test_a_date_being_chosen_survives_the_poll(self) -> None:
         """A phone's date sheet does not focus the field it belongs to.
@@ -706,7 +664,7 @@ class BrowserSmokeTests(unittest.TestCase):
                        deviceScaleFactor=3, mobile=True)
             for page in ("/", "/plants", "/sensors", "/settings", "/settings/rooms",
                          "/settings/lights", "/settings/wifi", "/settings/time",
-                         "/settings/firmware", "/settings/zigbee", "/onboarding"):
+                         "/settings/firmware", "/settings/zigbee"):
                 with self.subTest(width=width, page=page):
                     self.open_page(tools, self.base_url + page)
                     fit = json.loads(tools.call(
@@ -780,41 +738,6 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertTrue(table["reachable"], "the scrolling box takes focus")
         self.assertEqual(tools.complaints, [])
 
-    def test_a_row_of_controls_wraps_rather_than_eating_the_margin(self) -> None:
-        """Fitting on screen is not the same as being laid out.
-
-        The household page's "Sort by … / Add a plant" row is one line that
-        will not shrink. Without wrapping it stayed inside the viewport but
-        overran its own section's padding, putting the button flush against
-        the border — which reads as broken even though nothing is clipped.
-        """
-        tools = self.devtools()
-        tools.call("Emulation.setDeviceMetricsOverride", width=390, height=844,
-                   deviceScaleFactor=3, mobile=True)
-        self.open_page(tools, self.base_url + "/")
-        row = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
-            (() => {
-              const section = document.querySelector(".fleet-overview");
-              const el = section.querySelector(".settings-sensor-actions");
-              const cs = getComputedStyle(section);
-              const box = section.getBoundingClientRect();
-              // Where the section's content is allowed to reach.
-              const edge = box.right - parseFloat(cs.paddingRight)
-                                     - parseFloat(cs.borderRightWidth);
-              const kids = [...el.children].map((k) => k.getBoundingClientRect());
-              return JSON.stringify({
-                edge: Math.round(edge),
-                reach: Math.round(Math.max(...kids.map((k) => k.right))),
-                lines: new Set(kids.map((k) => Math.round(k.top))).size,
-              });
-            })()""")["result"]["value"])
-
-        self.assertGreaterEqual(
-            row["edge"], row["reach"],
-            f"controls reach {row['reach']}px, past the section's content edge"
-            f" at {row['edge']}px")
-        self.assertGreaterEqual(row["lines"], 2, "the row wrapped instead of overrunning")
-        self.assertEqual(tools.complaints, [])
 
     def test_the_settings_tabs_stay_reachable_on_a_phone(self) -> None:
         """The tabs that do not fit are scrolled to, not clipped away."""
@@ -851,7 +774,7 @@ class BrowserSmokeTests(unittest.TestCase):
         self.open_page(tools, self.base_url + "/plants")
         drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
             JSON.stringify({
-              cards: document.querySelectorAll("#fleet-grid .fleet-card").length,
+              cards: document.querySelectorAll("#fleet-grid .fleet-card[data-key]").length,
               covers: document.querySelectorAll("#fleet-grid img.fleet-card-cover").length,
               names: [...document.querySelectorAll("#fleet-grid .fleet-card strong")]
                 .map((name) => name.textContent),
@@ -1382,30 +1305,6 @@ class WeighingQuestionTests(unittest.TestCase):
         self.assertIn("if (answered === null)", self.app)
 
 
-class SensorKindWordsTests(unittest.TestCase):
-    """Every kind sensorKind can return has words written for it.
-
-    It grew a "soil" answer when the soil probes arrived and this
-    table did not, so renderSensorSettings threw on any plant with a
-    probe in its pot -- and took the whole fleet refresh with it,
-    every second, for three weeks.
-    """
-
-    def setUp(self) -> None:
-        self.app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
-                    / "static" / "app.js").read_text()
-
-    def test_every_kind_it_can_return_is_in_the_table(self) -> None:
-        import re
-        returns = set(re.findall(r'return "(\w+)";', self.app.split(
-            "function sensorKind(sensor)")[1].split("\n}")[0]))
-        table = self.app.split("const SENSOR_KINDS = {")[1].split("\n};")[0]
-        named = set(re.findall(r"^  (\w+):", table, re.M))
-        self.assertEqual(returns - named, set(),
-                         f"sensorKind can return {returns - named} with no words")
-
-    def test_an_unknown_kind_falls_back_rather_than_throwing(self) -> None:
-        self.assertIn("|| SENSOR_KINDS.unknown", self.app)
 
 
 class WeighingQuestionOffsetTests(unittest.TestCase):

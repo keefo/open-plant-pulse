@@ -3,16 +3,13 @@ import logging
 from pathlib import Path
 from threading import Thread
 
-from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
+from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.application.scales import ScaleService
 from open_plant_pulse_hub.application.airflow import FanService
 from open_plant_pulse_hub.application.alerts import Alerts, Sounder
 from open_plant_pulse_hub.application.zigbee import EzspGateway, ZigbeeService
-from open_plant_pulse_hub.firmware_server import create_firmware_server, firmware_server_address
-from open_plant_pulse_hub.ingestion.ble import BleakSubscriber
-from open_plant_pulse_hub.ingestion.device_configuration import DeviceConfigurationSynchronizer
 from open_plant_pulse_hub.lighting.service import DRIVERS, SIMULATED_DRIVERS, LightService
 from open_plant_pulse_hub.lighting.zigbee_plug import use_zigbee
 from open_plant_pulse_hub.web import create_server, server_address
@@ -30,7 +27,6 @@ def main() -> None:
         action="store_true",
         help="answer other computers too; the interface has no login",
     )
-    parser.add_argument("--no-ble", action="store_true", help="disable BTHome BLE collection")
     parser.add_argument(
         "--database",
         default=str(Path.home() / ".open-plant-pulse" / "hub.sqlite3"),
@@ -72,39 +68,6 @@ def main() -> None:
     firmware = FirmwareLibrary(store, args.firmware_directory)
     photos = PhotoLibrary(store, args.photo_directory)
 
-    firmware_server = None
-    firmware_port = None
-    if not args.no_firmware_server:
-        try:
-            firmware_server = create_firmware_server(
-                firmware, args.firmware_host, args.firmware_port
-            )
-            firmware_port = firmware_server_address(firmware_server)[1]
-            Thread(
-                target=firmware_server.serve_forever,
-                kwargs={"poll_interval": 0.25},
-                name="firmware-http",
-                daemon=True,
-            ).start()
-        except OSError as error:
-            # Losing the firmware server costs updates, not readings, so the hub
-            # says so and carries on rather than refusing to start.
-            logging.getLogger(__name__).warning(
-                "firmware server unavailable on %s:%s: %s",
-                args.firmware_host,
-                args.firmware_port,
-                error,
-            )
-
-    subscriber = None
-    if not args.no_ble:
-        subscriber = BleakSubscriber(
-            AdvertisementIngestionService(store),
-            configuration_synchronizer=DeviceConfigurationSynchronizer(
-                store, firmware_port=firmware_port
-            ),
-        )
-        subscriber.start()
     # Scales are polled rather than heard, so they get their own loop. It
     # starts whether or not any are adopted; adopting one later is picked up
     # on the next pass without a restart.
@@ -133,7 +96,6 @@ def main() -> None:
         store,
         args.host,
         args.port,
-        subscriber.health if subscriber else None,
         firmware,
         allow_network=args.allow_network,
         lights=lights,
@@ -148,12 +110,6 @@ def main() -> None:
     shown_port = "" if port == 80 else f":{port}"
     reach = "any computer on the network" if args.allow_network else "this computer only"
     print(f"Open Plant Pulse hub listening at http://{shown_host}{shown_port} ({reach})")
-    print("BTHome BLE collection enabled" if subscriber else "BTHome BLE collection disabled")
-    if firmware_server is not None:
-        firmware_host, firmware_port = firmware_server_address(firmware_server)
-        print(f"Firmware images served at http://{firmware_host}:{firmware_port}/firmware/")
-    else:
-        print("Firmware images are not being served; sensors cannot update over the air")
     print("Grow light control enabled" if lights else "Grow light control disabled")
 
     try:
@@ -162,11 +118,6 @@ def main() -> None:
         pass
     finally:
         server.server_close()
-        if firmware_server is not None:
-            firmware_server.shutdown()
-            firmware_server.server_close()
-        if subscriber is not None:
-            subscriber.close()
         if lights is not None:
             lights.stop()
         store.close()

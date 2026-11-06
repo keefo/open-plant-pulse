@@ -2,10 +2,6 @@ const fields = {
   "moisture": ["moisture_percent", 1], "soil-temp": ["soil_temperature_c", 1],
   "conductivity": ["conductivity_us_cm", 0]
 };
-const chemistryValueIds = {
-  soil_ph: "ph", nitrogen_mg_kg: "nitrogen",
-  phosphorus_mg_kg: "phosphorus", potassium_mg_kg: "potassium"
-};
 const metricPrecision = {
   soil_ph: 2,
   air_temperature_c: 1,
@@ -104,15 +100,9 @@ let fleetRequestSequence = 0;
 let sensorSettingsDraftSensorId = null;
 let sensorSettingsSubmitSequence = 0;
 let householdNetwork = null;
-let scannerHealth = null;
-let onboardingFinishedAt = null;
 let rooms = [];
 let householdNetworkDraft = false;
 let renderedSettingsSensorsKey = null;
-let onboardingStep = "find";
-let onboardingSensorId = null;
-let onboardingDraft = false;
-let onboardingResult = null;
 
 
 /* The Zigbee control panel.
@@ -2691,8 +2681,27 @@ function roomCard(room) {
     tally(room.plant_count, "plant"),
     tally(room.sensor_count, "sensor"),
   ];
-  setText(what, bits.join(" · "));
+  setText(what, bits.join(" \u00b7 "));
   heading.append(what);
+  if (room.air) {
+    /* Who measured it and when, next to the room's own line rather
+     * than under the figures. The sensor's name is a link, because
+     * "which one is that?" is the next question and the answer is a
+     * page away. */
+    const by = document.createElement("p");
+    by.className = "note mute room-card-measured";
+    by.append(document.createTextNode("Measured by "));
+    const eui = String(room.air.sensor_id || "").startsWith("zigbee-")
+      ? room.air.sensor_id.slice("zigbee-".length) : null;
+    const who = document.createElement(eui ? "a" : "strong");
+    if (eui) who.href = `/zigbee/${eui}`;
+    setText(who, room.air.sensor_name);
+    by.append(who);
+    const age = (Date.now() - Date.parse(room.air.observed_at)) / 1000;
+    by.append(document.createTextNode(
+      ", " + (Number.isFinite(age) ? `${describeSeconds(age)} ago` : "at an unknown time")));
+    heading.append(by);
+  }
   card.append(heading);
 
   if (!room.air) {
@@ -2721,13 +2730,6 @@ function roomCard(room) {
     figures.append(pair);
   }
   card.append(figures);
-
-  const measured = document.createElement("p");
-  measured.className = "note mute";
-  const age = (Date.now() - Date.parse(room.air.observed_at)) / 1000;
-  setText(measured, `Measured by ${room.air.sensor_name}, `
-    + (Number.isFinite(age) ? `${describeSeconds(age)} ago` : "at an unknown time"));
-  card.append(measured);
 
   // The same Air conditions block the plant page uses, not a second
   // way of drawing the same thing. Identical markup means identical
@@ -2826,11 +2828,10 @@ function pageFromLocation() {
   if (path === "/rooms") return "rooms";
   if (path.startsWith("/rooms/")) return "room";
   if (path === "/settings" || path.startsWith("/settings/")) return "settings";
-  if (path === "/onboarding" || path.startsWith("/onboarding/")) return "onboarding";
   return "fleet";
 }
 
-const SETTINGS_TABS = ["sensors", "rooms", "lights", "wifi", "time",
+const SETTINGS_TABS = ["rooms", "lights", "wifi", "time",
                        "firmware", "zigbee", "alerts", "box"];
 const SETTINGS_TAB_KEY = "opp.settings.tab";
 
@@ -2850,9 +2851,9 @@ function rememberedSettingsTab() {
     if (SETTINGS_TABS.includes(kept)) return kept;
   } catch (_error) {
     // Private windows and blocked site data both throw here. Settings
-    // opening on Sensors is a smaller loss than the page not opening.
+    // opening on Rooms is a smaller loss than the page not opening.
   }
-  return "sensors";
+  return "rooms";
 }
 
 function rememberSettingsTab(tab) {
@@ -3040,7 +3041,6 @@ function renderPage() {
      * sensor it belongs to and the page is composed from that. */
     // Which sections belong to this kind of device is settled above, in the
     // one pass that decides what is shown.
-    if (sensorKind(selectedSensor) === "bthome") renderSensorFirmware();
   }
   /* A Zigbee device reached at a sensor address goes to the Zigbee page.
    *
@@ -3056,7 +3056,6 @@ function renderPage() {
   }
   if (page === "settings") renderSettingsTab();
   if (page === "zigbee-device") renderZigbeeDevicePage();
-  if (page === "onboarding") renderOnboarding();
   document.title = titleForPage(page);
 }
 
@@ -3071,7 +3070,6 @@ function titleForPage(page) {
   if (page === "room") return `${shownRoom?.name || "Room"} · Open Plant Pulse`;
   if (page === "settings") return "Settings · Open Plant Pulse";
   if (page === "zigbee-device") return "Device · Zigbee · Open Plant Pulse";
-  if (page === "onboarding") return "Add a sensor · Open Plant Pulse";
   return "Plants · Open Plant Pulse";
 }
 
@@ -3166,8 +3164,9 @@ function renderHousehold() {
   /* Cards are kept and updated rather than rebuilt. The page refreshes every
    * second, and replacing the grid would reload every cover photograph and
    * lose whatever the pointer was over. */
+  const adder = grid.querySelector(".fleet-card-add");
   const existing = new Map(
-    Array.from(grid.querySelectorAll(".fleet-card"), (card) => [card.dataset.key, card])
+    Array.from(grid.querySelectorAll(".fleet-card[data-key]"), (card) => [card.dataset.key, card])
   );
   const keys = new Set(tiles.map(tileKey));
   for (const [key, card] of existing) {
@@ -3190,6 +3189,9 @@ function renderHousehold() {
     const cardAtIndex = grid.children[index];
     if (cardAtIndex !== card) grid.insertBefore(card, cardAtIndex || null);
   });
+  // Last, whatever the sort put where. Appending an element already in
+  // the grid moves it, so this costs nothing when it is already there.
+  if (adder && grid.lastElementChild !== adder) grid.append(adder);
 }
 
 
@@ -3357,6 +3359,19 @@ function sortHousehold(tiles) {
   const sorted = [...tiles];
   if (by === "thirst") {
     sorted.sort((a, b) => tileThirst(a) - tileThirst(b) || compareName(a, b));
+  } else if (by === "drinks") {
+    /* How much it gets through in a day, biggest first.
+     *
+     * A different question from thirst: that one is how close a pot is
+     * to wanting water, this is how fast it empties. A big strelitzia
+     * drinking 131 ml a day may be comfortable, and a seedling on 5 ml
+     * may be nearly dry.
+     *
+     * A plant that cannot say sorts last rather than as nought, which
+     * would put every unweighed pot at the bottom in a block and read
+     * as a measurement. */
+    const drinks = (tile) => tile.plant.daily_grams ?? -Infinity;
+    sorted.sort((a, b) => drinks(b) - drinks(a) || compareName(a, b));
   } else if (by === "watered") {
     // Never watered is the longest of all, so it sorts to the front.
     const when = (tile) => tile.plant.last_watered_at
@@ -3525,48 +3540,6 @@ function renderConfigRevision(sensor) {
   renderedConfigRevision = applied;
 }
 
-/* The probe's pH, what it is shown as, and the one number that connects
- * them. Rendered from the sensor because the offset describes the piece of
- * hardware, not the plant that happens to be in front of it. */
-function renderSoilPhCalibration() {
-  const panel = document.getElementById("sensor-ph-panel");
-  if (panel === null) return;
-  const sensor = plantSensor() || selectedSensor;
-  const status = sensor?.soil_chemistry;
-  setHidden(panel, !sensor || isScale(sensor));
-  if (!status || isScale(sensor)) return;
-
-  setText(document.getElementById("ph-raw"),
-    status.raw === null ? "--" : status.raw.toFixed(1));
-  setText(document.getElementById("ph-corrected"),
-    status.ph === null ? "--" : status.ph.toFixed(1));
-  setText(document.getElementById("ph-offset"),
-    status.calibrated ? `${status.offset >= 0 ? "+" : ""}${status.offset.toFixed(1)}`
-                      : "none");
-  setText(document.getElementById("ph-measured-at"),
-    status.at === null ? "never" : `${describeAge(status.age_seconds)} ago`);
-
-  const note = document.getElementById("ph-reference-note");
-  setText(note, status.calibrated
-    ? `Calibrated to ${status.reference} against a probe reading of `
-      + `${status.reference_raw} at ${status.reference_ec ?? "unknown"} uS/cm.`
-    : "Taken against the probe's last pH reading and the conductivity at the time.");
-
-  // A correction found at one conductivity is not promised at another.
-  const caution = document.getElementById("ph-caution");
-  setHidden(caution, !status.far_from_calibration);
-  if (status.far_from_calibration) {
-    setText(caution, `This was calibrated at ${status.reference_ec} uS/cm and the `
-      + `probe is now in ${status.conductivity_us_cm} uS/cm. The probe's pH moves `
-      + `with conductivity, so the corrected figure is outside the conditions it `
-      + `was set in. Calibrate again where it is now, if that is where it lives.`);
-  }
-
-  const field = document.getElementById("ph-reference");
-  if (field !== null && field !== document.activeElement && field.value === "") {
-    field.value = status.reference === null ? "" : String(status.reference);
-  }
-}
 
 function describeAge(seconds) {
   if (seconds === null || seconds === undefined) return "never";
@@ -3576,41 +3549,6 @@ function describeAge(seconds) {
   return `${Math.round(seconds / 86400)} days`;
 }
 
-async function saveSoilPhCalibration(reference) {
-  const sensor = plantSensor() || selectedSensor;
-  const message = document.getElementById("sensor-ph-message");
-  if (!sensor) return;
-  const response = await fetch(
-    `/api/sensors/${encodeURIComponent(sensor.sensor_id)}/ph-calibration`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reference }),
-    });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    setText(message, body.error || "That calibration could not be saved.");
-    return;
-  }
-  setText(message, reference === null ? "Calibration cleared." : "Calibrated.");
-  await refreshFleet();
-  renderSoilPhCalibration();
-}
-
-/* What a scale is, and what it is doing.
- *
- * A scale is reached over HTTP at an address it already serves, so almost
- * nothing in the Bluetooth sensor's configuration applies to it: there is
- * no reporting interval to request, no configuration to deliver on the
- * next report, and no console to switch on -- the page at its address is
- * the console. What it does have is how often it weighs, and how much of
- * that is worth writing down.
- */
-/* Whether this sensor has a plant, and the means to give it one.
- *
- * Kept out of the sensor settings render, which is memoised on the device's
- * own fields: the list of plants is not one of them, so the chooser was
- * built once while the plants were still loading and never again. */
 function renderSensorAttach() {
   if (!selectedSensor) return;
   /* Either it has a plant or it is looking for one: attaching and
@@ -4083,171 +4021,10 @@ function renderBattery(element, reading) {
   }
 }
 
-function renderSensorSettings() {
-  if (!selectedSensor || !profiles) return;
-  const preserveDraft = sensorSettingsDraftSensorId === selectedSensor.sensor_id;
-  const renderKey = JSON.stringify([
-    selectedSensor.sensor_id,
-    selectedSensor.display_name,
-    selectedSensor.room,
-    selectedSensor.profile_id,
-    selectedSensor.expected_interval_seconds,
-    selectedSensor.sensor_reporting_interval_seconds,
-    selectedSensor.device_config_status,
-    selectedSensor.device_config_revision,
-    selectedSensor.device_config_error,
-    unclaimedSensors.map((sensor) => sensor.sensor_id)
-  ]);
-  if (renderedSettingsKey === renderKey) return;
-  renderedSettingsKey = renderKey;
-  setText(document.getElementById("settings-sensor-id"), selectedSensor.sensor_id);
-  /* The plant is somewhere to go from here, not where here came from, so
-   * it sits with the other things done to this sensor rather than in the
-   * back button. A sensor with no plant is offered nothing. */
-  // A kind with no words written for it falls back rather than
-  // throwing. sensorKind grew a "soil" answer and this table did
-  // not, so every render died here and took the fleet refresh with
-  // it for anybody with a probe in a pot.
-  const kind = SENSOR_KINDS[sensorKind(selectedSensor)] || SENSOR_KINDS.unknown;
-  setText(document.getElementById("sensor-kind-label"), kind.label);
-  setText(document.getElementById("sensor-kind-note"), kind.note);
-  setHidden(document.getElementById("sensor-identity-panel"),
-            pageFromLocation() !== "sensor-config");
-  // A scale has no configuration the hub delivers, so it is not kept
-  // waiting for one it will never be sent.
-  setHidden(document.getElementById("settings-config-revision"), isScale(selectedSensor));
-  if (!isScale(selectedSensor)) renderConfigRevision(selectedSensor);
-  if (!preserveDraft) {
-    selectReportingInterval(
-      document.getElementById("detail-setting-reporting-interval"),
-      selectedSensor.expected_interval_seconds
-    );
-    setText(document.getElementById("sensor-settings-message"), "");
-  }
-  // The console switch belongs with the sensor's other settings as well as on
-  // the Settings list, because this is the page somebody is on when they want
-  // to reach the sensor's own diagnostics.
-  const consoleToggle = document.getElementById("detail-console-toggle");
-  const consoleState = document.getElementById("detail-console-state");
-  consoleToggle.checked = Boolean(selectedSensor.wifi_enabled);
-  setData(consoleToggle, "sensorId", selectedSensor.sensor_id);
-  setDisabled(consoleToggle, !householdNetwork || !householdNetwork.wifi_ssid);
-  setText(consoleState, consoleToggle.disabled
-    ? "No household network saved yet. Add one in Settings to switch this on."
-    : describeWifi(selectedSensor));
-  // Only offered once the sensor has said it reached the network and given its
-  // address. Before that there is nothing at the other end of the link.
-  const consoleLink = document.getElementById("detail-console-link");
-  const reachable =
-    selectedSensor.wifi_enabled &&
-    selectedSensor.wifi_state === "joined" &&
-    selectedSensor.wifi_address;
-  setHidden(consoleLink, !reachable);
-  if (reachable) {
-    setAttr(consoleLink, "href", "http://" + selectedSensor.wifi_address + "/");
-    setText(consoleLink, "Open this sensor's console at " + selectedSensor.wifi_address);
-  }
-  const sensorInterval = selectedSensor.sensor_reporting_interval_seconds;
-  document.getElementById("sensor-reporting-interval").value = sensorInterval == null
-    ? "Not synced yet"
-    : formatReportingInterval(sensorInterval);
-  const delivery = document.getElementById("device-config-status");
-  if (selectedSensor.device_config_status === "applied") {
-    setText(delivery, `Applied on sensor · revision ${selectedSensor.device_config_revision}`);
-  } else if (selectedSensor.device_config_status === "retrying") {
-    setText(delivery, `Delivery will retry on the next report · ${selectedSensor.device_config_error}`);
-  } else {
-    setText(delivery, "Waiting to send when the sensor next reports.");
-  }
-}
-
-/* The debug log stays as it was left.
- *
- * It sits last on the page and is closed until somebody wants it, but watching
- * reports arrive means reloading this page repeatedly, and reopening the same
- * section every time is a chore. Browser storage can be missing or refuse the
- * write, which costs only the memory of the last state, so it is never trusted
- * for anything the page needs to work. */
-const RAW_REPORTS_OPEN_KEY = "open-plant-pulse.raw-reports-open";
-
-function trackRawReportsDisclosure() {
-  const log = document.getElementById("raw-report-log");
-  try {
-    log.open = window.localStorage.getItem(RAW_REPORTS_OPEN_KEY) === "true";
-  } catch (_error) {
-    log.open = false;
-  }
-  log.addEventListener("toggle", () => {
-    try {
-      window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));
-    } catch (_error) {
-      /* Nothing to do: the section still opens and closes. */
-    }
-  });
-}
-
-const PACKET_KIND_LABELS = { packet1: "packet 1", packet2: "packet 2" };
-
-function rawReportLabel(item) {
-  if (item.packet_kind === "beacon") return "beacon";
-  if (item.report_id == null) return "—";
-  if (!item.packet_kind) return String(item.report_id);
-  return `${item.report_id} · ${PACKET_KIND_LABELS[item.packet_kind] || item.packet_kind}`;
-}
-
-function renderRawReports(items) {
-  const rows = document.getElementById("raw-report-list");
-  if (!renderKeyChanged(rows, items)) return;
-  if (!items.length) {
-    const cell = Object.assign(document.createElement("td"), {
-      className: "raw-report-empty",
-      colSpan: 6,
-      textContent: "No raw BLE reports stored yet."
-    });
-    const row = document.createElement("tr");
-    row.append(cell);
-    rows.replaceChildren(row);
-    return;
-  }
-  rows.replaceChildren(...items.map((item) => {
-    const row = document.createElement("tr");
-    const status = Object.assign(document.createElement("span"), {
-      className: "raw-report-status",
-      textContent: item.decode_status,
-      title: item.decode_error || ""
-    });
-    setData(status, "status", item.decode_status);
-    const payload = Object.assign(document.createElement("code"), {
-      textContent: item.service_data_hex || "unavailable",
-      title: `SHA-256 ${item.payload_sha256}`
-    });
-    const values = [
-      new Date(item.received_at).toLocaleString(),
-      rawReportLabel(item),
-      status,
-      item.rssi == null ? "—" : `${item.rssi} dBm`,
-      [item.source_adapter, item.observed_identifier].filter(Boolean).join(" · "),
-      payload
-    ];
-    values.forEach((value) => {
-      const cell = document.createElement("td");
-      if (value instanceof Node) cell.append(value);
-      else cell.textContent = value;
-      row.append(cell);
-    });
-    return row;
-  }));
-}
-
 function renderHubHealth(health) {
-  const scanner = health.scanner || { status: "unknown" };
-  scannerHealth = scanner;
-  renderScanState();
   const lines = [
     `Hub started ${new Date(health.started_at).toLocaleString()}`,
-    `Database: ${health.database.status}`,
-    `BLE scanner: ${scanner.status}`,
-    `Last BLE receive: ${scanner.last_receive_at ? new Date(scanner.last_receive_at).toLocaleString() : "none"}`
+    `Database: ${health.database.status}`
   ];
   const panel = document.getElementById("hub-health");
   if (!renderKeyChanged(panel, lines)) return;
@@ -4283,16 +4060,12 @@ async function refreshFleet() {
   selectedSensorId = sensorIdFromLocation() ?? plantSensor()?.sensor_id ?? null;
   selectedSensor = fleetSensors.find((sensor) => sensor.sensor_id === selectedSensorId) || null;
   renderHousehold();
-  renderSensorSettings();
   renderSensorAttach();
   renderScalePanel();
   renderSoilPanel();
   renderDeviceFrames();
   refreshDeviceDetail();
-  renderSoilPhCalibration();
-  renderSettingsSensors();
   renderHouseholdNetwork();
-  renderRoomChoices();
   renderPage();
 }
 
@@ -4547,7 +4320,6 @@ function renderProfileRanges() {
   if (!profiles || !latestReading) return;
   const profileId = selectedSensor?.profile_id || profiles.default_profile;
   const profile = profiles.profiles[profileId];
-  setText(document.getElementById("chemistry-profile"), `${profile.name} starter targets`);
   renderMoistureVessel(profile);
   renderMoistureTrend(profile);
   renderPlantAssessment(profile);
@@ -4564,37 +4336,6 @@ function renderProfileRanges() {
     renderRangeStatus(document.getElementById(id), metricName, profile.climate[metricName], latestReading[metricName]);
   }
   if (climateHistory) renderClimateHistory(...climateHistory);
-  /* The probe's pH and N/P/K are shown as it reports them, with no target
-   * band: they are labelled in the page as unverified and trend-only.
-   *
-   * They no longer arrive with every reading. Holding the probe powered
-   * long enough for pH costs four minutes, so it is paid a couple of times
-   * a day and after a watering, and the readings in between carry none of
-   * these. Taking them from the newest reading left the whole panel blank,
-   * so they come from the last reading that actually had them, and the
-   * panel says when that was. */
-  const chemistry = (plantSensor() || selectedSensor)?.soil_chemistry;
-  for (const [metricName, id] of Object.entries(chemistryValueIds)) {
-    const live = latestReading[metricName];
-    const value = live != null ? live
-      : metricName === "soil_ph" ? chemistry?.ph
-      : chemistry?.[metricName];
-    setText(document.getElementById(id), value == null ? "--" : formatValue(value, metricName));
-  }
-  const measured = document.getElementById("chemistry-measured");
-  if (measured !== null) {
-    const stale = latestReading.soil_ph == null && chemistry?.at;
-    setHidden(measured, !stale);
-    if (stale) {
-      setText(measured, `pH and nutrients were last measured ${formatAge(chemistry.age_seconds)}`
-        + `${chemistry.calibrated ? `, and are corrected by ${chemistry.offset >= 0 ? "+" : ""}${chemistry.offset}` : ""}`
-        + ". They need four minutes with the probe powered, so they are taken a "
-        + "couple of times a day and after a watering rather than every reading.");
-    }
-  }
-  renderPoreWaterEc(profile);
-  renderBulkEcChart();
-  renderPoreEcChart(profile);
 }
 
 function formatAge(seconds) {
@@ -4607,47 +4348,6 @@ function formatAge(seconds) {
   return `${Math.round(seconds / 86400)} days ago`;
 }
 
-/**
- * Nutrient level and the pore-water EC it comes from. The estimate is the
- * latest reading's when it has one; while the soil is too dry the hub sends the
- * last valid one instead, which is shown with what it was worked out from and
- * how old it is, so it is never mistaken for a live value.
- */
-function renderPoreWaterEc(profile) {
-  const card = document.getElementById("pore-ec-card");
-  const metric = profile.root_zone.conductivity_us_cm;
-  const chemistry = latestChemistry;
-  const status = chemistry?.status || "none";
-  const estimate = status === "none" ? null : chemistry.pore_water_ec_us_cm;
-  setData(card, "status", status);
-  setData(card, "level", chemistry?.nutrient_level || "none");
-  renderGauge(card, "conductivity_us_cm", metric, estimate);
-
-  const level = { low: "Low", ok: "OK", high: "High" }[chemistry?.nutrient_level];
-  setText(document.getElementById("nutrient-level"), level || "--");
-  setText(document.getElementById("nutrient-level-basis"),
-    status === "last_valid" ? "· last estimate" : "");
-  setText(document.getElementById("pore-ec"), estimate == null ? "--" : String(estimate));
-  setText(document.getElementById("pore-ec-target"), `(target ${metric.ideal[0]}–${metric.ideal[1]})`);
-
-  const basisText = document.getElementById("pore-ec-basis");
-  const dryNote = document.getElementById("pore-ec-dry-note");
-  if (status === "none") {
-    setText(card.querySelector(".range-status"), "No recent estimate — water the plant to get one");
-    setText(basisText, "");
-  } else {
-    const basis = chemistry.basis;
-    const afterWatering = basis.post_watering ? " after watering" : "";
-    setText(basisText,
-      `from EC ${basis.conductivity_us_cm} µS/cm at ${Math.round(basis.moisture_percent)} % moisture, ` +
-      `${Number(basis.soil_temperature_c).toFixed(1)} °C${afterWatering} · ${formatAge(chemistry.age_seconds)}`);
-  }
-  const moisture = latestReading.moisture_percent;
-  setHidden(dryNote, !chemistry?.too_dry);
-  setText(dryNote, chemistry?.too_dry
-    ? `Now too dry to estimate (moisture ${moisture == null ? "--" : Math.round(moisture)} %) — updates after the next watering`
-    : "");
-}
 
 function drainageResponseClass(retainedFraction) {
   if (retainedFraction < 0.45) return "fast";
@@ -5318,177 +5018,6 @@ function bulkEcPoints() {
   return since.length >= 4 ? since : ordered;
 }
 
-function renderBulkEcChart() {
-  const chart = document.getElementById("bulk-ec-chart");
-  const empty = document.getElementById("bulk-ec-chart-empty");
-  const note = document.getElementById("bulk-ec-chart-note");
-  if (chart === null) return;
-  const points = bulkEcPoints();
-  setHidden(chart, points.length < 2);
-  setHidden(empty, points.length >= 2);
-  if (points.length < 2) {
-    setHidden(note, true);
-    return;
-  }
-  const width = Math.max(260, Math.round(chart.getBoundingClientRect().width) || 640);
-  if (!renderKeyChanged(chart, [moistureTrendVersion, points.length, points.at(-1), width])) return;
-  chart.replaceChildren();
-
-  const height = 150;
-  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
-  const plot = { left: 46, right: 10, top: 10, bottom: 20 };
-  const plotWidth = width - plot.left - plot.right;
-  const plotHeight = height - plot.top - plot.bottom;
-  const startTime = points[0].timestamp;
-  const endTime = points[points.length - 1].timestamp;
-  const values = points.map((point) => point.value);
-  const top = Math.max(...values) * 1.1 || 1;
-  const x = (time) =>
-    plot.left + ((time - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
-  const y = (value) => plot.top + (1 - value / top) * plotHeight;
-
-  for (const value of [0, top / 2, top]) {
-    chart.append(
-      svgElement("line", { class: "grid-line", x1: plot.left, x2: width - plot.right,
-                           y1: y(value), y2: y(value) }),
-      svgElement("text", { class: "axis-label", x: plot.left - 6, y: y(value) + 4,
-                           "text-anchor": "end" }, String(Math.round(value)))
-    );
-  }
-  chart.append(svgElement("polyline", {
-    class: "history-line",
-    points: points.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" "),
-  }));
-  chart.append(svgElement("circle", {
-    class: "history-point latest-point", r: 3.5,
-    cx: x(points[points.length - 1].timestamp),
-    cy: y(points[points.length - 1].value),
-  }));
-
-  const day = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric",
-                                                   hour: "numeric" });
-  chart.append(
-    svgElement("text", { class: "axis-label", x: plot.left, y: height - 5,
-                         "text-anchor": "start" }, day.format(new Date(startTime))),
-    svgElement("text", { class: "axis-label", x: width - plot.right, y: height - 5,
-                         "text-anchor": "end" }, day.format(new Date(endTime)))
-  );
-
-  // Said beside the line, because the shape invites the wrong reading.
-  const lowest = Math.min(...values);
-  const highest = Math.max(...values);
-  setHidden(note, false);
-  const hours = (endTime - startTime) / 3600000;
-  setText(note, `${Math.round(lowest)} to ${Math.round(highest)} µS/cm over `
-    + `${hours < 1 ? `${Math.round(hours * 60)} minutes` : `${hours.toFixed(hours < 10 ? 1 : 0)} hours`}. `
-    + "Most of a rise after watering is water arriving between the needles rather "
-    + "than salt; pore-water EC above has moisture divided out.");
-}
-
-/* Pore-water conductivity over the month: is salt building up?
- *
- * The slow companion to the measured-EC line. Watering moves that one by
- * tenfold and means little; this one moves when what the roots sit in
- * actually changes, which is the thing that eventually asks for a flush.
- *
- * Drawn with gaps. Below about a fifth moisture the model has nothing to
- * say and the hub sends no estimate, which is most of the time between
- * waterings -- joining across those would draw a line through soil nobody
- * measured.
- */
-function renderPoreEcChart(profile) {
-  const chart = document.getElementById("pore-ec-chart");
-  const empty = document.getElementById("pore-ec-chart-empty");
-  const note = document.getElementById("pore-ec-chart-note");
-  if (chart === null) return;
-  const runs = [];
-  let run = [];
-  for (const item of moistureTrendItems) {
-    const value = item.pore_water_ec_us_cm;
-    const timestamp = Date.parse(item.reading?.observed_at || item.received_at);
-    if (value == null || !Number.isFinite(timestamp)) {
-      if (run.length) runs.push(run);
-      run = [];
-      continue;
-    }
-    run.push({ timestamp, value: Number(value) });
-  }
-  if (run.length) runs.push(run);
-  const all = runs.flat();
-  setHidden(chart, all.length < 2);
-  setHidden(empty, all.length >= 2);
-  if (all.length < 2) {
-    setHidden(note, true);
-    return;
-  }
-  const width = Math.max(260, Math.round(chart.getBoundingClientRect().width) || 640);
-  const ideal = profile?.root_zone?.conductivity_us_cm?.ideal;
-  if (!renderKeyChanged(chart, [moistureTrendVersion, all.length, all.at(-1), width, ideal])) return;
-  chart.replaceChildren();
-
-  const height = 170;
-  setAttr(chart, "viewBox", `0 0 ${width} ${height}`);
-  const plot = { left: 52, right: 10, top: 10, bottom: 20 };
-  const plotWidth = width - plot.left - plot.right;
-  const plotHeight = height - plot.top - plot.bottom;
-  const startTime = all[0].timestamp;
-  const endTime = all[all.length - 1].timestamp;
-  const highest = Math.max(...all.map((point) => point.value), ideal ? ideal[1] : 0);
-  const top = highest * 1.1 || 1;
-  const x = (time) =>
-    plot.left + ((time - startTime) / Math.max(1, endTime - startTime)) * plotWidth;
-  const y = (value) => plot.top + (1 - value / top) * plotHeight;
-
-  // The plant's own band, so the line is read against something.
-  if (ideal) {
-    chart.append(svgElement("rect", {
-      class: "ideal-band", x: plot.left, width: plotWidth,
-      y: y(ideal[1]), height: Math.max(1, y(ideal[0]) - y(ideal[1])),
-    }));
-  }
-  for (const value of [0, top / 2, top]) {
-    chart.append(
-      svgElement("line", { class: "grid-line", x1: plot.left, x2: width - plot.right,
-                           y1: y(value), y2: y(value) }),
-      svgElement("text", { class: "axis-label", x: plot.left - 6, y: y(value) + 4,
-                           "text-anchor": "end" }, String(Math.round(value)))
-    );
-  }
-  for (const stretch of runs) {
-    if (stretch.length === 1) {
-      chart.append(svgElement("circle", { class: "history-point", r: 2,
-        cx: x(stretch[0].timestamp), cy: y(stretch[0].value) }));
-      continue;
-    }
-    chart.append(svgElement("polyline", {
-      class: "history-line",
-      points: stretch.map((point) => `${x(point.timestamp)},${y(point.value)}`).join(" "),
-    }));
-  }
-  chart.append(svgElement("circle", {
-    class: "history-point latest-point", r: 3.5,
-    cx: x(all[all.length - 1].timestamp), cy: y(all[all.length - 1].value),
-  }));
-
-  const day = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-  chart.append(
-    svgElement("text", { class: "axis-label", x: plot.left, y: height - 5,
-                         "text-anchor": "start" }, day.format(new Date(startTime))),
-    svgElement("text", { class: "axis-label", x: width - plot.right, y: height - 5,
-                         "text-anchor": "end" }, day.format(new Date(endTime)))
-  );
-
-  const first = all[0].value;
-  const last = all[all.length - 1].value;
-  const direction = Math.abs(last - first) < Math.max(50, first * 0.1)
-    ? "steady" : last > first ? "rising" : "falling";
-  setHidden(note, false);
-  setText(note, `${Math.round(first)} to ${Math.round(last)} µS/cm across the readings `
-    + `wet enough to estimate from -- ${direction}`
-    + `${ideal ? `, against a ${ideal[0]}-${ideal[1]} band` : ""}. `
-    + "Gaps are stretches where the pot was too dry for the estimate to mean "
-    + "anything. Rising over weeks is salt building up, which a heavy flush clears.");
-}
 
 function renderMoistureTrend(profile) {
   const chart = document.getElementById("moisture-trend-chart");
@@ -5614,13 +5143,6 @@ async function refreshMoistureTrend() {
 async function loadProfiles() {
   const response = await fetch("/api/plant-profiles");
   profiles = await response.json();
-  // One profile list now. The other belonged to the enroll dialog, which
-  // duplicated what /onboarding does and has gone with the sensor inbox.
-  const onboardingSelect = document.getElementById("onboarding-profile");
-  for (const [id, profile] of Object.entries(profiles.profiles)) {
-    onboardingSelect.add(new Option(profile.name, id));
-  }
-  setText(document.getElementById("chemistry-guidance"), profiles.guidance);
   renderProfileRanges();
 }
 
@@ -6101,8 +5623,6 @@ async function refresh() {
       // can name the plant it is leaving.
       await refreshPlants();
       if (selectedSensorId) {
-        const reports = await fetch(`/api/raw-reports${sensorQuery()}`);
-        if (reports.ok) renderRawReports((await reports.json()).items);
         await refreshFirmwareImages();
       }
       return;
@@ -6114,8 +5634,6 @@ async function refresh() {
       selectedSensor = plantSensor() ?? null;
       await refreshPlantConfig();
       if (selectedSensorId) {
-        const reports = await fetch(`/api/raw-reports${sensorQuery()}`);
-        if (reports.ok) renderRawReports((await reports.json()).items);
         await refreshFirmwareImages();
       }
       return;
@@ -6165,7 +5683,6 @@ async function refreshFirmwareImages() {
     return;
   }
   renderFirmwareImages();
-  renderSensorFirmware();
 }
 
 function renderFirmwareImages() {
@@ -6277,92 +5794,8 @@ function firmwareUpdateIsRunning(sensor) {
   );
 }
 
-function renderSensorFirmware() {
-  const choice = document.getElementById("firmware-choice");
-  if (choice === null || !selectedSensor) return;
-  setText(document.getElementById("firmware-current"), selectedSensor.firmware_version
-    ? "Running " + selectedSensor.firmware_version
-    : "Version not reported yet");
-  setText(document.getElementById("firmware-update-state"),
-    describeFirmwareUpdate(selectedSensor));
-
-  const running = firmwareUpdateIsRunning(selectedSensor);
-  const progress = document.getElementById("firmware-progress");
-  setHidden(progress, !running);
-  setStyle(document.getElementById("firmware-progress-bar"), "width",
-    Math.max(2, selectedSensor.firmware_update_percent || 0) + "%");
-  setHidden(document.getElementById("firmware-cancel"), !running);
-
-  const renderKey = JSON.stringify(firmwareImages.map((image) => [image.version, image.digest]));
-  if (choice.dataset.renderKey !== renderKey) {
-    setData(choice, "renderKey", renderKey);
-    choice.replaceChildren();
-    firmwareImages
-      .filter((image) => image.available)
-      .forEach((image) => {
-        const option = document.createElement("option");
-        option.value = image.digest;
-        setText(option, image.version + " · " + formatBytes(image.size_bytes));
-        choice.append(option);
-      });
-  }
-
-  /* The sensor downloads over Wi-Fi, so being on the network is a precondition
-   * rather than something to discover halfway through an update. Say so where
-   * the button is, and do not offer the button. */
-  const onNetwork = Boolean(selectedSensor.wifi_enabled && selectedSensor.wifi_state === "joined");
-  const note = document.getElementById("firmware-precondition");
-  const install = document.getElementById("firmware-install");
-  if (!firmwareImages.some((image) => image.available)) {
-    setText(note,
-      "No firmware images are stored on this hub. Add one under Settings · Firmware.");
-  } else if (!onNetwork) {
-    setText(note,
-      "This sensor downloads firmware over the household network. Switch its web console on " +
-      "above and wait until it reports an address, then come back.");
-  } else {
-    setText(note,
-      "The hub tells the sensor which image to fetch over Bluetooth; the sensor downloads it " +
-      "from the hub over Wi-Fi and restarts. It keeps its pairing, plant and settings.");
-  }
-  setDisabled(install, running || !onNetwork || choice.options.length === 0);
-}
-
-async function installFirmware() {
-  const choice = document.getElementById("firmware-choice");
-  if (!selectedSensorId || !choice.value) return;
-  const image = firmwareImages.find((candidate) => candidate.digest === choice.value);
-  const confirmed = window.confirm(
-    "Send firmware " + (image ? image.version : "") + " to " +
-    (selectedSensor.display_name || selectedSensorId) + "?\n\n" +
-    "The sensor downloads it, installs it and restarts. If the new firmware does not start, " +
-    "the sensor goes back to the one it is running now."
-  );
-  if (!confirmed) return;
-  await fetch("/api/sensors/" + encodeURIComponent(selectedSensorId) + "/firmware", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ digest: choice.value }),
-  });
-  await refreshFleet();
-}
-
-async function cancelFirmwareUpdate() {
-  if (!selectedSensorId) return;
-  await fetch("/api/sensors/" + encodeURIComponent(selectedSensorId) + "/firmware", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ digest: "" }),
-  });
-  await refreshFleet();
-}
 
 
-/* Plants nothing is watching, beside the ones that are.
- *
- * A card cannot say "healthy" about a plant with no readings, so it says what
- * is actually known: when it was last watered, and how much water the pot has
- * left when the scale can answer that. */
 let householdPlants = [];
 
 async function refreshPlants() {
@@ -7667,52 +7100,23 @@ function isScale(sensor) {
   return transport === "http-scale" || transport.endsWith("-scale");
 }
 
-/* What sort of instrument this is, which decides what its page is made of. */
+
+
+/* What kind of device this is, derived rather than assumed.
+ *
+ * This read "anything that is not an http-scale is a bluetooth probe",
+ * which was true while there were two kinds and wrong the moment a third
+ * arrived: a Zigbee scale was offered pH calibration and moisture
+ * thresholds. An unrecognised transport now gets no panels rather than
+ * somebody else's.
+ */
 function sensorKind(sensor) {
-  /* Derived, not assumed.
-   *
-   * This read "anything that is not an http-scale is a bluetooth probe",
-   * which was true while there were two kinds and wrong the moment a third
-   * arrived: a Zigbee scale was offered pH calibration and moisture
-   * thresholds. An unrecognised transport now gets no panels rather than
-   * somebody else's. */
   const transport = sensor?.transport || "";
   if (transport === "http-scale") return "scale";
-  if (transport === "bthome") return "bthome";
   if (transport === "zigbee-soil") return "soil";
   if (transport.startsWith("zigbee")) return "zigbee";
   return "unknown";
 }
-
-const SENSOR_KINDS = {
-  soil: {
-    label: "SOIL PROBE",
-    note: "What the soil is doing in one pot. Administered on the Zigbee "
-      + "page, because what can be done with it depends on the dongle.",
-  },
-  zigbee: {
-    label: "ZIGBEE DEVICE",
-    note: "Administered on the Zigbee page, because what can be done with it "
-      + "depends on the dongle being plugged in.",
-  },
-  unknown: {
-    label: "DEVICE",
-    note: "The hub does not recognise how this device is reached, so it offers "
-      + "nothing rather than guessing at controls it may not have.",
-  },
-  bthome: {
-    label: "BLUETOOTH PROBE",
-    note: "A probe in the soil. It is configured over Bluetooth, so changes "
-      + "reach it when it next reports, and the hub can send it firmware.",
-  },
-  scale: {
-    label: "WI-FI SCALE",
-    note: "A scale under the pot. The hub reaches it at its own address and "
-      + "asks it what it weighs; there is nothing to deliver to it and no "
-      + "console to switch on, because the page at that address is its console.",
-  },
-};
-
 
 function plantSensor() {
   const plantId = plantIdFromLocation();
@@ -9389,106 +8793,6 @@ document.querySelectorAll("[data-history-range]").forEach((button) => {
     refreshClimateHistory();
   });
 });
-const sensorSettingsForm = document.getElementById("sensor-settings-form");
-sensorSettingsForm.addEventListener("input", () => {
-  sensorSettingsDraftSensorId = selectedSensorId;
-});
-sensorSettingsForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (!selectedSensorId) return;
-  const sensorId = selectedSensorId;
-  const submitSequence = ++sensorSettingsSubmitSequence;
-  sensorSettingsDraftSensorId = sensorId;
-  const message = document.getElementById("sensor-settings-message");
-  const response = await fetch(`/api/sensors/${encodeURIComponent(sensorId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      // The plant's name, room and kind are the plant's, and are left out
-      // so that saving the device cannot quietly rewrite them.
-      expected_interval_seconds: Number(
-        document.getElementById("detail-setting-reporting-interval").value
-      )
-    })
-  });
-  const payload = await response.json();
-  if (submitSequence !== sensorSettingsSubmitSequence || selectedSensorId !== sensorId) return;
-  if (!response.ok) {
-    setText(message, payload.error || "Could not save sensor configuration");
-    return;
-  }
-  sensorSettingsDraftSensorId = null;
-  fleetRequestSequence += 1;
-  fleetSensors = fleetSensors.map((sensor) => sensor.sensor_id === sensorId ? payload : sensor);
-  selectedSensor = payload;
-  renderedSettingsKey = null;
-  renderHousehold();
-  renderSensorSettings();
-  renderSoilPhCalibration();
-  renderPage();
-  setText(message, payload.device_config_status === "applied"
-    ? "Sensor configuration is already applied."
-    : "Configuration saved. It will be sent when the sensor next reports.");
-});
-document.getElementById("settings-link").addEventListener("click", (event) => {
-  event.preventDefault();
-  navigate("/settings");
-});
-document.getElementById("fleet-link").addEventListener("click", (event) => {
-  event.preventDefault();
-  navigate("/");
-});
-document.getElementById("room-list").addEventListener("click", (event) => {
-  const remove = event.target.closest(".delete-room");
-  if (remove) deleteRoom(Number(remove.dataset.roomId));
-});
-document.querySelectorAll("[data-box-range]").forEach((button) => {
-  button.addEventListener("click", () => {
-    boxHours = Number(button.dataset.boxRange);
-    document.querySelectorAll("[data-box-range]").forEach((other) => {
-      other.setAttribute("aria-pressed", String(other === button));
-    });
-    refreshBoxHistory();
-  });
-});
-document.getElementById("box-form").addEventListener("submit", saveBoxSettings);
-document.getElementById("box-form").addEventListener("input", (event) => {
-  boxEdited = true;
-  // The drawing follows the numbers as they are typed.
-  if (["box-kp", "box-ki", "box-kd", "box-target-rh", "box-min-speed",
-       "box-max-speed"].includes(event.target.id)) drawPidPreview();
-});
-document.getElementById("box-preset").addEventListener("change", (event) => {
-  applyPidPreset(event.target.value);
-});
-document.getElementById("box-mode").addEventListener("change", (event) => {
-  showFanMode(event.target.value);
-});
-document.getElementById("alerts-form").addEventListener("submit", saveAlertSettings);
-document.getElementById("alerts-test").addEventListener("click", testAlert);
-document.getElementById("zigbee-alert-form")
-  .addEventListener("submit", addAlertRule);
-document.getElementById("zigbee-alert-rules")
-  .addEventListener("click", changeAlertRule);
-document.getElementById("alert-hear").addEventListener("click", hearAlertSound);
-document.getElementById("alert-cancel").addEventListener("click", clearRuleForm);
-// "reported" is for a thing that either happened or did not, so there
-// is no number to compare it with.
-document.getElementById("alert-test").addEventListener("change", (event) => {
-  setHidden(document.getElementById("alert-threshold-field"),
-            event.target.value === "true");
-});
-document.getElementById("alerts-generate")
-  .addEventListener("click", generateAlertAddress);
-document.getElementById("room-page-form").addEventListener("submit", saveRoomPage);
-document.getElementById("room-page-delete")
-  .addEventListener("click", deleteRoomFromItsPage);
-document.getElementById("onboarding-room").addEventListener("change", renderRoomChoices);
-document.getElementById("onboarding-plant").addEventListener("change", applyPlantChoice);
-document.getElementById("detail-console-toggle").addEventListener("change", (event) => {
-  renderedSettingsKey = null;
-  setSensorConsole(event.target.dataset.sensorId, event.target.checked);
-});
 document.querySelectorAll(".settings-tab").forEach((tab) => {
   tab.addEventListener("click", (event) => {
     event.preventDefault();
@@ -9712,61 +9016,6 @@ document.querySelectorAll("[data-measure-range]").forEach((button) => {
 for (const id of ["zigbee-devices", "zigbee-found"]) {
   document.getElementById(id).addEventListener("click", onZigbeeListClick);
 }
-document.getElementById("settings-sensor-list").addEventListener("click", (event) => {
-  const forget = event.target.closest(".forget-sensor");
-  if (forget) forgetSensor(forget.dataset.sensorId);
-});
-document.querySelector(".settings-page .primary-action").addEventListener("click", (event) => {
-  event.preventDefault();
-  resetOnboarding();
-  navigate("/onboarding");
-});
-document.getElementById("onboarding-candidates").addEventListener("click", (event) => {
-  const choice = event.target.closest(".onboarding-candidate");
-  if (!choice) return;
-  onboardingSensorId = choice.dataset.sensorId;
-  setData(document.getElementById("onboarding-candidates"), "renderKey", "");
-  renderOnboarding();
-});
-["onboarding-name", "onboarding-room"].forEach((id) => {
-  document.getElementById(id).addEventListener("input", () => {
-    onboardingDraft = true;
-  });
-});
-document.getElementById("onboarding-step-details").addEventListener("submit", (event) => {
-  event.preventDefault();
-});
-document.getElementById("onboarding-back").addEventListener("click", () => {
-  const index = ONBOARDING_STEPS.indexOf(onboardingStep);
-  if (index <= 0) {
-    resetOnboarding();
-    navigate("/settings");
-    return;
-  }
-  onboardingStep = ONBOARDING_STEPS[index - 1];
-  renderOnboarding();
-});
-document.getElementById("onboarding-next").addEventListener("click", async () => {
-  if (onboardingStep === "find") {
-    if (!onboardingSensorId) return;
-    onboardingStep = "pair";
-  } else if (onboardingStep === "pair") {
-    onboardingStep = "details";
-    onboardingDraft = false;
-  } else if (onboardingStep === "details") {
-    if (await finishOnboarding()) onboardingStep = "done";
-  } else {
-    const finished = onboardingSensorId;
-    resetOnboarding();
-    if (finished) {
-      await selectSensor(finished);
-      return;
-    }
-    navigate("/settings");
-    return;
-  }
-  renderOnboarding();
-});
 window.addEventListener("popstate", () => {
   sensorSettingsDraftSensorId = null;
   plantLightingDraftSubject = null;
@@ -10028,15 +9277,6 @@ for (const id of ["scale-interval", "scale-keep-every"]) {
     event.currentTarget.dataset.edited = "true";
   });
 }
-document.getElementById("sensor-ph-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const raw = document.getElementById("ph-reference").value.trim();
-  saveSoilPhCalibration(raw === "" ? null : Number(raw));
-});
-document.getElementById("ph-clear").addEventListener("click", () => {
-  document.getElementById("ph-reference").value = "";
-  saveSoilPhCalibration(null);
-});
 document.getElementById("plant-cover-follows").addEventListener("change", (event) => {
   setCoverFollowsLatest(event.target.checked);
 });
@@ -10085,8 +9325,6 @@ for (const signal of ["input", "change", "focusin"]) {
 // Choosing a profile offers its varieties at once, before anything is saved.
 document.getElementById("plant-config-profile").addEventListener("change", () => fillPlantVarietySelect(null));
 document.getElementById("plant-config-variety").addEventListener("change", () => fillPlantVarietySelect());
-document.getElementById("firmware-install").addEventListener("click", installFirmware);
-document.getElementById("firmware-cancel").addEventListener("click", cancelFirmwareUpdate);
 forgetWeightUnits();
 restoreHouseholdSort();
 restoreCareLogFolded();
@@ -10095,7 +9333,6 @@ document.getElementById("plant-care-log-more")
 for (const button of document.querySelectorAll(".care-log-toggle")) {
   button.addEventListener("click", toggleCareLog);
 }
-trackRawReportsDisclosure();
 /* The page shows itself before it has anything to say.
  *
  * Every section starts hidden and is revealed by renderPage, which until

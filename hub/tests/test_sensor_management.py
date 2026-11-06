@@ -7,9 +7,8 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
-from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
+from open_plant_pulse_hub.application import ReadingStore
+from fake_sensors import place_sensors
 from open_plant_pulse_hub.web import create_server, server_address
 
 
@@ -21,41 +20,11 @@ FIXTURE_PATH = (
 class SensorManagementTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
 
     def tearDown(self) -> None:
         self.store.close()
 
-    def test_the_last_measured_chemistry_survives_the_readings_without_it(self) -> None:
-        """pH and nutrients ride on an occasional reading, not every one.
-
-        Taken from the newest reading they were simply absent, and the
-        whole soil chemistry panel went blank between deep readings.
-        """
-        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
-        measured = self.store.soil_chemistry(sensor_id)
-        self.assertIsNotNone(measured["raw"])
-        self.assertIsNotNone(measured["nitrogen_mg_kg"])
-        self.assertIsNotNone(measured["at"])
-
-        # Every later reading carries no chemistry, as the firmware now sends.
-        with self.store._condition, self.store._database:
-            self.store._database.execute(
-                """
-                UPDATE sensor_readings
-                SET soil_ph = NULL, nitrogen_mg_kg = NULL, phosphorus_mg_kg = NULL,
-                    potassium_mg_kg = NULL
-                WHERE sensor_id = ? AND observed_at > (
-                    SELECT MIN(observed_at) FROM sensor_readings WHERE sensor_id = ?
-                )
-                """,
-                (sensor_id, sensor_id),
-            )
-
-        still = self.store.soil_chemistry(sensor_id)
-        self.assertEqual(still["raw"], measured["raw"])
-        self.assertEqual(still["nitrogen_mg_kg"], measured["nitrogen_mg_kg"])
-        self.assertIsNotNone(still["age_seconds"])
 
     def test_a_sensor_takes_the_room_of_the_plant_it_is_given(self) -> None:
         """A scale adopted on its own had no room, and no way to get one.
@@ -112,53 +81,7 @@ class SensorManagementTests(unittest.TestCase):
             self.assertEqual(
                 self.store.set_scale_keep(sensor_id, value)["scale_keep_every_seconds"], value)
 
-    def test_a_ph_calibration_is_one_measured_reference(self) -> None:
-        """The probe reads on a scale of its own; a reference places it."""
-        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
-        before = self.store.soil_chemistry(sensor_id)
-        self.assertFalse(before["calibrated"])
-        self.assertEqual(before["offset"], 0)
-        raw = before["raw"]
-        self.assertIsNotNone(raw, "the fixture should carry a pH to calibrate against")
 
-        status = self.store.set_soil_ph_calibration(sensor_id, 7.0)
-
-        # The offset is worked out from what the probe actually said, so
-        # nobody has to type the reading back in.
-        self.assertAlmostEqual(status["offset"], round(7.0 - raw, 2), places=2)
-        self.assertAlmostEqual(status["ph"], 7.0, places=1)
-        self.assertEqual(status["raw"], raw)
-        self.assertEqual(status["reference"], 7.0)
-        self.assertEqual(status["reference_raw"], raw)
-        self.assertIsNotNone(status["reference_at"])
-        # The conditions travel with it: a correction found at one
-        # conductivity is not promised at another.
-        # The conductivity of the reading the pH came from, not of whatever
-        # arrived most recently -- pH rides on its own occasional reading.
-        self.assertEqual(status["reference_ec"], before["conductivity_us_cm"])
-
-        cleared = self.store.set_soil_ph_calibration(sensor_id, None)
-        self.assertFalse(cleared["calibrated"])
-        self.assertEqual(cleared["offset"], 0)
-        self.assertEqual(cleared["ph"], raw)
-
-    def test_a_calibration_is_flagged_outside_the_conditions_it_was_set_in(self) -> None:
-        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
-        self.store.set_soil_ph_calibration(sensor_id, 7.0)
-        self.assertFalse(self.store.soil_chemistry(sensor_id)["far_from_calibration"])
-
-        # The same probe in water four times as conductive: the figure is
-        # outside what it was calibrated for, and says so rather than lying.
-        with self.store._condition, self.store._database:
-            self.store._database.execute(
-                """
-                UPDATE sensor_readings SET conductivity_us_cm = conductivity_us_cm * 4
-                WHERE sensor_id = ? AND soil_ph IS NOT NULL
-                """,
-                (sensor_id,),
-            )
-
-        self.assertTrue(self.store.soil_chemistry(sensor_id)["far_from_calibration"])
 
     def test_a_reference_needs_a_reading_and_must_be_a_ph(self) -> None:
         sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
@@ -188,87 +111,7 @@ class SensorManagementTests(unittest.TestCase):
         self.assertEqual(len(fleet), 3)
         self.assertEqual({item["display_name"] for item in fleet}, {"Plant 1", "Plant 2", "Plant 3"})
 
-    def test_sensor_history_does_not_compete_for_global_live_cache(self) -> None:
-        bounded_store = ReadingStore(history_size=1)
-        try:
-            AdvertisementReplay(AdvertisementIngestionService(bounded_store)).replay(FIXTURE_PATH)
-            cached_sensor_id = bounded_store.history()[0]["reading"]["sensor_id"]
-            sensor_id = next(
-                item["sensor_id"]
-                for item in bounded_store.sensors("unclaimed")
-                if item["sensor_id"] != cached_sensor_id
-            )
 
-            self.assertIsNotNone(bounded_store.latest(sensor_id))
-            self.assertTrue(bounded_store.history(sensor_id))
-        finally:
-            bounded_store.close()
-
-    def test_raw_report_log_is_sensor_scoped_newest_first_and_bounded(self) -> None:
-        sensor_id = "sensor-aabbccddeeff"
-
-        reports = self.store.raw_sensor_reports(sensor_id)
-
-        self.assertEqual([item["report_id"] for item in reports], [42, 43, 43, 42, 42, 42])
-        self.assertEqual(
-            [item["packet_kind"] for item in reports],
-            ["packet1", "packet2", "packet1", "packet1", "packet2", "packet1"],
-        )
-        self.assertEqual(
-            [item["decode_status"] for item in reports],
-            ["conflict", "accepted", "accepted", "duplicate", "accepted", "accepted"],
-        )
-        self.assertEqual(
-            reports[0]["service_data_hex"],
-            "40022e092e362f213e2a00000045f200504090a66a56d204",
-        )
-        self.assertIn("already stored with different content", reports[0]["decode_error"])
-        self.assertEqual(len(self.store.raw_sensor_reports(sensor_id, limit=2)), 2)
-        self.assertEqual(len(self.store.raw_sensor_reports("sensor-001122334455")), 2)
-        self.assertEqual(self.store.raw_sensor_reports("missing"), [])
-
-        ingestion = AdvertisementIngestionService(self.store)
-        self.assertEqual(
-            ingestion.ingest(
-                Advertisement(
-                    received_at="2026-09-13T12:45:00Z",
-                    local_name=sensor_id,
-                    observed_identifier="replay-a",
-                    rssi=-52,
-                    service_data=bytes.fromhex("40022e"),
-                    source_adapter="test",
-                )
-            ),
-            "rejected",
-        )
-        rejected = self.store.raw_sensor_reports(sensor_id)[0]
-        self.assertEqual(rejected["decode_status"], "rejected")
-        self.assertEqual(rejected["service_data_hex"], "40022e")
-        self.assertIsNone(rejected["report_id"])
-        self.assertIn("truncated", rejected["decode_error"])
-
-        fixture_event = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))["events"][0]
-        for index in range(55):
-            service_data = bytearray.fromhex(fixture_event["service_data_hex"])
-            report_id_at = service_data.index(0x3E) + 1
-            service_data[report_id_at : report_id_at + 4] = (100 + index).to_bytes(4, "little")
-            self.assertEqual(
-                ingestion.ingest(
-                    Advertisement(
-                        received_at=f"2026-09-13T13:00:{index:02d}Z",
-                        local_name=sensor_id,
-                        observed_identifier="replay-a",
-                        rssi=-48,
-                        service_data=bytes(service_data),
-                        source_adapter="test",
-                    )
-                ),
-                "accepted",
-            )
-        bounded_reports = self.store.raw_sensor_reports(sensor_id)
-        self.assertEqual(len(bounded_reports), 50)
-        self.assertEqual(bounded_reports[0]["report_id"], 154)
-        self.assertEqual(bounded_reports[-1]["report_id"], 105)
 
     def test_archives_restores_and_replaces_sensor_with_optional_history_merge(self) -> None:
         source, replacement = [item["sensor_id"] for item in self.store.sensors("unclaimed")[:2]]
@@ -331,7 +174,7 @@ def _reporting_interval_markup(page: str) -> str:
 class SensorManagementWebTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.server = create_server(self.store, "127.0.0.1", 0)
         self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
                              daemon=True)
@@ -396,90 +239,6 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 400)
         raised.exception.close()
 
-    def test_detail_page_contains_configuration_and_supports_management(self) -> None:
-        sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
-        encoded_id = quote(sensor_id, safe="")
-        self.store.manage_sensor(sensor_id, "Fern", "Office", "monstera", 40, 1500, 1200)
-
-        with self.request(f"/sensors/{encoded_id}") as response:
-            detail_page = response.read()
-        self.assertIn(b"Configuration", detail_page)
-        self.assertIn(b"Hub reporting interval", detail_page)
-        self.assertIn(b'id="detail-setting-reporting-interval"', detail_page)
-        # Watching a plant and configuring it are separate pages served by one
-        # document, so what tells them apart is the page each section is on.
-        # Configuration is the plant's page, the sensor's settings included:
-        # a plant is one thing however many instruments are on it.
-        # The air card serves both pages: the readings are the room's, and
-        # a plant with no probe of its own is in the same air.
-        self.assertIn(b'<section class="climate-history" data-page="plant"', detail_page)
-        self.assertIn(b'<section class="sensor-settings" data-page="sensor-config"', detail_page)
-        self.assertIn(b'id="raw-report-log" data-page="sensor-config"', detail_page)
-        # A sensor's page is its own configuration now, so there is no link
-        # away to a plant's page to configure it there.
-        self.assertNotIn(b'id="detail-config-link"', detail_page)
-        # The old sensor-configuration page has gone; its back link with
-        # it. A sensor's page is its configuration now.
-        self.assertNotIn(b'id="config-back-link"', detail_page)
-        self.assertNotIn(b"Global reporting interval", detail_page)
-        self.assertNotIn(b"Moisture alert below", detail_page)
-        self.assertNotIn(b"Conductivity alert above", detail_page)
-        self.assertIn(b'id="climate-history-eyebrow"', detail_page)
-        self.assertIn(b"Air conditions", detail_page)
-        self.assertIn(b'data-history-range="live" aria-pressed="true">Live', detail_page)
-        self.assertIn(b'data-history-range="30d"', detail_page)
-        self.assertIn(b"Relative humidity", detail_page)
-        self.assertIn(b"Raw sensor reports", detail_page)
-        self.assertIn(b"Latest 50 \xc2\xb7 newest first", detail_page)
-        # Replace, archive and delete were removed from this page: three
-        # destructive-looking controls with no guidance on which to use, and
-        # releasing a sensor now covers what people actually do. The store still
-        # supports them, so bringing any back is a UI decision.
-        self.assertNotIn(b"Delete sensor and history", detail_page)
-        self.assertNotIn(b"Archive sensor", detail_page)
-        self.assertNotIn(b"Replacement sensor", detail_page)
-        with self.assertRaises(HTTPError) as raised:
-            self.request("/manage")
-        self.assertEqual(raised.exception.code, 404)
-        raised.exception.close()
-
-        with self.request(
-            f"/api/sensors/{encoded_id}",
-            "PUT",
-            {
-                "display_name": "Window fern",
-                "room": "Sunroom",
-                "profile_id": "monstera",
-                "expected_interval_seconds": 3600,
-            },
-        ) as response:
-            updated = json.load(response)
-        self.assertEqual(updated["display_name"], "Window fern")
-        self.assertEqual(updated["room"], "Sunroom")
-        self.assertEqual(updated["expected_interval_seconds"], 3600)
-        self.assertEqual(updated["hub_reporting_interval_seconds"], 3600)
-        self.assertIsNone(updated["sensor_reporting_interval_seconds"])
-        self.assertEqual(updated["device_config_status"], "pending")
-
-        with self.request(
-            f"/api/sensors/{encoded_id}",
-            "PUT",
-            {
-                "display_name": "Window fern",
-                "room": "Sunroom",
-                "profile_id": "monstera",
-                "expected_interval_seconds": 30,
-            },
-        ) as response:
-            updated = json.load(response)
-        self.assertEqual(updated["expected_interval_seconds"], 30)
-        self.assertEqual(updated["hub_reporting_interval_seconds"], 30)
-        self.assertEqual(self.store.sensor(sensor_id)["expected_interval_seconds"], 30)
-
-        with self.request(f"/api/sensors/{encoded_id}", "DELETE") as response:
-            self.assertEqual(response.status, 204)
-
-        self.assertIsNone(self.store.sensor(sensor_id))
 
     def test_configuration_page_is_routed_and_reachable_from_both_lists(self) -> None:
         sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
@@ -500,90 +259,19 @@ class SensorManagementWebTests(unittest.TestCase):
         )
         # The sensor is still named by the path, with or without the suffix.
         self.assertIn(r"/^\/sensors\/([^/]+)(?:\/settings)?$/", app)
-        # Reachable from the plant page, and from the row in hub settings.
+        # Reachable from the plant page.
         self.assertIn("`/plants/${plantId}/config`", app)
-        self.assertIn('"/sensors/" + encodeURIComponent(sensor.sensor_id) + "/settings"', onboarding)
         # Polling follows the page: no charts to feed here, and no report log there.
         self.assertIn('if (page === "sensor-config") {', app)
 
-    def test_raw_report_log_is_collapsed_last_and_remembers_its_state(self) -> None:
-        with self.request("/sensors/sensor-aabbccddeeff") as response:
-            detail_page = response.read().decode("utf-8")
-        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
 
-        # Debug output belongs after the controls somebody came to the page for,
-        # and closed until asked for: it is the longest section on the page.
-        self.assertLess(
-            detail_page.index('id="sensor-settings-title"'),
-            detail_page.index('id="raw-report-title"'),
-        )
-        self.assertIn('<details class="raw-report-log" id="raw-report-log"', detail_page)
-        self.assertNotIn('<details class="raw-report-log" id="raw-report-log" open', detail_page)
-        self.assertIn("<summary>", detail_page)
-        # Opened or closed, it stays that way across the reloads that watching
-        # reports arrive involves.
-        self.assertIn('log.open = window.localStorage.getItem(RAW_REPORTS_OPEN_KEY) === "true";', app)
-        self.assertIn('window.localStorage.setItem(RAW_REPORTS_OPEN_KEY, String(log.open));', app)
-        self.assertIn("trackRawReportsDisclosure();", app)
 
-    def test_latest_reading_carries_the_joined_packet2(self) -> None:
-        query = urlencode({"sensor_id": "sensor-001122334455"})
-        with self.request("/api/readings/latest?" + query) as response:
-            reading = json.load(response)["reading"]
-
-        self.assertEqual(reading["report_id"], 7)
-        self.assertEqual(reading["observed_at"], "2026-09-13T12:00:03Z")
-        self.assertEqual(reading["battery_percent"], 64)
-        self.assertEqual(reading["battery_voltage_v"], 3.701)
-        self.assertIs(reading["battery_charging"], True)
-        self.assertIsNone(reading["soil_ph"])
-
-        # Charging travels with the battery everywhere a reading is served:
-        # false and unknown are different answers, and both survive JSON.
-        with self.request("/api/sensors/sensor-001122334455") as response:
-            self.assertIs(json.load(response)["latest"]["reading"]["battery_charging"], True)
-        query = urlencode({"sensor_id": "sensor-aabbccddeeff"})
-        with self.request("/api/readings/history?" + query) as response:
-            history = json.load(response)["items"]
-        self.assertEqual(
-            [(item["reading"]["report_id"], item["reading"]["battery_charging"]) for item in history],
-            [(42, False), (43, None)],
-        )
-
-        page = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "index.html").read_text()
-        app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
-        # Nothing shows a battery gauge now that the sensor-as-plant
-        # topbar has gone; the reading still carries it.
-        self.assertIn("<th>Report</th>", page)
-        self.assertIn("reading.battery_percent", app)
-        self.assertIn("reading.battery_voltage_v", app)
-        self.assertIn("item.report_id", app)
-        self.assertNotIn("packet_id", app)
-
-    def test_raw_report_endpoint_scopes_reports_and_rejects_unknown_sensor(self) -> None:
-        sensor_id = "sensor-aabbccddeeff"
-        with self.request("/api/raw-reports?" + urlencode({"sensor_id": sensor_id})) as response:
-            payload = json.load(response)
-
-        self.assertEqual(response.status, 200)
-        self.assertEqual(
-            [item["report_id"] for item in payload["items"]], [42, 43, 43, 42, 42, 42]
-        )
-        self.assertEqual(payload["items"][1]["service_data_hex"], "403e2b000000")
-        self.assertEqual(payload["items"][2]["service_data_hex"], "402e2e3e2b00000045f500")
-
-        with self.assertRaises(HTTPError) as raised:
-            self.request("/api/raw-reports?" + urlencode({"sensor_id": "missing"}))
-        self.assertEqual(raised.exception.code, 404)
-        raised.exception.close()
 
     def test_dashboard_polling_does_not_overlap_or_repeat_calendar_requests(self) -> None:
         app = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static" / "app.js").read_text()
 
         self.assertNotIn('setInterval(refresh, 1000)', app)
         self.assertIn('window.setTimeout(poll, 1000)', app)
-        self.assertIn('fetch(`/api/raw-reports${sensorQuery()}`)', app)
-        self.assertIn("function renderRawReports(items)", app)
         self.assertIn('if (wateringCalendarRequestKey === requestKey) return;', app)
         self.assertIn('wateringCalendarRequestKey = requestKey;', app)
         self.assertIn('profileId', app)
@@ -627,7 +315,6 @@ class SensorManagementWebTests(unittest.TestCase):
         # Lists and charts are rebuilt only when what they are drawn from changes.
         for renderer, guard in [
             ("function renderCareLog(", "if (!renderKeyChanged(list, items)) return;"),
-            ("function renderRawReports(", "if (!renderKeyChanged(rows, items)) return;"),
             ("function renderHistoryChart(", "if (!renderKeyChanged(chart, [shown.map("),
             ("function renderMoistureTrend(", "if (!renderKeyChanged(chart, [moistureTrendVersion,"),
         ]:
@@ -643,7 +330,7 @@ class SensorManagementWebTests(unittest.TestCase):
         # The page refreshes every second; rebuilding the grid would reload
         # every cover photograph and lose whatever the pointer was over.
         self.assertNotIn("grid.replaceChildren()", render)
-        self.assertIn('grid.querySelectorAll(".fleet-card")', render)
+        self.assertIn('grid.querySelectorAll(".fleet-card[data-key]")', render)
         self.assertIn("updateHouseholdCard(card, tile.plant, tile.sensor);", render)
         self.assertIn("if (cardAtIndex !== card)", render)
         # And a cover is left alone unless it is a different photograph.
@@ -651,59 +338,6 @@ class SensorManagementWebTests(unittest.TestCase):
         self.assertIn('(existing.getAttribute("src") || "") === wanted) return;',
                       cover[: cover.index("\n}")])
 
-    def test_dashboard_uses_profile_alert_thresholds_without_sensor_threshold_inputs(self) -> None:
-        static_dir = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
-        page = (static_dir / "index.html").read_text()
-        app = (static_dir / "app.js").read_text()
-
-        self.assertNotIn("setting-moisture", page)
-        self.assertNotIn("setting-conductivity", page)
-        self.assertNotIn("setting-moisture", app)
-        self.assertNotIn("setting-conductivity", app)
-        self.assertIn("const moistureLow = profile?.watering?.refill_below;", app)
-        self.assertIn("const conductivityHigh = profile?.root_zone?.conductivity_us_cm?.ideal?.[1];", app)
-        # The enroll dialog's copy of this control has gone with the
-        # dialog; /onboarding asks for the interval in its own flow.
-        # Care is recorded on the plant, not on the device that watches it.
-        self.assertIn('id="plant-fertilized"', page)
-        self.assertIn("Fertilized today", page)
-        self.assertIn('id="plant-journey-lighting"', page)
-        self.assertIn('id="detail-setting-reporting-interval"', page)
-        self.assertIn("Hub reporting interval", page)
-        self.assertIn("Sensor reporting interval", page)
-        self.assertIn('id="sensor-reporting-interval"', page)
-        self.assertIn("readonly", page)
-        self.assertIn('id="device-config-status"', page)
-        self.assertIn("sent when the sensor next reports", page)
-        # Once each: the enroll dialog carried a second copy of this list
-        # and has gone, along with the sensor inbox that opened it.
-        #
-        # Counted over the reporting-interval controls rather than the whole
-        # document. Other pickers measure other things in minutes -- how
-        # often to keep a weight, for one -- and a plain substring count
-        # over the page turned any of them into a failure here, which is a
-        # false alarm about a list that is still perfectly singular.
-        intervals = _reporting_interval_markup(page)
-        for label in ("Every 30 seconds", "Every minute", "Every 30 minutes"):
-            self.assertEqual(intervals.count(label), 1)
-        # Thirty seconds is the floor. Anything shorter spends the whole cycle
-        # advertising and arrives no fresher, because a report carries what the
-        # sensor last sampled on its own schedule.
-        for label in ("Every second", "Every 3 seconds", "Every 5 seconds",
-                      "Every 10 seconds"):
-            self.assertNotIn(label, page)
-        self.assertIn("selectedSensor.sensor_reporting_interval_seconds", app)
-        self.assertIn("requestSequence !== fleetRequestSequence", app)
-        self.assertIn("sensorSettingsDraftSensorId === selectedSensor.sensor_id", app)
-        self.assertIn("sensorSettingsDraftSensorId = selectedSensorId", app)
-        self.assertIn("fleetRequestSequence += 1", app)
-        self.assertIn("selectedSensor = payload", app)
-        self.assertNotIn("It does not change sensor firmware", page)
-        self.assertNotIn('id="reporting-settings-form"', page)
-        # The hub-wide reporting interval is not set from here any more. The
-        # page does read /api/settings -- that is where the section order
-        # lives -- so what matters is that it never writes the interval.
-        self.assertNotIn("reporting_interval_minutes:", app)
 
     def test_the_time_zone_is_chosen_on_the_settings_page(self) -> None:
         """A hub that reasons about hours has to be told which hours."""

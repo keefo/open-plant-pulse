@@ -2,11 +2,10 @@
 # Install the hub as a macOS LaunchAgent that starts at login.
 #
 # Builds "Open Plant Pulse Hub.app" around a launcher that runs this checkout,
-# signs it ad hoc so macOS can attribute Bluetooth and local network permission
-# to it, and loads the agent. Run it again after changing the launcher or moving
-# the checkout; the first run asks for Bluetooth permission, and the first grow
-# light command for local network permission. Needs a C compiler (the Xcode
-# command line tools).
+# signs it ad hoc so macOS can attribute local network permission to it, and
+# loads the agent. Run it again after changing the launcher or moving the
+# checkout; the first grow light command asks for local network permission.
+# Needs a C compiler (the Xcode command line tools).
 #
 #   deploy/launchd/install.sh            install and (re)start the hub
 #   deploy/launchd/install.sh --no-load  write the files only

@@ -506,14 +506,7 @@ class WebApiTests(unittest.TestCase):
     def test_health_exposes_service_clock_origin(self) -> None:
         store = ReadingStore()
 
-        def scanner_health():
-            return {
-                "status": "unavailable",
-                "last_error": "adapter unavailable",
-                "last_receive_at": None,
-            }
-
-        server = create_server(store, "127.0.0.1", 0, scanner_health)
+        server = create_server(store, "127.0.0.1", 0)
         thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
                              daemon=True)
         thread.start()
@@ -528,8 +521,6 @@ class WebApiTests(unittest.TestCase):
                 payload["database"],
                 {"status": "ok", "schema_version": DATABASE_SCHEMA_VERSION},
             )
-            self.assertEqual(payload["scanner"]["status"], "unavailable")
-            self.assertIsNone(payload["scanner"]["last_receive_at"])
         finally:
             server.shutdown()
             server.server_close()

@@ -1,6 +1,6 @@
 /* The app bundle's main executable: starts the hub and waits for it.
  *
- * macOS attributes Bluetooth and local network permission to the app a process
+ * macOS attributes local network permission to the app a process
  * belongs to. Local network privacy also needs that app's main executable to be
  * a real binary: with a shell script there, a launchd agent is refused every LAN
  * connection with "No route to host", and no prompt ever appears. So this binary

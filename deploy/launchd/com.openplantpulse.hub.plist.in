@@ -6,7 +6,7 @@
     <string>com.openplantpulse.hub</string>
 
     <!-- Runs the app bundle rather than python directly, so macOS can
-         attribute Bluetooth permission to a stable code identity. -->
+         attribute local network permission to a stable code identity. -->
     <key>ProgramArguments</key>
     <array>
         <string>@APP_DIR@/Contents/MacOS/hub</string>

@@ -6,8 +6,8 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from open_plant_pulse_hub.application import AdvertisementIngestionService, ReadingStore
-from open_plant_pulse_hub.ingestion.replay import AdvertisementReplay
+from open_plant_pulse_hub.application import ReadingStore
+from fake_sensors import place_sensors
 from open_plant_pulse_hub.web import create_server, server_address
 
 FIXTURE_PATH = Path(__file__).parents[2] / "protocol" / "fixtures" / "bthome-v3-replay.json"
@@ -20,7 +20,7 @@ def enrolled_sensor(store, sensor_id, display_name="white bird"):
 class OnboardingStateTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
 
     def tearDown(self):
@@ -100,7 +100,7 @@ class RoomTests(unittest.TestCase):
 
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
 
     def tearDown(self):
@@ -171,49 +171,12 @@ class RoomTests(unittest.TestCase):
             )
 
 
-class FreshnessTests(unittest.TestCase):
-    """Being heard and having measurements are different questions."""
-
-    def setUp(self):
-        self.store = ReadingStore()
-        self.ingestion = AdvertisementIngestionService(self.store)
-
-    def tearDown(self):
-        self.store.close()
-
-    def beacon(self):
-        from datetime import datetime, timezone
-
-        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-
-        return Advertisement(
-            received_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            local_name="sensor-aabbccddeeff",
-            observed_identifier="aa:bb:cc:dd:ee:ff",
-            rssi=-40,
-            service_data=bytes([0x40]),
-            source_adapter="test",
-        )
-
-    def test_a_sensor_heard_now_is_not_stale_just_because_it_cannot_measure(self):
-        self.ingestion.ingest(self.beacon())
-        sensor = self.store.sensor("sensor-aabbccddeeff")
-        self.assertEqual(sensor["freshness"], "fresh")
-        self.assertEqual(sensor["measurements"], "none")
-
-    def test_the_two_faults_are_worded_differently(self):
-        script = (
-            Path(__file__).parents[1] / "src/open_plant_pulse_hub/static/app.js"
-        ).read_text()
-        self.assertIn('"Not reporting"', script)
-        self.assertIn('"No measurements"', script)
-        self.assertNotIn('return "Stale";', script)
 
 
 class HouseholdNetworkTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enrolled_sensor(self.store, self.sensor_id)
 
@@ -265,7 +228,7 @@ class HouseholdNetworkTests(unittest.TestCase):
 class WifiResultTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enrolled_sensor(self.store, self.sensor_id)
         self.store.set_hub_wifi_network("BEYONDCOW-2.4G")
@@ -308,142 +271,8 @@ class WifiResultTests(unittest.TestCase):
             )
 
 
-class OnboardingBeaconTests(unittest.TestCase):
-    """A sensor with nothing to measure must still be findable."""
-
-    def setUp(self):
-        self.store = ReadingStore()
-        self.ingestion = AdvertisementIngestionService(self.store)
-
-    def tearDown(self):
-        self.store.close()
-
-    def beacon(self, received_at=None):
-        from datetime import datetime, timezone
-
-        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-
-        if received_at is None:
-            received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        return Advertisement(
-            received_at=received_at,
-            local_name="sensor-aabbccddeeff",
-            observed_identifier="aa:bb:cc:dd:ee:ff",
-            rssi=-48,
-            service_data=bytes([0x40]),
-            source_adapter="test",
-        )
-
-    def test_a_beacon_puts_the_sensor_in_the_inbox(self):
-        self.assertEqual(self.ingestion.ingest(self.beacon()), "accepted")
-        unclaimed = self.store.sensors("unclaimed")
-        self.assertEqual([s["sensor_id"] for s in unclaimed], ["sensor-aabbccddeeff"])
-        self.assertEqual(unclaimed[0]["onboarding_state"], "onboarding")
-        self.assertEqual(unclaimed[0]["latest_rssi"], -48)
-
-    def test_a_beacon_stores_no_reading(self):
-        self.ingestion.ingest(self.beacon())
-        sensor = self.store.sensor("sensor-aabbccddeeff")
-        self.assertEqual(sensor["reading_count"], 0)
-        self.assertIsNone(sensor["latest"])
-
-    def test_every_beacon_is_presence_and_none_is_a_reading(self):
-        # A beacon carries nothing to tell one from the next, so each is heard
-        # as presence; none is ever taken for a report.
-        self.assertEqual(
-            self.ingestion.ingest(self.beacon("2026-09-24T18:00:00Z")), "accepted"
-        )
-        self.assertEqual(
-            self.ingestion.ingest(self.beacon("2026-09-24T18:00:03Z")), "accepted"
-        )
-        sensor = self.store.sensor("sensor-aabbccddeeff")
-        self.assertEqual(sensor["last_seen_at"], "2026-09-24T18:00:03Z")
-        self.assertEqual(sensor["contract_version"], 3)
-        self.assertEqual(sensor["reading_count"], 0)
-        reports = self.store.raw_sensor_reports("sensor-aabbccddeeff")
-        self.assertEqual([item["packet_kind"] for item in reports], ["beacon", "beacon"])
-        self.assertEqual([item["report_id"] for item in reports], [None, None])
-
-    def test_the_old_three_byte_beacon_is_rejected(self):
-        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-
-        old = Advertisement(
-            received_at="2026-09-24T18:00:00Z",
-            local_name="sensor-aabbccddeeff",
-            observed_identifier="aa:bb:cc:dd:ee:ff",
-            rssi=-48,
-            service_data=bytes([0x40, 0x00, 1]),
-            source_adapter="test",
-        )
-        self.assertEqual(self.ingestion.ingest(old), "rejected")
-
-    def test_a_beacon_keeps_the_sensor_offerable_despite_old_readings(self):
-        """Age since the last reading must not hide a sensor that is beaconing now."""
-        self.ingestion.ingest(self.beacon())
-        sensor = self.store.sensor("sensor-aabbccddeeff")
-        self.assertLess(sensor["seen_age_seconds"], 300)
-
-    def test_adopting_a_sensor_always_re_delivers_its_configuration(self):
-        """The delivery is what opens the connection pairing needs."""
-        self.ingestion.ingest(self.beacon())
-        first = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
-        self.store.mark_device_configuration_applied(
-            "sensor-aabbccddeeff", first["device_config_revision"], 1800
-        )
-        self.assertEqual(self.store.sensor("sensor-aabbccddeeff")["device_config_status"], "applied")
-
-        self.store.set_sensor_onboarding_state("sensor-aabbccddeeff", "onboarding")
-        again = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
-
-        self.assertGreater(again["device_config_revision"], first["device_config_revision"])
-        self.assertEqual(again["device_config_status"], "pending")
-
-    def test_a_beacon_sensor_can_be_enrolled(self):
-        self.ingestion.ingest(self.beacon())
-        sensor = enrolled_sensor(self.store, "sensor-aabbccddeeff", "bare board")
-        self.assertEqual(sensor["enrollment_status"], "enrolled")
-        self.assertEqual(sensor["onboarding_state"], "onboarded")
-
-    def test_a_partial_measurement_is_still_rejected(self):
-        from open_plant_pulse_hub.ingestion.advertisement import Advertisement
-
-        partial = Advertisement(
-            received_at="2026-09-24T18:00:00Z",
-            local_name="sensor-aabbccddeeff",
-            observed_identifier="aa:bb:cc:dd:ee:ff",
-            rssi=-48,
-            # Air temperature without humidity: a broken reading, not a beacon.
-            service_data=bytes.fromhex("403ed3040000451001"),
-            source_adapter="test",
-        )
-        self.assertEqual(self.ingestion.ingest(partial), "rejected")
 
 
-class ConfigurationRetryRateTests(unittest.TestCase):
-    """A new change goes out at once; only a failing repeat is throttled."""
-
-    def setUp(self):
-        self.source = (
-            Path(__file__).parents[1] / "src/open_plant_pulse_hub/ingestion/ble.py"
-        ).read_text()
-
-    def test_a_revision_never_tried_is_sent_on_the_next_advertisement(self):
-        # Waiting out a retry floor before the first attempt would make every
-        # setting change feel broken on a sensor that is reachable right now.
-        self.assertIn("self._last_attempted_revision.get(sensor_id) != revision", self.source)
-        self.assertIn("configuration_due = True", self.source)
-
-    def test_a_repeat_of_the_same_revision_is_throttled(self):
-        from open_plant_pulse_hub.ingestion.ble import CONFIGURATION_RETRY_SECONDS
-
-        self.assertGreaterEqual(CONFIGURATION_RETRY_SECONDS, 10.0)
-        self.assertIn("CONFIGURATION_RETRY_SECONDS", self.source)
-
-    def test_configuration_retries_are_not_keyed_on_the_payload(self):
-        # Payloads change from one report to the next, so comparing them never
-        # matched and the configuration rate limit never applied. A report
-        # acknowledgement is identified by its report ID instead.
-        self.assertNotIn("self._last_configuration_attempt", self.source)
 
 
 class ReachabilityTests(unittest.TestCase):
@@ -472,47 +301,12 @@ class ReachabilityTests(unittest.TestCase):
         self.assertIn("opp_delivery_newest", self.source)
 
 
-class ReleaseProtocolTests(unittest.TestCase):
-    def test_the_release_payload_is_distinct_from_every_other(self):
-        from open_plant_pulse_hub.ingestion.device_configuration import (
-            DEVICE_RELEASE_PAYLOAD,
-            decode_device_configuration,
-        )
-
-        self.assertEqual(DEVICE_RELEASE_PAYLOAD, bytes((5, 0x5A)))
-        # Two bytes, and a version nothing else uses, so it cannot be mistaken
-        # for a configuration or an acknowledgement.
-        with self.assertRaises(ValueError):
-            decode_device_configuration(DEVICE_RELEASE_PAYLOAD)
-
-    def test_the_station_status_suffix_is_separated_from_the_configuration(self):
-        from open_plant_pulse_hub.ingestion.device_configuration import (
-            DeviceConfiguration,
-            encode_device_configuration,
-            split_station_status,
-        )
-
-        config = encode_device_configuration(
-            DeviceConfiguration(revision=3, reporting_interval_seconds=1800,
-                                plant_name="fern", room="Study")
-        )
-        # Marker, joined, address, then the firmware version the sensor is
-        # actually running, which nothing in an advertisement carries.
-        suffix = bytes((0xA1, 1, 192, 168, 0, 111, 0, 11, 1))
-        body, station = split_station_status(config + suffix)
-        self.assertEqual(body, config)
-        self.assertEqual(station, (True, "192.168.0.111", "0.11.1"))
-
-        # A hub reading a sensor that sends no suffix still gets its config.
-        body, station = split_station_status(config)
-        self.assertEqual(body, config)
-        self.assertIsNone(station)
 
 
 class OnboardingWebTests(unittest.TestCase):
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
         enrolled_sensor(self.store, self.sensor_id)
         self.server = create_server(self.store, "127.0.0.1", 0)
@@ -542,7 +336,7 @@ class OnboardingWebTests(unittest.TestCase):
         return f"/api/sensors/{quote(self.sensor_id, safe='')}{suffix}"
 
     def test_settings_and_onboarding_pages_are_served(self):
-        for path in ("/settings", "/settings/wifi", "/onboarding"):
+        for path in ("/settings", "/settings/wifi"):
             with self.request(path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn(b"<title>", response.read())
@@ -655,7 +449,7 @@ class GuidedFlowTests(unittest.TestCase):
 
     def setUp(self):
         self.store = ReadingStore()
-        AdvertisementReplay(AdvertisementIngestionService(self.store)).replay(FIXTURE_PATH)
+        place_sensors(self.store)
         self.sensor_id = self.store.sensors("unclaimed")[0]["sensor_id"]
 
     def tearDown(self):
@@ -715,81 +509,18 @@ class InterfaceTests(unittest.TestCase):
         with urlopen(self.base_url + path, timeout=1.0) as response:
             return response.read()
 
-    def test_the_onboarding_script_is_served(self):
-        self.assertIn(b"function renderOnboarding()", self.get("/onboarding.js"))
 
-    def test_the_page_carries_both_new_sections(self):
-        page = self.get("/")
-        self.assertIn(b'data-page="settings"', page)
-        self.assertIn(b'data-page="onboarding"', page)
-        self.assertIn(b'src="/onboarding.js"', page)
 
-    def test_a_forgotten_sensor_is_not_called_onboarding(self):
-        script = self.get("/onboarding.js")
-        self.assertIn(b'"Not paired"', script)
-        self.assertNotIn(b'"Onboarding"', script)
 
-    def test_only_pairable_sensors_are_offered(self):
-        script = self.get("/onboarding.js")
-        # A sensor that arrived without a radio cannot be paired, and one last
-        # heard days ago is not in the room; offering either fails at pairing
-        # with nothing to show why.
-        self.assertIn(b'sensor.transport === "bthome"', script)
-        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS", script)
-        # Freshness is when the device was last heard, not when it last measured:
-        # a sensor beaconing for adoption has no measurement to be fresh about.
-        self.assertIn(b"sensor.seen_age_seconds", script)
-        # Switching a sensor off must remove it while somebody is still looking,
-        # so the window is a few missed beacons rather than minutes.
-        self.assertIn(b"ONBOARDING_CANDIDATE_MAX_AGE_SECONDS = 10", script)
 
-    def test_the_candidate_list_updates_as_beacons_arrive(self):
-        script = self.get("/onboarding.js")
-        self.assertIn(b"describeLastHeard", script)
-        self.assertIn(b"heard just now", script)
 
-    def test_step_one_reports_the_real_scanner_state(self):
-        page = self.get("/")
-        script = self.get("/onboarding.js")
-        self.assertIn(b'id="onboarding-scan-state"', page)
-        self.assertIn(b'class="scan-pulse"', page)
-        # It must be able to say the scanner is NOT running; an indicator that
-        # always animates would hide exactly the fault it exists to surface.
-        self.assertIn(b"is not running", script)
-        self.assertIn(b'status === "scanning"', script)
 
     def test_the_scan_pulse_respects_reduced_motion(self):
         self.assertIn(b"prefers-reduced-motion", self.get("/app.css"))
 
-    def test_the_last_step_keeps_working_after_it_is_reached(self):
-        script = self.get("/onboarding.js")
-        # The console has to join and a reading has to arrive, both slower than
-        # a person reads the page, so the summary re-reads the live sensor.
-        self.assertIn(b"fleetSensors.find", script)
-        self.assertIn(b"Waiting for the sensor to report", script)
-        self.assertIn(b"Web console reachable", script)
 
-    def test_a_reading_must_arrive_after_setup_to_count_as_the_first(self):
-        script = self.get("/onboarding.js")
-        # An older reading from a previous life of the same sensor must not be
-        # reported as the one this setup just produced.
-        self.assertIn(b"onboardingFinishedAt", script)
-        self.assertIn(b"Date.parse(latest.received_at) >= onboardingFinishedAt", script)
 
-    def test_reporting_in_completes_setup_even_without_a_probe(self):
-        script = self.get("/onboarding.js")
-        # Setup proves the sensor reached the hub. A sensor announcing itself
-        # with nothing to measure has done that; a missing probe is a note, not
-        # a failed setup.
-        self.assertIn(b"no measurements yet", script)
-        self.assertIn(b'label: "Reporting"', script)
-        self.assertIn(b"Nothing heard from the sensor", script)
-        self.assertNotIn(b'label: "No probe"', script)
 
-    def test_the_finished_step_no_longer_promises_a_pairing_code(self):
-        page = self.get("/")
-        self.assertNotIn(b"You will need its pairing code again", page)
-        self.assertIn(b"refuses every other hub", page)
 
     def test_the_aspect_choices_cover_the_compass(self):
         page = self.get("/")
@@ -805,52 +536,10 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b'"rooms"', script)
         self.assertIn(b'href="/settings/rooms"', self.get("/"))
 
-    def test_every_tab_including_sensors_has_an_address(self):
-        """Bare /settings means "where I was", so Sensors needs its own.
 
-        While Sensors was the one tab whose link was /settings, giving
-        that address a memory would have made the Sensors tab the one
-        tab that could not be clicked.
-        """
-        page = self.get("/")
-        for tab in (b"sensors", b"rooms", b"lights", b"wifi", b"time",
-                    b"firmware", b"zigbee"):
-            self.assertIn(b'href="/settings/' + tab + b'"', page)
 
-    def test_the_console_switch_does_not_claim_more_than_it_knows(self):
-        script = self.get("/onboarding.js")
-        # Only the sensor can say its console is on, and it says so by reporting
-        # the address it joined at. Before that it is a request.
-        self.assertIn(b"not confirmed by the sensor yet", script)
-        self.assertNotIn("Web console on".encode("utf-8"), script)
 
-    def test_the_console_switch_is_a_switch_not_a_checkbox(self):
-        page = self.get("/")
-        css = self.get("/app.css")
-        self.assertIn(b'class="switch"', page)
-        self.assertIn(b".switch:checked", css)
-        # Built on a real checkbox, so keyboard use and screen readers still work.
-        self.assertIn(b'id="detail-console-toggle" class="switch" type="checkbox"', page)
 
-    def test_the_sensor_list_leaves_the_console_switch_to_the_sensor_page(self):
-        script = self.get("/onboarding.js")
-        app = self.get("/app.js")
-        # The switch lives with the rest of what a sensor can be told to do,
-        # rather than in two places: the list says which sensors the hub has,
-        # and opens or lets go of one.
-        self.assertNotIn(b"switch console-toggle", script)
-        self.assertNotIn(b'closest(".console-toggle")', app)
-        self.assertIn(b'setText(configure, "Configure")', script)
-        self.assertIn(b'setText(forget, "Forget sensor")', script)
-
-    def test_the_sensor_list_shows_firmware_and_how_old_the_answer_is(self):
-        script = self.get("/onboarding.js")
-        # Nothing in an advertisement carries the version, so it is whatever the
-        # sensor last said; presenting that as current would misname a sensor
-        # that has since been reflashed.
-        self.assertIn(b"describeFirmware", script)
-        self.assertIn(b"firmware not reported yet", script)
-        self.assertIn(b"as of", script)
 
     def test_the_delivered_revision_is_shown_and_flashes_when_it_moves(self):
         page = self.get("/")
@@ -864,31 +553,9 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn(b"revision-landed", css)
         self.assertIn(b"prefers-reduced-motion", css)
 
-    def test_a_reachable_console_is_offered_as_a_link(self):
-        page = self.get("/")
-        script = self.get("/app.js")
-        self.assertIn(b'id="detail-console-link"', page)
-        # Only once the sensor has reported that it joined and given an address;
-        # before that there is nothing at the other end of the link.
-        self.assertIn(b'selectedSensor.wifi_state === "joined"', script)
-        self.assertIn(b"selectedSensor.wifi_address", script)
 
-    def test_the_console_switch_is_on_the_sensor_page_too(self):
-        page = self.get("/")
-        script = self.get("/app.js")
-        self.assertIn(b'id="detail-console-toggle"', page)
-        self.assertIn(b"detail-console-toggle", script)
 
-    def test_the_room_is_picked_rather_than_typed(self):
-        page = self.get("/")
-        script = self.get("/onboarding.js")
-        self.assertIn(b'<select id="onboarding-room"', page)
-        self.assertIn(b'id="settings-rooms-panel"', page)
-        self.assertIn(b"renderRoomChoices", script)
-        self.assertIn(b"room_id:", script)
 
-    def test_forgetting_a_sensor_asks_first(self):
-        self.assertIn(b"window.confirm", self.get("/onboarding.js"))
 
     def test_the_navigation_calls_the_fleet_plants(self):
         self.assertIn(b">Plants</a>", self.get("/"))

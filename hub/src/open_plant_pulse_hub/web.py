@@ -20,7 +20,7 @@ from open_plant_pulse_hub.domain.plant_profiles import public_plant_profiles
 STATIC_DIR = Path(__file__).with_name("static")
 # Top-level paths the browser application owns. Each one, and anything beneath it,
 # is served the same shell so a reload or a pasted link lands on the right view.
-APPLICATION_PAGES = ("/sensors", "/plants", "/rooms", "/settings", "/onboarding",
+APPLICATION_PAGES = ("/sensors", "/plants", "/rooms", "/settings",
                      "/zigbee")
 # A firmware image for this sensor is about 1.3 MB; the ceiling is a slot's worth
 # with room to spare, so an accidental upload of something enormous is refused
@@ -74,7 +74,6 @@ def create_server(
     store: ReadingStore,
     host: str,
     port: int,
-    scanner_health: Optional[Callable[[], Dict[str, Optional[str]]]] = None,
     firmware: Optional[Any] = None,
     allow_network: bool = False,
     lights: Optional[Any] = None,
@@ -115,11 +114,6 @@ def create_server(
                         "has_reading": store.latest() is not None,
                         "started_at": started_at,
                         "database": store.database_health(),
-                        "scanner": (
-                            scanner_health()
-                            if scanner_health
-                            else {"status": "disabled"}
-                        ),
                     }
                 )
             elif path == "/api/plant-profiles":

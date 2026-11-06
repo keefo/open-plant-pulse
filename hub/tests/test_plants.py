@@ -1098,9 +1098,7 @@ class PlantApiTests(unittest.TestCase):
         page = self.call_text("/")
 
         self.assertNotIn('"No sensor"', script)
-        # The sensor's own setup offers the plants nothing is watching.
-        self.assertIn('id="onboarding-plant"', page)
-        self.assertIn("async function renderPlantChoices()", self.call_text("/onboarding.js"))
+        self.assertNotIn('"No sensor"', page)
 
     def test_a_plant_with_a_sensor_has_photographs_too(self) -> None:
         # The photographs are the plant's, not the instrument's, so the
@@ -1532,36 +1530,6 @@ class PlantApiTests(unittest.TestCase):
             list(reversed(on_page)),
         )
 
-    def test_the_configuration_page_asks_the_plant_its_own_questions(self) -> None:
-        page = self.call_text("/")
-        script = self.call_text("/app.js")
-
-        self.assertIn('data-page="plant-config"', page)
-        self.assertIn('path.endsWith("/config")) return "plant-config"', script)
-
-        # Every plant-level setting lives on this page and only here. The
-        # same question asked in two places is how a plant with a sensor came
-        # to have a profile, a variety and an at-home date it could not
-        # reach: each was added to the page one kind of plant uses.
-        plant_fields = (
-            "plant-config-display-name", "plant-config-room", "plant-config-profile",
-            "plant-config-variety", "plant-config-acquired", "plant-config-watering-days",
-            # Which lamps it stands under. When they are lit belongs to the
-            # lamp, and is asked on the light's own form in Settings.
-            "lighting-light-choices",
-        )
-        panel = page[page.index('id="plant-config-title"'):page.index('id="sensor-settings-panel"')]
-        for field in plant_fields:
-            self.assertEqual(page.count(f'id="{field}"'), 1, f"{field} is asked twice")
-            self.assertIn(f'id="{field}"', panel, f"{field} is not on the plant's page")
-
-        # And the sensor's section asks nothing about the plant: saving the
-        # device must not be able to rewrite what the plant is.
-        sensor_panel = page[page.index('id="sensor-settings-panel"'):]
-        for gone in ("detail-setting-name", "detail-setting-room", "detail-setting-profile"):
-            self.assertNotIn(gone, page, f"{gone} still asks the plant's question")
-        self.assertIn("detail-setting-reporting-interval", sensor_panel)
-        self.assertNotIn('display_name: document.getElementById("detail-setting-name")', script)
 
     def test_the_page_is_well_formed(self) -> None:
         """Every tag closes.
@@ -1609,6 +1577,50 @@ class PlantApiTests(unittest.TestCase):
             if wanted not in present
         }
         self.assertEqual(missing, set())
+
+    def test_every_rule_in_the_stylesheet_has_something_to_style(self) -> None:
+        """The other direction: a rule nobody uses is read and trusted.
+
+        Removing the Bluetooth subsystem left ninety-odd rules behind --
+        .raw-report-log, .chemistry-*, .pore-ec-*, .onboarding-* -- and
+        they were not merely dead weight. One of them, .chemistry, was
+        the visible end of a loop in app.js still writing to four ids
+        that no longer existed, which would have thrown the moment a
+        probe with a reading was opened. The stylesheet was the only
+        place that said so.
+
+        A rule is judged by the subject of its selector: the first class
+        in each comma-separated part. .onboarding-step label:not(.checkbox)
+        hid behind a .checkbox that is still used elsewhere, which is how
+        it survived a cruder sweep.
+        """
+        import re
+
+        static = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        css = (static / "app.css").read_text()
+        used = (static / "index.html").read_text()
+        for script in ("app.js", "onboarding.js", "lights.js"):
+            used += (static / script).read_text()
+
+        # Built from a value rather than written down, so no literal name
+        # appears anywhere. Deleting these once made every chart line
+        # invisible: they are `series-${entry.colour}`.
+        built = {f"series-{index}" for index in range(8)}
+
+        orphans = []
+        for line in css.split("\n"):
+            match = re.match(r"^\s*([^@{}/][^{]*)\{", line)
+            if match is None or not line.rstrip().endswith("}"):
+                continue
+            for part in match.group(1).split(","):
+                names = re.findall(r"\.(-?[_a-zA-Z][\w-]*)", part)
+                if not names or names[0] in built:
+                    continue
+                if names[0] not in used:
+                    orphans.append(part.strip())
+        self.assertEqual(
+            sorted(set(orphans)), [],
+            "these rules style something that no longer exists")
 
     def test_every_class_the_markup_styles_with_exists(self) -> None:
         """A class with no rule behind it silently does nothing.
@@ -1676,26 +1688,6 @@ class PlantApiTests(unittest.TestCase):
         missing = sorted(name for name in used - defined - hooks - known_gaps)
         self.assertEqual(missing, [], f"styled with classes that have no rule: {missing}")
 
-    def test_a_sensor_is_configured_on_its_own_page_not_its_plant_s(self) -> None:
-        """Administering a device and caring for a plant are different jobs.
-
-        The two were folded together while every sensor had a plant. A
-        scale has none, so a sensor's settings are its own page again.
-        """
-        script = self.call_text("/app.js")
-        page = self.call_text("/")
-
-        self.assertIn(
-            'if (path.startsWith("/sensors/") && path.endsWith("/settings")) return "sensor-config";',
-            script)
-        self.assertIn("function plantSensor()", script)
-        # The device panels live on the sensor's page, not the plant's.
-        for panel in ('id="sensor-settings-panel"', 'id="sensor-firmware-panel"',
-                      'id="sensor-ph-panel"', 'id="raw-report-log"'):
-            start = page.index(panel)
-            opening = page.rindex("<", 0, start)
-            self.assertIn('data-page="sensor-config"', page[opening:start + len(panel) + 200],
-                          f"{panel} should be on the sensor's own page")
 
     def test_a_pot_is_weighed_in_grams_whatever_the_keypad_offered(self) -> None:
         plant = self.call("POST", "/api/plants", {"display_name": "Bird of paradise"})
@@ -2152,9 +2144,8 @@ class ProbeOnlySectionTests(unittest.TestCase):
         # The drainage verdict is part of the assessment section now: both
         # are conclusions from the same probe, so they stand or fall together.
         needs = {
-            "readings": "bthome soil",
-            "assessment": "bthome soil",
-            "chemistry": "bthome",
+            "readings": "soil",
+            "assessment": "soil",
         }
         for section, kinds in needs.items():
             marker = f'data-section="{section}" data-sensor-kind="{kinds}"'
