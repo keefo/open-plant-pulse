@@ -4,7 +4,6 @@ from pathlib import Path
 from threading import Thread
 
 from open_plant_pulse_hub.application import ReadingStore
-from open_plant_pulse_hub.application.firmware import FirmwareLibrary
 from open_plant_pulse_hub.application.photos import PhotoLibrary
 from open_plant_pulse_hub.application.scales import ScaleService
 from open_plant_pulse_hub.application.airflow import FanService
@@ -33,23 +32,9 @@ def main() -> None:
         help="SQLite path for persistent readings and care events",
     )
     parser.add_argument(
-        "--firmware-directory",
-        default=str(Path.home() / ".open-plant-pulse" / "firmware"),
-        help="where uploaded firmware images are kept",
-    )
-    parser.add_argument(
         "--photo-directory",
         default=str(Path.home() / ".open-plant-pulse" / "photos"),
         help="where uploaded plant photographs are kept",
-    )
-    # A sensor downloads its firmware over the household network, so this one
-    # server listens there while the management interface stays on loopback.
-    parser.add_argument("--firmware-host", default="0.0.0.0")
-    parser.add_argument("--firmware-port", default=8081, type=int)
-    parser.add_argument(
-        "--no-firmware-server",
-        action="store_true",
-        help="keep firmware images but do not serve them to sensors",
     )
     parser.add_argument(
         "--no-lights",
@@ -65,7 +50,6 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     store = ReadingStore(database_path=args.database)
-    firmware = FirmwareLibrary(store, args.firmware_directory)
     photos = PhotoLibrary(store, args.photo_directory)
 
     # Scales are polled rather than heard, so they get their own loop. It
@@ -96,7 +80,6 @@ def main() -> None:
         store,
         args.host,
         args.port,
-        firmware,
         allow_network=args.allow_network,
         lights=lights,
         photos=photos,

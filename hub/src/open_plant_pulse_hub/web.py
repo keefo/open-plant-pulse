@@ -22,10 +22,6 @@ STATIC_DIR = Path(__file__).with_name("static")
 # is served the same shell so a reload or a pasted link lands on the right view.
 APPLICATION_PAGES = ("/sensors", "/plants", "/rooms", "/settings",
                      "/zigbee")
-# A firmware image for this sensor is about 1.3 MB; the ceiling is a slot's worth
-# with room to spare, so an accidental upload of something enormous is refused
-# before it is read rather than after.
-MAX_FIRMWARE_UPLOAD_BYTES = 4 * 1024 * 1024
 # The browser downsizes a photograph before sending it, so this is a ceiling
 # on something gone wrong rather than on an ordinary picture.
 MAX_PHOTO_UPLOAD_BYTES = 12 * 1024 * 1024
@@ -74,7 +70,6 @@ def create_server(
     store: ReadingStore,
     host: str,
     port: int,
-    firmware: Optional[Any] = None,
     allow_network: bool = False,
     lights: Optional[Any] = None,
     photos: Optional[Any] = None,
@@ -85,14 +80,6 @@ def create_server(
 ) -> ThreadingHTTPServer:
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     # Updating a device whose Wi-Fi is normally off is a sequence, not
-    # an upload, and the last step -- turning the radio back off -- is
-    # the one a person forgets. It needs both the radio and the image
-    # library, so it is built here where both are known.
-    updater = None
-    if zigbee is not None and firmware is not None:
-        from .application.zigbee import FirmwareUpdater
-        updater = FirmwareUpdater(zigbee, firmware)
-
     class DashboardHandler(BaseHTTPRequestHandler):
         def parse_request(self) -> bool:
             if not super().parse_request():
@@ -184,13 +171,6 @@ def create_server(
                 self._send_json(room)
             elif path == "/api/plants":
                 self._send_json({"items": store.plants()})
-            elif path.startswith("/api/zigbee/") and path.endswith("/update"):
-                eui = unquote(path[len("/api/zigbee/") : -len("/update")])
-                if updater is None:
-                    self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
-                                    "No Zigbee gateway or firmware library")
-                    return
-                self._send_json(updater.state(eui) or {"eui": eui, "step": "idle"})
             elif path.startswith("/api/zigbee/") and path.endswith("/reports"):
                 # What the device actually said, as it said it. Kept for a
                 # week, so a question asked after the fact has something to
@@ -268,11 +248,6 @@ def create_server(
                 self._send_plant_lighting_of(path[len("/api/plants/") : -len("/lighting")])
             elif path.startswith("/api/plants/"):
                 self._send_plant(path[len("/api/plants/") :])
-            elif path == "/api/firmware":
-                self._send_json(
-                    {"items": firmware.images() if firmware is not None else [],
-                     "storage": firmware is not None}
-                )
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
             elif path == "/api/light-drivers":
@@ -628,15 +603,6 @@ def create_server(
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            if path.startswith("/api/firmware/"):
-                try:
-                    self._require_same_origin()
-                    if firmware is None:
-                        raise ValueError("this hub is not storing firmware")
-                    firmware.delete(unquote(path[len("/api/firmware/") :]))
-                except ValueError as error:
-                    self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
-                    return
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", "0")
@@ -665,7 +631,7 @@ def create_server(
                 # own body; everything else here is a small JSON object.
                 raw_upload = path.startswith("/api/plants/") and path.endswith("/photos")
                 payload = (
-                    {} if path in ("/api/firmware", "/api/settings/alerts/test")
+                    {} if path == "/api/settings/alerts/test"
                     or path.endswith(("/stop", "/test")) or raw_upload
                     else self._read_json()
                 )
@@ -752,21 +718,6 @@ def create_server(
                     # business, not the caller's.
                     zigbee.attach(eui, int(target) if target else None)
                     result = {"eui": eui, "target": target}
-                elif path.startswith("/api/zigbee/") and path.endswith("/update"):
-                    eui = unquote(path[len("/api/zigbee/") : -len("/update")])
-                    if updater is None:
-                        self.send_error(HTTPStatus.SERVICE_UNAVAILABLE,
-                                        "No Zigbee gateway or firmware library")
-                        return
-                    digest = str(payload.get("digest", ""))
-                    if not digest:
-                        self.send_error(HTTPStatus.BAD_REQUEST, "digest is required")
-                        return
-                    try:
-                        result = updater.start(eui, digest)
-                    except ValueError as error:
-                        self.send_error(HTTPStatus.BAD_REQUEST, str(error))
-                        return
                 elif path.startswith("/api/plants/") and path.endswith("/weigh-now"):
                     plant_id = self._plant_id(
                         path[len("/api/plants/") : -len("/weigh-now")])
@@ -988,18 +939,6 @@ def create_server(
                     result = store.adopt_scale(
                         address, str(reading.get("name") or "Scale")
                     )
-                elif path == "/api/firmware":
-                    result = self._store_firmware()
-                    if result is None:
-                        return
-                elif path.startswith("/api/sensors/") and path.endswith("/firmware"):
-                    sensor_id = unquote(path[len("/api/sensors/") : -len("/firmware")])
-                    digest = self._optional_str(payload.get("digest"))
-                    result = (
-                        store.request_firmware_update(sensor_id, digest)
-                        if digest
-                        else store.cancel_firmware_update(sensor_id)
-                    )
                 elif path.startswith("/api/sensors/") and path.endswith("/care"):
                     sensor_id = unquote(path[len("/api/sensors/") : -len("/care")])
                     result = store.record_manual_care(
@@ -1187,19 +1126,6 @@ def create_server(
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-
-        def _store_firmware(self) -> Optional[Dict[str, Any]]:
-            """Take an uploaded image, or say why it is not one.
-
-            The version is read out of the image rather than taken from the
-            request, so what the hub offers is what the sensor will report.
-            """
-            if firmware is None:
-                raise ValueError("this hub is not storing firmware")
-            content_length = int(self.headers.get("Content-Length", "0"))
-            if content_length <= 0 or content_length > MAX_FIRMWARE_UPLOAD_BYTES:
-                raise ValueError("firmware upload size is invalid")
-            return firmware.add(self.rfile.read(content_length))
 
         @staticmethod
         def _plant_id(raw: str) -> int:

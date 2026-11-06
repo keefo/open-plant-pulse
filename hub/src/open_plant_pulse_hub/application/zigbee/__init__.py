@@ -16,7 +16,6 @@ from .network import Delivery, Device, Reading, ZigbeeNetwork
 from .ezsp_gateway import EzspGateway
 from .serial_gateway import SerialGateway
 from .service import ZigbeeService
-from .updates import FirmwareUpdater
 
 __all__ = [
     "DRIVERS",
@@ -28,5 +27,4 @@ __all__ = [
     "SerialGateway",
     "ZigbeeNetwork",
     "ZigbeeService",
-    "FirmwareUpdater",
 ]

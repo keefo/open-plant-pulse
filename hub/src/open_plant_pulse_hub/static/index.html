@@ -193,7 +193,6 @@
         <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
         <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
         <a id="settings-tab-time" class="settings-tab" href="/settings/time" role="tab">Time</a>
-        <a id="settings-tab-firmware" class="settings-tab" href="/settings/firmware" role="tab">Firmware</a>
         <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
         <a id="settings-tab-alerts" class="settings-tab" href="/settings/alerts" role="tab">Alerts</a>
         <a id="settings-tab-box" class="settings-tab" href="/settings/box" role="tab">Box</a>
@@ -515,19 +514,6 @@
         </div>
       </div>
 
-      <div id="settings-firmware-panel" class="settings-panel-group" hidden>
-        <div class="settings-panel">
-          <h2>Firmware images</h2>
-          <p>Add a built image here, then install it on a sensor from its configuration page. The hub reads the version out of the image itself.</p>
-          <div class="inline-control">
-            <label id="firmware-upload-label" class="secondary-action" for="firmware-file">Add an image…</label>
-            <input id="firmware-file" type="file" accept=".bin,application/octet-stream" hidden>
-            <output id="firmware-upload-message" aria-live="polite"></output>
-          </div>
-          <small>Built by <code>sensors/soil-probe/firmware/build.sh</code> as <code>sensors/soil-probe/build/open_plant_pulse.bin</code>.</small>
-        </div>
-        <div id="firmware-list" class="settings-sensor-list"></div>
-      </div>
     </section>
 
 

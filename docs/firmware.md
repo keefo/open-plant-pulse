@@ -48,14 +48,10 @@ full, and the complete output is kept in `sensors/soil-probe/build/build.log` an
 `OPP_VERBOSE=1` for the full output in the terminal. When output is not a
 terminal (CI, a pipe, a log file) it is printed unchanged.
 
-Builds are deployed over USB-C with `flush.sh`, or over the air through the
-hub: upload the built `sensors/soil-probe/build/open_plant_pulse.bin` in Settings ->
-Firmware (or `POST /api/firmware`) and install it from the sensor's page (or
-`POST /api/sensors/<id>/firmware` with its digest). Over the air needs the
-sensor advertising, which development builds do continuously
-(`OPP_ALWAYS_REACHABLE`); it cannot recover a sensor that no longer boots, which
-still needs the cable. Give each deployed binary a new version, since the hub
-confirms an install by the version the sensor reports.
+Builds are deployed over USB-C with `flush.sh`. The hub used to store images
+and push them over the air; it no longer does, so the cable is the only route.
+Give each deployed binary a new version, since a deploy is confirmed by the
+version the device reports back.
 
 Exit the monitor with `Ctrl-]`. Do not attach the probe or battery during the
 first USB-only smoke test. Once the probe is attached, fit the battery before

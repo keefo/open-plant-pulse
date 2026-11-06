@@ -2840,7 +2840,7 @@ function pageFromLocation() {
 }
 
 const SETTINGS_TABS = ["rooms", "lights", "wifi", "time",
-                       "firmware", "zigbee", "alerts", "box"];
+                       "zigbee", "alerts", "box"];
 const SETTINGS_TAB_KEY = "opp.settings.tab";
 
 function settingsTabFromLocation() {
@@ -5723,24 +5723,16 @@ async function refresh() {
       // The plants, so a sensor with none can be given one and so detaching
       // can name the plant it is leaving.
       await refreshPlants();
-      if (selectedSensorId) {
-        await refreshFirmwareImages();
-      }
       return;
     }
     if (page === "plant-config") {
-      // The sensor's own settings are a section of this page, so it loads
-      // what a sensor page used to: its firmware and its raw reports.
+      // The sensor's own settings are a section of this page.
       selectedSensorId = plantSensor()?.sensor_id ?? null;
       selectedSensor = plantSensor() ?? null;
       await refreshPlantConfig();
-      if (selectedSensorId) {
-        await refreshFirmwareImages();
-      }
       return;
     }
     if (page === "settings") {
-      if (settingsTabFromLocation() === "firmware") await refreshFirmwareImages();
       if (settingsTabFromLocation() === "lights") await refreshLights();
       if (settingsTabFromLocation() === "zigbee") await refreshZigbee();
       if (settingsTabFromLocation() === "time") await refreshHubTimezone();
@@ -5763,139 +5755,6 @@ async function refresh() {
     console.error("refresh failed", error);
   }
 }
-
-/* Firmware images, and what a sensor is doing with one.
- *
- * The image is read by the hub, not described by whoever uploaded it, so the
- * list here shows what each image says about itself: its version, when it was
- * built, and the digest a sensor will check what it downloaded against. */
-let firmwareImages = [];
-
-function formatBytes(bytes) {
-  return (bytes / 1024 / 1024).toFixed(2) + " MB";
-}
-
-async function refreshFirmwareImages() {
-  try {
-    const response = await fetch("/api/firmware");
-    if (!response.ok) return;
-    firmwareImages = (await response.json()).items;
-  } catch (_error) {
-    return;
-  }
-  renderFirmwareImages();
-}
-
-function renderFirmwareImages() {
-  const list = document.getElementById("firmware-list");
-  if (list === null) return;
-  if (!renderKeyChanged(list, firmwareImages)) return;
-  list.replaceChildren();
-  if (!firmwareImages.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    setText(empty, "No firmware images yet. Add the image you built above.");
-    list.append(empty);
-    return;
-  }
-  firmwareImages.forEach((image) => {
-    const card = document.createElement("div");
-    card.className = "settings-sensor";
-
-    const heading = document.createElement("div");
-    heading.className = "settings-sensor-heading";
-    const name = document.createElement("strong");
-    setText(name, image.version);
-    const state = document.createElement("small");
-    setText(state, image.available ? "Ready" : "File missing");
-    heading.append(name, state);
-
-    const identity = document.createElement("code");
-    setText(identity,
-      formatBytes(image.size_bytes) +
-      " · built " + (image.built_at || "at an unrecorded time") +
-      " · " + image.idf_version +
-      " · " + image.digest.slice(0, 12));
-
-    const body = document.createElement("div");
-    body.className = "settings-sensor-body";
-    body.append(heading, identity);
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "danger";
-    setText(remove, "Delete");
-    remove.addEventListener("click", () => deleteFirmwareImage(image));
-
-    const actions = document.createElement("div");
-    actions.className = "settings-sensor-actions";
-    actions.append(remove);
-    card.append(body, actions);
-    list.append(card);
-  });
-}
-
-async function uploadFirmwareImage(file) {
-  const message = document.getElementById("firmware-upload-message");
-  setText(message, "Reading " + file.name + "…");
-  try {
-    const response = await fetch("/api/firmware", { method: "POST", body: file });
-    const payload = await response.json();
-    if (!response.ok) {
-      setText(message, payload.error || "Could not store that image");
-      return;
-    }
-    setText(message, "Stored firmware " + payload.version + ".");
-  } catch (_error) {
-    setText(message, "Could not store that image");
-    return;
-  }
-  await refreshFirmwareImages();
-}
-
-async function deleteFirmwareImage(image) {
-  const confirmed = window.confirm(
-    "Delete firmware " + image.version + " from the hub?\n\n" +
-    "Any sensor waiting for it stops waiting. Sensors already running it are unaffected."
-  );
-  if (!confirmed) return;
-  await fetch("/api/firmware/" + encodeURIComponent(image.digest), { method: "DELETE" });
-  await refreshFirmwareImages();
-}
-
-/* What an update is doing, in the sensor's own terms.
- *
- * Every state says who is acting and what would move it on, because the only
- * thing worse than a slow update is one that has silently stopped. */
-function describeFirmwareUpdate(sensor) {
-  const target = sensor.firmware_update_version || "the chosen image";
-  switch (sensor.firmware_update_state) {
-    case "pending":
-      return "Waiting to reach the sensor · sent the next time it reports";
-    case "commanded":
-      return "The sensor has been told to install " + target;
-    case "downloading":
-      return "Downloading " + target + " · " + sensor.firmware_update_percent + "%";
-    case "installing":
-      return "Installing " + target;
-    case "rebooting":
-      return "Restarting to run " + target;
-    case "succeeded":
-      return "Updated to " + target;
-    case "failed":
-      return "Update failed · " + (sensor.firmware_update_error || "no reason given");
-    default:
-      return "No update in progress.";
-  }
-}
-
-function firmwareUpdateIsRunning(sensor) {
-  return ["pending", "commanded", "downloading", "installing", "rebooting"].includes(
-    sensor.firmware_update_state
-  );
-}
-
-
 
 let householdPlants = [];
 
@@ -9127,11 +8986,6 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
-document.getElementById("firmware-file").addEventListener("change", (event) => {
-  const file = event.target.files[0];
-  if (file) uploadFirmwareImage(file);
-  event.target.value = "";
-});
 document.getElementById("add-plant").addEventListener("click", addPlant);
 document.getElementById("plant-fertilized").addEventListener("click", () => recordPlantCare("fertilizing"));
 document.getElementById("plant-repotted").addEventListener("click", () => recordPlantCare("repotting"));
@@ -9452,5 +9306,5 @@ renderPage();
  * after the box had already shown the bare id. */
 Promise.all([
   loadProfiles(), refreshHouseholdNetwork(), refreshRooms(), refreshPlants(),
-  refreshLightDrivers(), refreshFirmwareImages(), loadSectionOrder(),
+  refreshLightDrivers(), loadSectionOrder(),
 ]).then(poll);

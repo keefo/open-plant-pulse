@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 64
+DATABASE_SCHEMA_VERSION = 65
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -1592,6 +1592,29 @@ MIGRATIONS: Dict[int, str] = {
            a hub running on the kitchen computer and the only answer
            available before anybody has chosen. */
         ALTER TABLE hub_settings ADD COLUMN timezone TEXT;
+    """,
+    65: """
+        /* The firmware the hub kept for other people's radios.
+
+           The hub stored built images and pushed them to a sensor over the
+           air. Both sensors it could do that for are gone: the Bluetooth
+           soil probe went with its subsystem, and the scale is deployed
+           over USB-C from now on. What is left is the version a device
+           reports about itself, which is how a deploy is confirmed, and
+           that stays in firmware_version and scale_firmware.
+
+           The rows here were the image catalogue and the progress of
+           updates that have all long since finished. The image files
+           themselves are in the firmware directory and are not touched by
+           this: deleting somebody's builds is not a migration's business. */
+        DROP TABLE IF EXISTS firmware_images;
+        ALTER TABLE sensors DROP COLUMN firmware_update_digest;
+        ALTER TABLE sensors DROP COLUMN firmware_update_version;
+        ALTER TABLE sensors DROP COLUMN firmware_update_state;
+        ALTER TABLE sensors DROP COLUMN firmware_update_id;
+        ALTER TABLE sensors DROP COLUMN firmware_update_percent;
+        ALTER TABLE sensors DROP COLUMN firmware_update_error;
+        ALTER TABLE sensors DROP COLUMN firmware_update_started_at;
     """,
 }
 

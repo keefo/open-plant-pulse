@@ -126,15 +126,12 @@ it; the way back has to survive the thing it undoes.
   or unverified.
 - Treat version bumps, builds, flashes, device restarts, and physical-hardware checks
   as part of the task when the request or repository workflow requires them.
-- For sensor firmware releases, update `sensors/soil-probe/version.txt` before building, use
-  `sensors/soil-probe/firmware/build.sh` and `sensors/soil-probe/firmware/flush.sh`, and verify the running
-  device reports the new version when hardware is available.
-- Deploy sensor firmware either over USB-C with `sensors/soil-probe/firmware/flush.sh`, or
-  over the air by uploading the built image to the hub (`POST /api/firmware`)
-  and requesting the install (`POST /api/sensors/<id>/firmware`). Either way,
-  confirm the sensor then reports the new version. Give every deployed binary a
-  new version number: the hub judges an over-the-air install by the version the
-  sensor reports back.
+- For sensor firmware releases, bump the version before building, and verify the
+  running device reports the new version when hardware is available.
+- Deploy sensor firmware over USB-C. The hub no longer stores images or pushes
+  them: the Bluetooth probe went with its subsystem, and the scale is flashed
+  with a cable. Confirm the device then reports the new version, and give every
+  deployed binary a new version number so that confirmation means something.
 - Report each skipped or blocked step plainly. Distinguish code completion, build
   success, flash success, and hardware validation; none implies the others.
 - Never describe a build, flash, test, or hardware behavior as successful without
