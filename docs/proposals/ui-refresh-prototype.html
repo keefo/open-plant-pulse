@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Plant Pulse — design directions</title>
+<style>
+/* ───────────────────────── shared page chrome ───────────────────────── */
+body { margin: 0; background: #1c1f1d; color: #e8ece9;
+       font: 15px/1.5 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
+h1.page { font: 600 30px/1.2 ui-sans-serif, system-ui, sans-serif; margin: 0 0 6px; letter-spacing: -.02em; }
+p.lede { margin: 0 0 36px; color: #9aa69f; max-width: 70ch; }
+.rail { display: flex; align-items: baseline; gap: 12px; margin: 48px 0 4px; }
+.rail h2 { font: 600 19px/1.2 ui-sans-serif, system-ui, sans-serif; margin: 0; letter-spacing: -.01em; }
+.rail span { color: #8d9a93; font-size: 13px; }
+.note { color: #9aa69f; font-size: 13.5px; max-width: 74ch; margin: 8px 0 18px; }
+.stage { border-radius: 16px; overflow: hidden; margin-bottom: 8px; }
+
+/* ═════════════════════ A · TODAY ═════════════════════ */
+.today {
+  --ink:#17211b; --muted:#657269; --paper:#f4f7f1; --line:#d7dfd5;
+  --leaf:#19734c; --water:#246a9a;
+  background-color: var(--paper);
+  background-image: linear-gradient(#dce5da55 1px, transparent 1px),
+                    linear-gradient(90deg, #dce5da55 1px, transparent 1px);
+  background-size: 32px 32px;
+  color: var(--ink); font-family: "Avenir Next","Gill Sans",sans-serif;
+  padding: 22px;
+}
+.today .nav { display:flex; align-items:center; gap:10px; min-height:54px;
+              border-bottom:1px solid var(--line); margin-bottom:18px; }
+.today .brand { font: 600 18px Georgia,serif; display:flex; align-items:center; gap:8px; }
+.today .leaf { width:26px; height:26px; }
+.today .links { display:flex; gap:6px; margin-left:18px; font-size:13px; }
+.today .links a { padding:6px 10px; border-radius:5px; color:var(--ink); text-decoration:none; }
+.today .links a.on { background:#e5f1e8; color:var(--leaf); font-weight:600; }
+.today .eyebrow { color:var(--leaf); font-size:11px; font-weight:700;
+                  letter-spacing:.08em; text-transform:uppercase; margin:0 0 2px; }
+.today h3.title { font: 500 28px Georgia,serif; margin:0 0 16px; }
+.today .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.today .card { border:1px solid var(--line); border-radius:8px; background:#fff;
+               padding:19px; display:grid; gap:10px; align-content:start; }
+.today .card .ph { height:92px; border-radius:6px; background:#dfe7dc; }
+.today .card strong { font-size:20px; }
+.today .card code { color:var(--muted); font-size:12px; font-family:ui-monospace,monospace; }
+.today .marks { color:var(--muted); font-size:9px; display:flex; gap:12px; }
+.today .chips { display:flex; gap:6px; flex-wrap:wrap; }
+.today .chip { font-size:9px; font-weight:700; padding:4px 8px; border-radius:12px;
+               color:var(--leaf); background:#e5f1e8; text-transform:capitalize; }
+.today .chip.now { color:#8a4a12; background:#f8ecd9; }
+.today .chip.rate{ color:#2b6c86; background:#e4eff4; }
+
+/* ═════════════════════ B · PROPOSED ═════════════════════ */
+.next {
+  /* one neutral ramp, one brand ramp, semantic names on top */
+  --n0:#ffffff; --n50:#f7f9f7; --n100:#eef2ef; --n200:#dfe6e1;
+  --n400:#8e9a93; --n600:#5a665f; --n900:#121714;
+  --brand:#1f7a52; --brand-ink:#0f3d29; --brand-wash:#e7f3ec;
+  --info:#1f6f9c; --info-wash:#e6f0f7;
+  --warn-ink:#8a4b12; --warn-wash:#fbeeda;
+  --surface:var(--n0); --canvas:var(--n50); --text:var(--n900); --dim:var(--n600);
+  --r-card:14px; --r-ctl:10px; --r-pill:999px;
+  --sh-1:0 1px 2px rgba(18,23,20,.05), 0 1px 3px rgba(18,23,20,.04);
+  --sh-2:0 2px 4px rgba(18,23,20,.04), 0 8px 20px rgba(18,23,20,.07);
+  background: var(--canvas); color: var(--text);
+  font-family: ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif;
+  font-feature-settings:"tnum" 1,"cv05" 1; padding: 22px;
+}
+.next.dark {
+  --n0:#1b201d; --n50:#141815; --n100:#222825; --n200:#2d3531;
+  --n400:#8a978f; --n600:#a9b5ae; --n900:#f0f4f1;
+  --brand:#49b586; --brand-ink:#9fe0c3; --brand-wash:#15362a;
+  --info:#6ab3dd; --info-wash:#13303f;
+  --warn-ink:#e7b170; --warn-wash:#3a2a14;
+  --sh-1:0 1px 2px rgba(0,0,0,.4); --sh-2:0 8px 24px rgba(0,0,0,.45);
+}
+.next .nav { display:flex; align-items:center; gap:14px; min-height:56px; margin-bottom:22px; }
+.next .brand { display:flex; align-items:center; gap:9px; font-weight:650;
+               font-size:16px; letter-spacing:-.01em; }
+.next .leaf { width:28px; height:28px; }
+.next .links { display:flex; gap:2px; margin-left:14px; padding:3px;
+               background:var(--n100); border-radius:var(--r-pill); }
+.next .links a { padding:7px 15px; border-radius:var(--r-pill); font-size:13.5px;
+                 font-weight:550; color:var(--dim); text-decoration:none; }
+.next .links a.on { background:var(--surface); color:var(--text); box-shadow:var(--sh-1); }
+.next .spacer { flex:1; }
+.next .ghost { padding:8px 14px; border-radius:var(--r-ctl); border:0; font-size:13.5px;
+               font-weight:550; color:var(--dim); background:var(--n100); cursor:pointer; }
+
+.next .head { display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:18px; }
+.next h3.title { font: 650 27px/1.15 ui-sans-serif,system-ui,sans-serif;
+                 letter-spacing:-.022em; margin:0; }
+.next .sub { color:var(--dim); font-size:13.5px; margin:5px 0 0; }
+
+/* the triage band — the one structural idea worth stealing from any good console */
+.next .urgent { display:flex; align-items:center; gap:12px; padding:13px 16px;
+                background:var(--warn-wash); border-radius:var(--r-card); margin-bottom:20px; }
+.next .urgent b { font-size:13.5px; color:var(--warn-ink); font-weight:650; }
+.next .urgent .who { display:flex; gap:7px; flex-wrap:wrap; }
+.next .urgent .who a { font-size:13px; font-weight:600; padding:5px 11px; border-radius:var(--r-pill);
+                       background:var(--surface); color:var(--text); text-decoration:none;
+                       box-shadow:var(--sh-1); }
+
+.next .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.next .card { background:var(--surface); border-radius:var(--r-card); padding:14px;
+              display:grid; gap:11px; align-content:start; box-shadow:var(--sh-1);
+              transition:box-shadow .18s ease, transform .18s ease; cursor:pointer; }
+.next .card:hover { box-shadow:var(--sh-2); transform:translateY(-2px); }
+.next .card .ph { height:104px; border-radius:10px;
+                  background:linear-gradient(135deg,var(--n100),var(--n200)); }
+.next .card .name { font-size:16.5px; font-weight:640; letter-spacing:-.01em; }
+.next .card .where { color:var(--dim); font-size:13px; margin-top:2px; }
+.next .bar { display:flex; align-items:center; gap:9px; }
+.next .track { display:block; flex:1; height:8px; border-radius:999px; background:var(--n200); overflow:hidden; }
+.next .fill { display:block; height:100%; border-radius:999px; background:var(--brand); min-width:8px; }
+.next .fill.low { background:#d98324; }
+.next .pct { font-size:13px; font-weight:680; color:var(--text); min-width:36px; text-align:right;
+             font-variant-numeric:tabular-nums; }
+.next .foot { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.next .due { font-size:12.5px; font-weight:620; padding:5px 10px; border-radius:var(--r-pill);
+             color:var(--brand); background:var(--brand-wash); }
+.next .due.now { color:var(--warn-ink); background:var(--warn-wash); }
+.next .rate { font-size:12.5px; color:var(--n400); }
+
+/* anatomy callouts */
+.anat { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:10px; }
+.anat > div { background:#23282520; border:1px solid #ffffff14; border-radius:14px; padding:16px 18px; }
+.anat h4 { margin:0 0 8px; font-size:14px; font-weight:650; }
+.anat ul { margin:0; padding-left:18px; color:#9aa69f; font-size:13.5px; }
+.anat li { margin:5px 0; }
+.swatches { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+.sw { width:46px; height:46px; border-radius:9px; box-shadow:inset 0 0 0 1px #ffffff1a; }
+.scale { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-top:10px; color:#e8ece9; }
+.scale span { line-height:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1 class="page">Open Plant Pulse — where the dated feeling comes from</h1>
+<p class="lede">Measured, not guessed: <b>124 distinct hex colours</b> (ten are tokens),
+<b>26 font sizes</b> mostly between 10 and 13px, <b>eight corner radii</b>,
+<b>61 hairline borders against 16 shadows</b>, and no dark mode. The look isn't wrong —
+there is no system underneath it, so every screen re-decides.</p>
+
+<div class="rail"><h2>A · Today</h2><span>the dashboard as it ships</span></div>
+<p class="note">Everything is outlined. Graph-paper behind it. Georgia headings over a
+Gill Sans fallback. The information that drives a decision — <i>does this need me</i> —
+is in the smallest type on the card.</p>
+<div class="stage today">
+  <div class="nav">
+    <span class="brand"><svg class="leaf" viewBox="0 0 24 24" fill="#19734c"><path d="M12 2C7 6 4 10 4 14a8 8 0 0016 0c0-4-3-8-8-12z"/></svg>Open Plant Pulse</span>
+    <span class="links"><a class="on" href="#">Plants</a><a href="#">Rooms</a><a href="#">Settings</a></span>
+  </div>
+  <p class="eyebrow">HOUSEHOLD</p>
+  <h3 class="title">Plants</h3>
+  <div class="grid">
+    <div class="card"><div class="ph"></div><strong>white bird</strong>
+      <code>Home 2mo · 2y 5mo old</code>
+      <div class="marks"><span>💧 12 days ago</span><span>🌡 12 days ago</span><span>⚖ today</span></div>
+      <div class="chips"><span class="chip">Water in 4d</span><span class="chip">moisture low</span><span class="chip rate">131 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div><strong>orchid</strong>
+      <code>Home 32d · 3y 5mo old</code>
+      <div class="marks"><span>💧 6 days ago</span><span>🌡 14 days ago</span><span>⚖ today</span></div>
+      <div class="chips"><span class="chip now">Water now</span><span class="chip">8% water left</span><span class="chip rate">14 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div><strong>monstera aurea</strong>
+      <code>Home 19d · 5mo old</code>
+      <div class="marks"><span>💧 3 days ago</span><span>🌡 3 days ago</span><span>⚖ today</span></div>
+      <div class="chips"><span class="chip">Water in 3d</span><span class="chip">moisture low</span><span class="chip rate">36 ml/d</span></div></div>
+  </div>
+</div>
+
+<div class="rail"><h2>B · Proposed</h2><span>same data, same density, one system</span></div>
+<p class="note">Cards sit on light instead of inside a box. One type scale starting at 13px,
+not 9px. Water left becomes a bar you read at a glance rather than a word you decode.
+And the two plants that actually need you are lifted out of the grid.</p>
+<div class="stage next">
+  <div class="nav">
+    <span class="brand"><svg class="leaf" viewBox="0 0 24 24" fill="#1f7a52"><path d="M12 2C7 6 4 10 4 14a8 8 0 0016 0c0-4-3-8-8-12z"/></svg>Open Plant Pulse</span>
+    <span class="links"><a class="on" href="#">Plants</a><a href="#">Rooms</a><a href="#">Settings</a></span>
+    <span class="spacer"></span>
+    <button class="ghost">Sort: thirstiest</button>
+  </div>
+  <div class="head">
+    <div><h3 class="title">Plants</h3><p class="sub">17 plants · 4 sensors · all reporting</p></div>
+  </div>
+  <div class="urgent"><b>Needs you today</b>
+    <span class="who"><a href="#">orchid · 8%</a><a href="#">marble queen small · 36%</a></span></div>
+  <div class="grid">
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">orchid</div><div class="where">Living · home 32d</div></div>
+      <div class="bar"><span class="track"><span class="fill low" style="width:8%"></span></span><span class="pct">8%</span></div>
+      <div class="foot"><span class="due now">Water now</span><span class="rate">14 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">white bird</div><div class="where">Living · home 2mo</div></div>
+      <div class="bar"><span class="track"><span class="fill" style="width:46%"></span></span><span class="pct">46%</span></div>
+      <div class="foot"><span class="due">Water in 4d</span><span class="rate">131 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">monstera aurea</div><div class="where">Living · home 19d</div></div>
+      <div class="bar"><span class="track"><span class="fill" style="width:28%"></span></span><span class="pct">28%</span></div>
+      <div class="foot"><span class="due">Water in 3d</span><span class="rate">36 ml/d</span></div></div>
+  </div>
+</div>
+
+<div class="rail"><h2>C · The same thing after dark</h2><span>one token flip, no new CSS</span></div>
+<p class="note">A system you can invert in twenty lines. The current stylesheet cannot do
+this at all: 180 of its colour values are written into the rules themselves.</p>
+<div class="stage next dark">
+  <div class="nav">
+    <span class="brand"><svg class="leaf" viewBox="0 0 24 24" fill="#49b586"><path d="M12 2C7 6 4 10 4 14a8 8 0 0016 0c0-4-3-8-8-12z"/></svg>Open Plant Pulse</span>
+    <span class="links"><a class="on" href="#">Plants</a><a href="#">Rooms</a><a href="#">Settings</a></span>
+    <span class="spacer"></span>
+    <button class="ghost">Sort: thirstiest</button>
+  </div>
+  <div class="head">
+    <div><h3 class="title">Plants</h3><p class="sub">17 plants · 4 sensors · all reporting</p></div>
+  </div>
+  <div class="urgent"><b>Needs you today</b>
+    <span class="who"><a href="#">orchid · 8%</a><a href="#">marble queen small · 36%</a></span></div>
+  <div class="grid">
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">orchid</div><div class="where">Living · home 32d</div></div>
+      <div class="bar"><span class="track"><span class="fill low" style="width:8%"></span></span><span class="pct">8%</span></div>
+      <div class="foot"><span class="due now">Water now</span><span class="rate">14 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">white bird</div><div class="where">Living · home 2mo</div></div>
+      <div class="bar"><span class="track"><span class="fill" style="width:46%"></span></span><span class="pct">46%</span></div>
+      <div class="foot"><span class="due">Water in 4d</span><span class="rate">131 ml/d</span></div></div>
+    <div class="card"><div class="ph"></div>
+      <div><div class="name">monstera aurea</div><div class="where">Living · home 19d</div></div>
+      <div class="bar"><span class="track"><span class="fill" style="width:28%"></span></span><span class="pct">28%</span></div>
+      <div class="foot"><span class="due">Water in 3d</span><span class="rate">36 ml/d</span></div></div>
+  </div>
+</div>
+
+<div class="rail"><h2>What actually changed</h2><span>and what deliberately did not</span></div>
+<div class="anat">
+  <div><h4>Changed</h4><ul>
+    <li><b>Light, not lines.</b> 61 hairlines → shadows and tinted surfaces.</li>
+    <li><b>One type scale</b>, 12·13·15·16·20·27·40. Nothing at 9px.</li>
+    <li><b>Three radii</b> (10 · 14 · pill) instead of eight.</li>
+    <li><b>Two colour ramps</b> with semantic names, so dark mode is a flip.</li>
+    <li><b>System sans</b>, tabular figures. No Gill Sans fallback.</li>
+    <li><b>The graph paper goes.</b> It reads as 2013 skeuomorphism.</li>
+    <li><b>Water left becomes a bar</b> — a quantity drawn as a quantity.</li>
+  </ul></div>
+  <div><h4>Kept</h4><ul>
+    <li><b>The writing.</b> "Water in the pot", "Nothing reported yet". It is the best thing here.</li>
+    <li><b>The density.</b> This is a console, not a brochure.</li>
+    <li><b>The green.</b> Deepened slightly, same identity.</li>
+    <li><b>The photograph first</b> on a card — it is how you tell two pothos apart.</li>
+    <li><b>Serif</b>, but earned: display numbers and the plant's own name, not every heading.</li>
+  </ul></div>
+</div>
+
+<div class="rail"><h2>The ramps</h2><span>what replaces 124 loose hexes</span></div>
+<div class="swatches">
+  <span class="sw" style="background:#f7f9f7"></span><span class="sw" style="background:#eef2ef"></span>
+  <span class="sw" style="background:#dfe6e1"></span><span class="sw" style="background:#8e9a93"></span>
+  <span class="sw" style="background:#5a665f"></span><span class="sw" style="background:#121714"></span>
+  <span class="sw" style="background:#e7f3ec"></span><span class="sw" style="background:#49b586"></span>
+  <span class="sw" style="background:#1f7a52"></span><span class="sw" style="background:#0f3d29"></span>
+  <span class="sw" style="background:#1f6f9c"></span><span class="sw" style="background:#d98324"></span>
+</div>
+<div class="scale">
+  <span style="font-size:40px;font-weight:650;letter-spacing:-.03em">40</span>
+  <span style="font-size:27px;font-weight:650;letter-spacing:-.022em">27</span>
+  <span style="font-size:20px;font-weight:640">20</span>
+  <span style="font-size:16px;font-weight:640">16</span>
+  <span style="font-size:15px">15</span>
+  <span style="font-size:13px;color:#9aa69f">13</span>
+  <span style="font-size:12px;color:#9aa69f">12</span>
+</div>
+
+</div>
+</body>
+</html>

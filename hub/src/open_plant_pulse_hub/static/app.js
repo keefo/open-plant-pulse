@@ -3338,6 +3338,14 @@ function createHouseholdCard(key) {
   card.className = "fleet-card";
   setData(card, "key", key);
   card.innerHTML = "<strong></strong><code></code><span></span>"
+    /* How full the pot is, drawn as how full the pot is.
+     *
+     * It was a chip reading "46% water left", which is a number to be
+     * read one card at a time. Seventeen bars sort themselves without
+     * any of them being read. */
+    + '<div class="fleet-card-water" hidden>'
+    + '<span class="water-track"><span class="water-fill"></span></span>'
+    + '<b class="water-pct"></b></div>'
     // When it needs water first: that is what the list is scanned for.
     + '<div class="fleet-card-tags"><small class="fleet-card-due"></small>'
     + '<small></small><small class="fleet-card-rate" data-state="rate"></small></div>';
@@ -3487,6 +3495,30 @@ function updateHouseholdCard(card, plant, sensor) {
    * and the badge beside it already says that. */
   renderCaredFor(card.querySelector("span"), plant);
 
+  /* What the pot weighs answers the question the card is really asked:
+   * does this plant need me today. It is known from the weighing, so it
+   * is drawn for every plant that has been weighed -- a plant with a
+   * probe has a pot too, and the probe's own health is a separate
+   * sentence, said in the badge below. */
+  const weight = plant.weight || {};
+  const left = weight.remaining_percent;
+  const water = card.querySelector(".fleet-card-water");
+  setHidden(water, left == null);
+  if (left != null) {
+    /* The length is how full the pot is. The colour is whether the
+     * plant wants anything, which is not the same question: the orchid
+     * sat at 8% above a thirsty mark of 5% -- calm blue, beside a chip
+     * reading "Water now". Two elements on one card disagreeing about
+     * the same plant is worse than either being wrong alone. */
+    const thirsty = weight.thirsty_percent ?? 15;
+    const dueNow = plant?.water_in_days != null && plant.water_in_days < 1;
+    setStyle(water.querySelector(".water-fill"), "width",
+             `${Math.max(0, Math.min(100, left))}%`);
+    setData(water, "state", left <= thirsty || dueNow ? "low" : "ok");
+    setText(water.querySelector(".water-pct"), `${Math.round(left)}%`);
+    setAttr(water, "title", `${Math.round(left)}% of this pot's water left`);
+  }
+
   const badge = card.querySelector("small:not(.fleet-card-rate):not(.fleet-card-due)");
   if (sensor) {
     const state = sensorState(sensor);
@@ -3494,17 +3526,12 @@ function updateHouseholdCard(card, plant, sensor) {
     setHidden(badge, false);
     setData(badge, "state", state.toLowerCase());
   } else {
-    /* What the pot weighs answers the question the card is really asked:
-     * does this plant need me today. */
-    const weight = plant.weight || {};
-    const left = weight.remaining_percent != null
-      ? `${weight.remaining_percent}% water left`
-      : weight.used_grams ? `${weight.used_grams} ml used` : "";
-    setText(badge, left);
-    setHidden(badge, left === "");
-    setData(badge, "state", weight.remaining_percent == null ? "manual"
-      : weight.remaining_percent <= (weight.thirsty_percent ?? 15)
-        ? "thirsty" : "watered");
+    /* Without a percentage there is no bar to draw, but what it has
+     * drunk is still worth saying. */
+    const used = left == null && weight.used_grams ? `${weight.used_grams} ml used` : "";
+    setText(badge, used);
+    setHidden(badge, used === "");
+    setData(badge, "state", "manual");
   }
 
   /* What it drinks, beside what it has left: one is the plant's habit and

@@ -11,29 +11,101 @@
  */
 :focus-visible { outline: 2px solid var(--water); outline-offset: 2px; }
 
+/* Two ramps, and names for what things are rather than what colour.
+ *
+ * The stylesheet had 124 distinct hex values and ten tokens, so every
+ * screen decided its own greys and they had drifted apart. These are
+ * the only colours; a rule that needs one takes it from here.
+ *
+ * The older names below are kept and expressed in the ramp, so the
+ * rules that already use them move with it. They go as each surface
+ * is converted -- they are a bridge across this change, not a second
+ * way of saying the same thing. */
 :root {
-  --ink: #17211b;
-  --muted: #657269;
-  --paper: #f4f7f1;
-  --panel: #ffffff;
-  --line: #d7dfd5;
-  --leaf: #19734c;
-  --water: #246a9a;
-  --sun: #d9a327;
-  --gold: #d5a72e;
-  --coral: #d86748;
+  --n0:  #ffffff;
+  --n50: #f7f9f7;
+  --n100:#eef2ef;
+  --n200:#dfe6e1;
+  --n400:#8e9a93;
+  --n600:#5a665f;
+  --n900:#121714;
+
+  --brand:      #1f7a52;
+  --brand-ink:  #0f3d29;
+  --brand-wash: #e7f3ec;
+  --info:       #1f6f9c;
+  --info-wash:  #e6f0f7;
+  --warn:       #d98324;
+  --warn-ink:   #8a4b12;
+  --warn-wash:  #fbeeda;
+  --alarm:      #c2553a;
+  --alarm-wash: #f8e7e1;
+
+  /* Water is blue. Green in this interface means the plant is well,
+     and a green bar for how full the pot is made one stand for the
+     other -- a plant can be brim full and ailing. The bar turns the
+     warning yellow as it empties, which is the same yellow the rest
+     of the page uses for "soon". */
+  --fill-water: #2f85ba;
+  --fill-low:   #d98324;
+
+  --surface: var(--n0);
+  --canvas:  var(--n50);
+  --text:    var(--n900);
+  --dim:     var(--n600);
+  --faint:   var(--n400);
+
+  /* Three, where there were eight. */
+  --r-ctl:  10px;
+  --r-card: 14px;
+  --r-pill: 999px;
+
+  /* Lifted off the canvas rather than outlined. */
+  --sh-1: 0 1px 2px rgba(18, 23, 20, .05), 0 1px 3px rgba(18, 23, 20, .04);
+  --sh-2: 0 2px 4px rgba(18, 23, 20, .04), 0 8px 20px rgba(18, 23, 20, .07);
+
+  /* The scale: 12 13 15 16 20 27 40. Nothing smaller than 12. */
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-md: 15px;
+  --t-lg: 16px;
+  --t-xl: 20px;
+  --t-2xl: 27px;
+  --t-3xl: 40px;
+
+  --ink:   var(--n900);
+  --muted: var(--n600);
+  --paper: var(--canvas);
+  --panel: var(--surface);
+  --line:  var(--n200);
+  --leaf:  var(--brand);
+  --water: var(--info);
+  --sun:   #d9a327;
+  --gold:  #d5a72e;
+  --coral: var(--alarm);
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* The graph paper is gone. It was a texture for warming up flat
+   design and it dates the page on its own; a card lifted off a plain
+   tint says "surface" without it.
+
+   The old stack resolved to Avenir Next on this machine and to Gill
+   Sans -- a typeface from 1928 -- nearly everywhere else. This asks
+   for whatever the reader's system uses for its own interface, which
+   is the one font guaranteed to be installed and hinted. Figures are
+   tabular because this page is mostly numbers in columns. */
 body {
   margin: 0;
-  color: var(--ink);
-  background-color: var(--paper);
-  background-image: linear-gradient(#dce5da55 1px, transparent 1px), linear-gradient(90deg, #dce5da55 1px, transparent 1px);
-  background-size: 32px 32px;
-  font-family: "Avenir Next", "Gill Sans", sans-serif;
+  color: var(--text);
+  background: var(--canvas);
+  font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI Variable Text",
+               "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: var(--t-md);
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
 }
 .household-nav, .topbar, .hub-health, main { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
 .household-nav { min-height: 54px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
@@ -54,8 +126,9 @@ body {
    the one plant with a sensor is a tile the size of every other tile instead
    of a banner across the window. The two grids share the rhythm. */
 .fleet-grid { margin-top: 22px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.fleet-card { min-height: 165px; padding: 19px; display: grid; align-content: start; gap: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: white; text-decoration: none; transition: border-color 150ms ease, transform 150ms ease; }
-.fleet-card:hover { border-color: var(--leaf); transform: translateY(-2px); }
+/* Lifted off the canvas rather than drawn inside a box. */
+.fleet-card { min-height: 165px; padding: 14px; display: grid; align-content: start; gap: 11px; border: 0; border-radius: var(--r-card); color: var(--text); background: var(--surface); box-shadow: var(--sh-1); text-decoration: none; transition: box-shadow 180ms ease, transform 180ms ease; }
+.fleet-card:hover { box-shadow: var(--sh-2); transform: translateY(-2px); }
 /* Adding a plant, as a card at the end of the grid rather than a
    button above it. Dashed and quiet: it is the one card that is not a
    plant, and it should read as the empty place at the end of a shelf
@@ -64,11 +137,28 @@ body {
 .fleet-card-add:hover { border-style: solid; border-color: var(--leaf); color: var(--leaf); }
 .fleet-card-add strong { font-size: 15px; font-weight: 600; }
 .fleet-card-add-mark { font-size: 30px; line-height: 1; font-weight: 300; }
-.fleet-card strong { font-size: 20px; }
-.fleet-card code { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
-.fleet-card span { margin-top: 8px; color: var(--muted); font-size: xx-small; }
+.fleet-card strong { font-size: var(--t-lg); font-weight: 640; letter-spacing: -.01em; }
+.fleet-card code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-sm); font-family: inherit; }
+/* The care-marks row, which is the card's own direct child. Written
+   as any descendant span it also caught the water bar's track and
+   fill, and 8px of margin on a fill inside an 8px clipped track put
+   it exactly out of sight: the bar drew, in blue, below the pixels
+   anyone could see. The marks inherit the size and colour. */
+.fleet-card > span { margin-top: 8px; color: var(--muted); font-size: xx-small; }
 /* Watered, fed and weighed as marks: the words are the same on every card
    and the dates are what differ, so the dates get the room. */
+/* How full the pot is.
+ *
+ * Blue, because water is blue and because green in this interface
+ * means the plant is well -- a pot can be brim full under a dying
+ * plant, and one bar should not be made to say both. It turns yellow
+ * at the plant's own thirsty mark, which differs by pot. */
+.fleet-card-water { display: flex; align-items: center; gap: 9px; }
+.water-track { display: block; flex: 1; height: 8px; border-radius: var(--r-pill); background: var(--n200); overflow: hidden; }
+.water-fill { display: block; height: 100%; min-width: 8px; border-radius: var(--r-pill); background: var(--fill-water); transition: width 400ms ease; }
+.fleet-card-water[data-state="low"] .water-fill { background: var(--fill-low); }
+.water-pct { font-size: var(--t-sm); font-weight: 680; color: var(--text); min-width: 36px; text-align: right; }
+@media (prefers-reduced-motion: reduce) { .water-fill { transition: none; } }
 .care-mark { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; white-space: nowrap; }
 .care-mark svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #3f5a64; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .care-mark svg.filled { fill: #3f5a64; stroke: none; }
