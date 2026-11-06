@@ -666,6 +666,20 @@ main > * { min-width: 0; }
   .climate-history, .fleet-overview, .sensor-settings,
   .plant-verdicts, .plant-light, .plant-photos { padding: 16px; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
+  /* The dashboard's heading stays one row.
+   *
+   * Stacking is right where a heading carries a sentence and a button,
+   * but here it is the word "Plants" and a menu, and putting them on
+   * two rows spent a whole line of a phone screen to say nothing. The
+   * two need 333px of the 318px a 390px phone has, so the words "Sort
+   * by" stand down -- the menu shows what it is sorted by, and the
+   * label still names it for anything reading the page aloud. */
+  .fleet-overview .section-heading { flex-direction: row; align-items: center; gap: 12px; }
+  .fleet-overview .section-heading > div:first-child { min-width: 0; }
+  .fleet-overview .settings-sensor-actions { flex: 0 1 auto; min-width: 0; }
+  .fleet-sort > span { position: absolute; width: 1px; height: 1px; padding: 0;
+    margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .fleet-sort select { min-width: 0; }
   .history-range-selector { width: 100%; }
   .history-range-selector button { flex: 1; padding-inline: 4px; }
   .profile-control { align-items: flex-start; flex-wrap: wrap; }

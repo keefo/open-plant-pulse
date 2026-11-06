@@ -739,6 +739,47 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(tools.complaints, [])
 
 
+    def test_the_dashboard_heading_keeps_its_sort_on_one_row(self) -> None:
+        """"Plants" and the sort menu share a line on a phone.
+
+        Every section heading stacks below 760px, which is right where
+        one carries a sentence and a button. On the dashboard it is one
+        word and a menu, and stacking spent a whole line of a phone
+        screen saying nothing. The two want 333px where a 390px phone
+        has 318, so the words "Sort by" stand down and the menu speaks
+        for itself -- the label still names it for a screen reader.
+        """
+        tools = self.devtools()
+        for width in (320, 390):
+            with self.subTest(width=width):
+                tools.call("Emulation.setDeviceMetricsOverride", width=width,
+                           height=844, deviceScaleFactor=3, mobile=True)
+                self.open_page(tools, self.base_url + "/")
+                seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+                    (() => {
+                      const head = document.querySelector(".fleet-overview .section-heading");
+                      const title = head.firstElementChild.getBoundingClientRect();
+                      const sort = head.lastElementChild.getBoundingClientRect();
+                      const words = document.querySelector(".fleet-sort > span");
+                      const label = document.querySelector(".fleet-sort");
+                      return JSON.stringify({
+                        sameRow: Math.abs(title.top - sort.top) < 25,
+                        overlap: title.right > sort.left + 1,
+                        sortOnTheRight: sort.left > title.right,
+                        wordsHidden: getComputedStyle(words).position === "absolute",
+                        stillLabelled: label.getAttribute("for") === "plant-sort"
+                                       && words.textContent.trim() === "Sort by",
+                        withinScreen: sort.right <= document.documentElement.clientWidth + 1,
+                      });
+                    })()""")["result"]["value"])
+                self.assertTrue(seen["sameRow"], "the title and the sort are on two rows")
+                self.assertFalse(seen["overlap"], "the sort overlaps the title")
+                self.assertTrue(seen["sortOnTheRight"], "the sort is not to the right of the title")
+                self.assertTrue(seen["wordsHidden"], '"Sort by" is taking width it has not got')
+                self.assertTrue(seen["stillLabelled"], "the menu lost its accessible name")
+                self.assertTrue(seen["withinScreen"], "the sort runs off the side")
+                self.assertEqual(tools.complaints, [])
+
     def test_the_settings_tabs_stay_reachable_on_a_phone(self) -> None:
         """The tabs that do not fit are scrolled to, not clipped away."""
         tools = self.devtools()
