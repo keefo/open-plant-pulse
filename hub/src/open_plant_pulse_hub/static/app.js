@@ -4899,15 +4899,19 @@ function renderClimateHistory(items, startTime, endTime) {
   );
   const status = document.getElementById("climate-history-status");
   setClass(status, "error", false);
-  const sampleStatus = items.length === 1
+  /* Counted and dated from the readings themselves. This arrives as a
+     Map of sensor to readings -- everyItem above already flattens it --
+     and asking a Map for .length gives undefined, so the status line
+     read "undefined stored readings" and, worse, the silence check
+     below could never fire: a sensor quiet for days still said
+     "Updates live", which is the exact thing the next comment says
+     this is here to stop. */
+  const sampleStatus = everyItem.length === 1
     ? "Collecting another reading to draw the line"
-    : `${items.length} stored readings`;
+    : `${everyItem.length} stored readings`;
   /* Say when the line stops short, rather than leaving the blank to be
    * read as a chart that has not loaded. */
-  const newest = items.length
-    ? Date.parse(items[items.length - 1].reading?.observed_at
-                 || items[items.length - 1].received_at)
-    : NaN;
+  const newest = sampleTimes.length ? Math.max(...sampleTimes) : NaN;
   const quietFor = Number.isFinite(newest) ? (Date.now() - newest) / 1000 : null;
   const silence = quietFor != null && quietFor > 3 * 60 * 60
     ? ` · nothing since ${describeSeconds(quietFor)} ago`
