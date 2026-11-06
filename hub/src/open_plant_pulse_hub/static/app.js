@@ -1,6 +1,14 @@
+/* The readouts a reading fills in, by element id.
+ *
+ * The pore-water EC figure went with the Bluetooth probe's panel, and
+ * its id went with it -- but it stayed in this list, so setText was
+ * handed null on every single reading and threw. That threw out of
+ * renderReading, out of refresh, and took the rest of the plant page
+ * with it: the verdict, the pot, the gauges, the drying trend and the
+ * watering calendar all stopped where the exception landed. An id
+ * here must exist in the markup. */
 const fields = {
   "moisture": ["moisture_percent", 1], "soil-temp": ["soil_temperature_c", 1],
-  "conductivity": ["conductivity_us_cm", 0]
 };
 const metricPrecision = {
   soil_ph: 2,
@@ -4289,6 +4297,12 @@ function renderGauge(card, metricName, metric, value) {
   // A value the sensor did not send is not a value of zero, which is where a
   // missing number would otherwise put the marker.
   setHidden(valueMarker, value == null);
+  /* The coloured rule along the top of these cards says what is being
+   * measured -- warm for temperature, amber for EC, blue for water. On a
+   * card with no reading it says nothing, and the warm one is the same
+   * red that marks a plant in trouble, so an empty card read as an alarm.
+   * It greys out until there is something to colour. */
+  setData(card, "reading", value == null ? "none" : "");
   if (value != null) {
     setStyle(valueMarker, "left", `${Math.max(0, Math.min(100, percentage(value)))}%`);
   }
@@ -4316,8 +4330,46 @@ function renderRangeStatus(status, metricName, metric, value) {
   }
 }
 
+/* Put the probe-fed sections back to the state the markup ships with.
+ *
+ * These are filled from a global holding the last reading seen, so the
+ * previous plant's figures stay on screen until something overwrites
+ * them. Opening a plant with no probe used to show the plant before
+ * it -- its verdict, its soil temperature, its distance from ideal --
+ * under this plant's name. A plant that measures nothing says so. */
+function clearProbeReadouts() {
+  setText(document.getElementById("moisture"), "--");
+  setText(document.getElementById("soil-temp"), "--");
+  setText(document.getElementById("moisture-phase"), "Waiting for reading");
+
+  const plant = document.getElementById("plant-assessment");
+  setData(plant, "level", "waiting");
+  setText(document.getElementById("plant-status"), "Waiting");
+  setText(document.getElementById("plant-status-reason"),
+          "A conclusion will appear after the first complete sensor reading.");
+
+  const pot = document.getElementById("drainage-assessment");
+  setData(pot, "level", "learning");
+  setText(document.getElementById("drainage-status"), "Learning");
+  setText(document.getElementById("drainage-status-reason"),
+          "Three completed watering cycles are needed to assess pot suitability.");
+
+  for (const card of document.querySelectorAll(".root-zone-gauge")) {
+    setData(card, "reading", "none");
+    setHidden(card.querySelector(".value-marker"), true);
+    const status = card.querySelector(".range-status");
+    setClass(status, "in-range", false);
+    setClass(status, "out-range", false);
+    setText(status, "Waiting for reading");
+  }
+}
+
 function renderProfileRanges() {
-  if (!profiles || !latestReading) return;
+  if (!profiles) return;
+  if (!latestReading) {
+    clearProbeReadouts();
+    return;
+  }
   const profileId = selectedSensor?.profile_id || profiles.default_profile;
   const profile = profiles.profiles[profileId];
   renderMoistureVessel(profile);
@@ -5598,6 +5650,15 @@ async function refresh() {
       const sensor = plantSensor();
       selectedSensorId = sensor?.sensor_id ?? null;
       selectedSensor = sensor ?? null;
+      if (!sensor) {
+        /* The last reading is a global, and a plant with no probe never
+         * overwrites it -- so whatever the previously opened plant
+         * measured would be drawn here, under this plant's profile, as
+         * though it were its own. A plant that measures nothing has no
+         * reading, and the sections say so. */
+        latestReading = null;
+        latestReadingAt = null;
+      }
       if (sensor) {
         const query = sensorQuery();
         const latest = await fetch(`/api/readings/latest${query}`);
@@ -5613,6 +5674,20 @@ async function refresh() {
       // The room's air, drawn the same way as a sensor's own: by this point
       // the plant is loaded, so its room's reading is known.
       await Promise.all([refreshClimateHistory(), refreshPlantLighting()]);
+      /* The verdict, the pot and the soil gauges, once everything they
+       * need is here.
+       *
+       * They need two things that arrive on separate requests: the
+       * profiles, fetched once at startup, and the plant's latest
+       * reading, fetched above. Each of those called this when it landed
+       * and each bailed on the guard if the other had not -- so whenever
+       * the profiles won the race, every plant page sat on "Waiting" and
+       * "Waiting for reading" with a live reading already in memory and
+       * nothing left to call this again.
+       *
+       * Here it runs after the last of them, whichever that was. It
+       * guards itself, so a plant with no probe still costs nothing. */
+      renderProfileRanges();
       return;
     }
     if (page === "sensor-config") {

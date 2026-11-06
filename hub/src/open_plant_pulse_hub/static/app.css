@@ -69,10 +69,10 @@ body {
 .fleet-card span { margin-top: 8px; color: var(--muted); font-size: xx-small; }
 /* Watered, fed and weighed as marks: the words are the same on every card
    and the dates are what differ, so the dates get the room. */
-.care-mark { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap; }
-.care-mark svg { width: 13px; height: 13px; flex: none; fill: none; stroke: #5d7a86; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.care-mark svg.filled { fill: #5d7a86; stroke: none; }
-.care-mark i { font-style: normal; }
+.care-mark { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; white-space: nowrap; }
+.care-mark svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #3f5a64; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.care-mark svg.filled { fill: #3f5a64; stroke: none; }
+.care-mark i { font-style: normal; color: var(--ink); }
 /* The two tags sit together: what the pot has left, and what it drinks. */
 .fleet-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .fleet-sort { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -153,6 +153,18 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; c
   background: white; color: var(--ink); font: inherit;
 }
 .settings-panel input[readonly] { color: var(--ink); background: #edf1eb; cursor: default; }
+/* A field as wide as the panel says nothing about what goes in it.
+   Width is the cheapest hint a form has: four characters of Kelvin in
+   a box the width of a paragraph reads as a box somebody forgot to
+   fill, and the eye has to travel the whole line to find the caret.
+   These are maximums, so a long value still fits and a narrow screen
+   still shrinks them. */
+.settings-panel input[type="number"],
+.settings-panel input[data-kind="integer"] { max-width: 9rem; }
+.settings-panel input[type="time"],
+.settings-panel input[type="date"] { max-width: 11rem; }
+.settings-panel input[inputmode="numeric"] { max-width: 12rem; }
+.settings-panel input[data-kind="mac"] { max-width: 21rem; }  /* 17 characters */
 .settings-panel textarea { min-height: 72px; resize: vertical; }
 .settings-panel small, .settings-panel output { color: var(--muted); }
 .inline-control { display: flex; align-items: center; gap: 10px; }
@@ -221,6 +233,19 @@ main > * { min-width: 0; }
 .plant-assessment[data-level="watch"] > div { border-color: var(--sun); }
 .plant-assessment[data-level="stressed"] > div { border-color: var(--coral); }
 .plant-assessment[data-level="critical"] > div { border-color: #a52f2f; }
+/* Before a verdict exists, the panel is a placeholder. It keeps its
+   place in the page -- the reader should see where the answer will
+   appear -- but at the size of a caption and in the colour of an
+   absence, not the size and colour of a conclusion. */
+.plant-assessment[data-level="waiting"] > div,
+.drainage-assessment[data-level="learning"] > div { border-left-color: var(--line); }
+.plant-verdicts .plant-assessment[data-level="waiting"] strong,
+.plant-verdicts .drainage-assessment[data-level="learning"] strong,
+.plant-assessment[data-level="waiting"] strong,
+.drainage-assessment[data-level="learning"] strong {
+  font-size: 19px; color: var(--muted);
+}
+.plant-assessment[data-level="waiting"], .drainage-assessment[data-level="learning"] { min-height: 0; }
 .primary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .metric { min-height: 142px; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; justify-content: space-between; }
 .metric > span { color: var(--muted); font-size: 13px; font-weight: 600; }
@@ -316,7 +341,9 @@ main > * { min-width: 0; }
 @keyframes water-drift-back { from { background-position-x: 0; } to { background-position-x: -86px; } }
 @media (prefers-reduced-motion: reduce) { .moisture-fill, .moisture-fill::before, .moisture-fill i, .moisture-waterline, .care-event.new { animation: none; transition: none; } }
 .soil-temp { border-top: 4px solid var(--coral); }
-.conductivity { border-top: 4px solid var(--sun); }
+/* Lit for what is being measured, not for how it is going -- so it goes
+   out when there is no reading to be about. */
+.metric[data-reading="none"] { border-top-color: var(--line); }
 .root-zone-gauge { min-height: 190px; gap: 9px; }
 /* Beside the pot: soil temperature above, the moisture month below. */
 .primary-grid .soil-temp, .primary-grid .moisture-trend { grid-column: span 2; }

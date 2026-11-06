@@ -296,9 +296,25 @@ function startLightEdit(lightId) {
   setDisabled(select, true);
   renderLightFields(light.driver, light.config);
   setText(document.getElementById("light-form-title"), "Edit " + light.display_name);
+  showLightForm();
   setText(document.getElementById("save-light"), "Save light");
   setHidden(document.getElementById("cancel-light-edit"), false);
   setText(document.getElementById("light-message"), "");
+}
+
+/* The form is put away until somebody asks for it.
+ *
+ * What a person comes to this tab to do is look at the lights they have
+ * and change one; adding is the rare errand. The form used to be the
+ * first and largest thing on the tab, so the list of real lights sat
+ * below a blank one nobody had asked for. */
+function showLightForm(open = true) {
+  setHidden(document.getElementById("light-form"), !open);
+  setHidden(document.getElementById("add-light"), open);
+  if (open) {
+    document.getElementById("light-form").scrollIntoView(
+      { block: "nearest", behavior: "smooth" });
+  }
 }
 
 function clearLightForm() {
@@ -313,6 +329,7 @@ function clearLightForm() {
   setText(document.getElementById("light-form-title"), "Add a light");
   setText(document.getElementById("save-light"), "Add light");
   setHidden(document.getElementById("cancel-light-edit"), true);
+  showLightForm(false);
 }
 
 async function saveLight(event) {
@@ -685,3 +702,8 @@ plantLightingForm.addEventListener("input", () => {
   plantLightingDraftSubject = lightingSubject()?.key ?? null;
 });
 plantLightingForm.addEventListener("submit", savePlantLighting);
+
+document.getElementById("add-light").addEventListener("click", () => {
+  clearLightForm();
+  showLightForm();
+});

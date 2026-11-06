@@ -439,7 +439,9 @@
       </div>
 
       <div id="settings-lights-panel" class="settings-panel-group" hidden>
-        <form id="light-form" class="settings-panel">
+                <div id="light-list" class="settings-sensor-list"></div>
+          <button type="button" id="add-light" class="secondary-action">Add a light</button>
+          <form id="light-form" class="settings-panel" hidden>
           <h2 id="light-form-title">Add a light</h2>
           <p>The hub switches each light in whatever way its type needs, on the hours set here.
             Which plants stand under a light, and how much of it reaches each of them, is set
@@ -471,7 +473,6 @@
             <output id="light-message" aria-live="polite"></output>
           </div>
         </form>
-        <div id="light-list" class="settings-sensor-list"></div>
       </div>
 
       <div id="settings-time-panel" class="settings-panel-group" hidden>
@@ -554,7 +555,7 @@
           <span id="moisture-strategy">Plant watering cycle</span>
         </div>
       </article>
-      <article class="metric soil-temp root-zone-gauge" data-metric="soil_temperature_c">
+      <article class="metric soil-temp root-zone-gauge" data-metric="soil_temperature_c" data-reading="none">
         <span>Soil temperature</span><strong><b id="soil-temp" class="measure" data-unit="°C" data-unit-hidden="true">--</b></strong>
         <div class="range-track"><span class="ideal-range"></span><i class="value-marker"></i></div>
         <div class="range-labels"><span class="scale-low"></span><span class="ideal-label"></span><span class="scale-high"></span></div>
