@@ -1379,18 +1379,22 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
  * the open and close, the Escape key and the focus handling without
  * any script; the sheet is positioned so it hangs under the mark
  * rather than pushing the header taller when it opens. */
-/* The corner, not the middle. The header centres its children, and
-   this one is short beside a block of four lines, so it drifted down
-   to sit beside "watered nine hours ago" -- which is not where anyone
-   looks for a menu. */
-.page-menu { position: relative; align-self: start; margin-top: 2px; }
+/* Beside the name rather than in a corner.
+ *
+ * It was tried in the header's corner, which needed one rule for the
+ * wide layout and another for the stacked one, and still read as
+ * floating free of anything. Against the name it needs neither: the
+ * menu is about this plant, and that is where the plant is named. */
+.plant-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.plant-title-row h1 { min-width: 0; overflow-wrap: anywhere; }
+.page-menu { position: relative; flex: none; }
 .page-menu > summary { list-style: none; cursor: pointer; }
 .page-menu > summary::-webkit-details-marker { display: none; }
 .page-menu-mark { display: inline-flex; align-items: center; justify-content: center;
   width: 38px; height: 38px; padding: 0; }
 .page-menu-mark svg { fill: currentColor; }
 .page-menu[open] > summary { color: var(--text); background: var(--n100); }
-.page-menu-sheet { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0;
+.page-menu-sheet { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0;
   min-width: 190px; display: grid; padding: 6px; border-radius: var(--r-card);
   background: var(--surface); box-shadow: var(--sh-2); }
 .page-menu-item { padding: 10px 12px; border: 0; border-radius: var(--r-ctl);

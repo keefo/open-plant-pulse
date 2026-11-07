@@ -26,7 +26,28 @@
   <header class="topbar" data-page="plant" hidden>
     <div class="plant-identity">
       <p class="eyebrow">PLANT</p>
-      <h1 id="plant-page-name">Plant</h1>
+      <div class="plant-title-row">
+        <h1 id="plant-page-name">Plant</h1>
+        <!-- Two buttons took the width of the plant's name on a phone,
+             for things done rarely. Behind one mark, set against the
+             name itself: it belongs to this plant, and beside the name
+             it says so at any width without needing a corner to hold.
+             Built on the details element, so it opens, closes on
+             Escape and takes focus without any script. -->
+        <details class="page-menu">
+          <summary class="icon-button page-menu-mark" aria-label="More for this plant" title="More">
+            <svg viewBox="0 0 16 16" aria-hidden="true" width="18" height="18">
+              <circle cx="8" cy="3" r="1.5"></circle>
+              <circle cx="8" cy="8" r="1.5"></circle>
+              <circle cx="8" cy="13" r="1.5"></circle>
+            </svg>
+          </summary>
+          <div class="page-menu-sheet">
+            <button class="page-menu-item arrange-sections" type="button">Arrange sections</button>
+            <a id="plant-page-config" class="page-menu-item" href="/plants">Configure plant</a>
+          </div>
+        </details>
+      </div>
       <div class="profile-control"><span id="plant-page-room"></span></div>
     </div>
     <div class="topbar-aside">
@@ -41,23 +62,6 @@
         </div>
       </div>
     </div>
-    <!-- Two buttons took the width of the plant's name on a phone, for
-         things done rarely. Behind one mark, in the corner where a menu
-         of settings is looked for. Built on the details element so it
-         opens, closes on Escape and takes focus without any script. -->
-    <details class="page-menu">
-      <summary class="icon-button page-menu-mark" aria-label="More for this plant" title="More">
-        <svg viewBox="0 0 16 16" aria-hidden="true" width="18" height="18">
-          <circle cx="8" cy="3" r="1.5"></circle>
-          <circle cx="8" cy="8" r="1.5"></circle>
-          <circle cx="8" cy="13" r="1.5"></circle>
-        </svg>
-      </summary>
-      <div class="page-menu-sheet">
-        <button class="page-menu-item arrange-sections" type="button">Arrange sections</button>
-        <a id="plant-page-config" class="page-menu-item" href="/plants">Configure plant</a>
-      </div>
-    </details>
   </header>
 
   <header class="topbar" data-page="plant-config sensor-config" hidden>

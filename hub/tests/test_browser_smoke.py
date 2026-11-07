@@ -807,6 +807,55 @@ class BrowserSmokeTests(unittest.TestCase):
                 + " AND ".join(looks[mode]["looks"]))
         self.assertEqual(tools.complaints, [])
 
+    def test_the_plant_menu_sits_beside_the_name_at_every_width(self) -> None:
+        """Against the plant's name, on a phone as on a desktop.
+
+        It was centred in the header's flex row to begin with, which
+        put it level with the second line of "watered two days ago".
+        Moved to the header's corner it was right on a wide screen and
+        wrong on a narrow one, where the header stacks into a column
+        and it fell to the bottom on a line of its own. Beside the name
+        there is no corner to hold and no second rule to get wrong.
+        """
+        tools = self.devtools()
+        for width in (320, 390, 760, 1280):
+            with self.subTest(width=width):
+                tools.call("Emulation.setDeviceMetricsOverride", width=width, height=900,
+                           deviceScaleFactor=2, mobile=width < 760)
+                self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}")
+                seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+                    (() => {
+                      const header = [...document.querySelectorAll(".topbar[data-page~='plant']")]
+                        .find((h) => !h.hidden);
+                      const menu = header.querySelector(".page-menu");
+                      const title = document.getElementById("plant-page-name");
+                      const m = menu.getBoundingClientRect();
+                      const t = title.getBoundingClientRect();
+                      const de = document.documentElement;
+                      menu.open = true;
+                      const sheet = menu.querySelector(".page-menu-sheet").getBoundingClientRect();
+                      menu.open = false;
+                      return JSON.stringify({
+                        // The last line of a wrapped name is what it follows.
+                        sharesALine: m.top < t.bottom - 1 && m.bottom > t.top + 1,
+                        after: Math.round(m.left - t.right),
+                        onScreen: m.right <= de.clientWidth + 1 && m.left >= 0,
+                        sheetOnScreen: sheet.right <= de.clientWidth + 1 && sheet.left >= 0,
+                        tall: Math.round(m.height),
+                      });
+                    })()""")["result"]["value"])
+                self.assertTrue(seen["sharesALine"],
+                                f"the menu is not on the name's line at {width}px")
+                self.assertGreaterEqual(seen["after"], -2,
+                                        f"the menu overlaps the name at {width}px")
+                self.assertLessEqual(seen["after"], 24,
+                                     f"the menu drifted {seen['after']}px from the name at {width}px")
+                self.assertTrue(seen["onScreen"], f"the menu is off the screen at {width}px")
+                self.assertTrue(seen["sheetOnScreen"],
+                                f"the menu's sheet runs off the screen at {width}px")
+                self.assertGreater(seen["tall"], 20, "the menu has no size")
+                self.assertEqual(tools.complaints, [])
+
     def test_a_section_that_does_not_apply_is_never_drawn_first(self) -> None:
         """Watched from the first frame, not asked about at the end.
 
