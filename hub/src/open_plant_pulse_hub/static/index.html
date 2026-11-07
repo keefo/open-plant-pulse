@@ -372,7 +372,7 @@
 
           <div id="box-auto-rows">
             <label for="box-target-rh">Hold humidity at (%)</label>
-            <input id="box-target-rh" type="number" step="1" min="0" max="100">
+            <input id="box-target-rh" type="number" step="any" min="0" max="100">
             <label for="box-sensor">Measured by</label>
             <select id="box-sensor"></select>
             <div id="box-gains">
@@ -1017,7 +1017,7 @@
             light is read. Leave it empty and it is read as established.</small>
         </label>
         <label>PPFD at this plant
-          <input id="plant-config-ppfd" type="number" min="0" max="5000" step="1"
+          <input id="plant-config-ppfd" type="number" min="0" max="5000" step="any"
                  placeholder="leave empty if you have not measured it">
           <small>Photosynthetic photon flux density, in &micro;mol/m&sup2;/s &mdash; the
             figure a PAR meter or a phone app reads at leaf height. It is everything

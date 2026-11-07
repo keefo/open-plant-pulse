@@ -1622,16 +1622,20 @@ class PlantApiTests(unittest.TestCase):
         import re
 
         # Values that sit between any sensible step.
-        awkward = {"kp": 0.0325, "ki": 0.00075, "kd": 0.0015}
+        awkward = {"kp": 0.0325, "ki": 0.00075, "kd": 0.0015, "target_rh": 67.5}
         self.call("PUT", "/api/fan", awkward)
         fan = json.loads(self.call_text("/api/fan"))
         for key, sent in awkward.items():
             self.assertEqual(fan[key], sent, f"the hub rounded {key}, which it should not")
 
-        page = self.call_text("/")
         fields = {"kp": "box-kp", "ki": "box-ki", "kd": "box-kd",
+                  "target_rh": "box-target-rh",
                   "manual_speed": "box-manual-speed", "min_speed": "box-min-speed",
                   "max_speed": "box-max-speed", "pulse_window_s": "box-pulse-window"}
+        for field_id in fields.values():
+            self.assertIn(f'id="{field_id}"', page_markup := self.call_text("/"),
+                          f"{field_id} is not on the page, so nothing was checked")
+        page = page_markup
         unholdable = []
         for key, field_id in fields.items():
             found = re.search(rf'<input id="{field_id}"[^>]*>', page)
