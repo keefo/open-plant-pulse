@@ -22,6 +22,13 @@
  * is converted -- they are a bridge across this change, not a second
  * way of saying the same thing. */
 :root {
+  /* Which way round the page is, said to the browser rather than only
+     to the stylesheet. Native controls -- the list a select drops down,
+     the date picker, the scrollbars -- are drawn by the platform, and
+     without this it draws them for a white page: a dark dropdown list
+     with dark text, or a white one under white. */
+  color-scheme: light;
+
   --n0:  #ffffff;
   --n50: #f7f9f7;
   --n100:#eef2ef;
@@ -97,6 +104,8 @@
  * phone at midnight. */
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
+
     --n0:  #1b201d;
     --n50: #141815;
     --n100:#222825;
@@ -126,6 +135,11 @@
 
     --sh-1: 0 1px 2px rgba(0, 0, 0, .4);
     --sh-2: 0 2px 6px rgba(0, 0, 0, .45), 0 10px 28px rgba(0, 0, 0, .5);
+  }
+  /* The chevron, repainted: a url() cannot read a custom property, so
+     the dark page swaps the whole image for a lighter stroke. */
+  select {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23a9b5ae' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   }
   /* A photograph lit for a white page is a lamp on a dark one. */
   .fleet-card-cover img, .photo-tile img { filter: brightness(.92); }
@@ -223,7 +237,18 @@ body {
    otherwise draw in its own style beside everything else here: the same
    border, radius and weight as a secondary action, with the chevron drawn
    rather than left to the platform. */
-#plant-sort, #plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit {
+/* Every select, once.
+ *
+ * There were five rules and twenty-five selects. One set a colour and
+ * no background, so after dark it was the page's light text on the
+ * browser's white box; the ones with no rule at all were the same
+ * thing by a different route. A control that appears on six pages
+ * should not look like six controls.
+ *
+ * The chevron is drawn here rather than left to the platform, so it
+ * sits where the padding expects it. It cannot take a custom property
+ * inside a url(), so the dark page swaps the whole image. */
+select {
   padding: 9px 30px 9px 11px;
   border: 1px solid var(--n200);
   border-radius: var(--r-ctl);
@@ -234,13 +259,20 @@ body {
   background-position: right 10px center;
   background-size: 11px;
   font: inherit;
-  font-weight: 700;
   line-height: 1.2;
+  max-width: 100%;
+  font-weight: 600;
+  /* Said here so no select has to say it back. These sit inside blocks
+     that letterspace and capitalise their labels, and a control is not
+     a label. */
+  text-transform: none;
+  letter-spacing: normal;
   appearance: none;
   cursor: pointer;
 }
-#plant-sort:hover, #plant-weight-unit:hover,
-#plant-weight-full-unit:hover, #plant-weight-thirsty-unit:hover { border-color: var(--brand); }
+select:hover { border-color: var(--brand); }
+select:disabled { color: var(--faint); background-color: var(--n100); cursor: not-allowed; }
+
 /* The unit sits beside a number field, so it is sized to its two words
    rather than stretched to the row's input width. */
 #plant-weight-unit, #plant-weight-full-unit, #plant-weight-thirsty-unit { padding-block: 10px; }
@@ -288,8 +320,8 @@ button { padding: 8px 12px; border: 1px solid var(--n200); border-radius: var(--
  * and sensor forms had styled ones, so the same kind of field looked like
  * two different things depending on which page it was on. */
 .settings-panel > label { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+.settings-panel select { width: 100%; }
 .settings-panel input:not(.switch):not([type="hidden"]),
-.settings-panel select,
 .settings-panel textarea {
   width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl);
   background: var(--surface); color: var(--text); font: inherit;
@@ -314,7 +346,9 @@ button { padding: 8px 12px; border: 1px solid var(--n200); border-radius: var(--
 /* Both controls, not just the one that happened to be here first. A select
    added beside an input inherited nothing and kept the browser's own look. */
 .inline-control input,
-.inline-control select { padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
+/* Sized to the row rather than restyled: the look comes from the one
+   select rule above. */
+.inline-control select { padding-block: 9px; }
 .inline-control button { color: var(--on-brand); background: var(--brand); border-color: var(--brand); }
 .empty-state { grid-column: 1 / -1; padding: 32px; border: 1px dashed var(--n200); color: var(--dim); text-align: center; background: var(--surface); }
 dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--n200); border-radius: var(--r-card); color: var(--text); padding: 0; box-shadow: 0 20px 80px rgba(18, 23, 20, .33); }
@@ -357,7 +391,7 @@ h2 { font-size: var(--t-2xl); }
    unit, leaving a line ending "4.05" and the next beginning "V". */
 .battery-voltage { white-space: nowrap; }
 .battery-voltage::before { content: "\00b7"; margin-right: 5px; }
-main { padding: 32px 0; display: grid; gap: 28px; }
+main { padding: 0 0 40px; display: grid; gap: 28px; }
 /* Every page is a grid item of <main>, and a grid item's default
    `min-width: auto` lets its min-content width beat the track: one row inside
    that will not wrap is enough to drag the whole page off the right edge of a
@@ -630,7 +664,8 @@ main > * { min-width: 0; }
 .sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-xs); }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
 .sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
-.sensor-settings-form input:not(.switch), .sensor-settings-form select { width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
+.sensor-settings-form input:not(.switch) { width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); color: var(--text); font: inherit; }
+.sensor-settings-form select { width: 100%; }
 .sensor-settings-form output { grid-column: 1 / -1; color: var(--dim); font-size: var(--t-xs); }
 .sensor-settings-form input[readonly] { color: var(--text); background: var(--n100); cursor: default; }
 .settings-actions, .sensor-settings-form output { grid-column: 1 / -1; }
@@ -960,8 +995,8 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
    and a button until a name field was added to it, and nothing in the
    cascade reached the new control: the rules that style inputs elsewhere
    are scoped to ancestors this block does not have. */
-.sensor-attach-row select,
-.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; }
+.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); color: var(--text); font: inherit; }
+.sensor-attach-row select { flex: 1 1 220px; min-width: 0; }
 .sensor-attach-row button { flex: 0 0 auto; }
 
 /* The battery sits in a figure box on the sensor page, so it is sized to
@@ -1156,7 +1191,9 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 .alert-rule-form { display: grid; gap: 8px; margin-top: 12px; }
 .alert-rule-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .alert-field { display: grid; gap: 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.alert-field select, .alert-field input { padding: 7px 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); font: inherit; color: var(--text); text-transform: none; letter-spacing: normal; }
+/* The input needs the box drawn; the select already has it. */
+.alert-field input { padding: 7px 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; color: var(--text); text-transform: none; letter-spacing: normal; }
+.alert-field select { padding-block: 7px; }
 .alert-field input { width: 90px; }
 .alert-check { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: var(--t-xs); }
 #zigbee-alert-rules .settings-sensor-heading { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
