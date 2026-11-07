@@ -811,57 +811,97 @@ class BrowserSmokeTests(unittest.TestCase):
         """A field is filled once, not once a second.
 
         The page refreshes every second and refilled its forms from
-        the hub each time. Every form grew its own flag to stop that,
-        and the Box page's was only ever set by the preset picker --
-        so a humidity target typed by hand was put back within a
-        second of looking away, before there was time to press Save.
+        the hub each time. Every form grew a flag of its own to stop
+        that, and the Box page's was only ever set by the preset
+        picker -- so a humidity target typed by hand was put back
+        within a second of looking away, before there was time to
+        press Save.
 
-        Typed here, then focus deliberately moved away, because while
-        a field has focus the old guard happened to hold. Three polls
-        is three chances to overwrite it.
+        The fields are found rather than listed, so a form added later
+        is covered without anybody remembering to add it here. Focus
+        is moved away first, because the old guards held while a field
+        had focus, which is how this survived being looked at.
         """
-        pages = {
-            "/settings/box": ["box-target-rh", "box-kp", "box-ki", "box-kd",
-                              "box-min-speed", "box-max-speed", "box-pulse-window",
-                              "box-url", "box-fan-name"],
-            "/settings/wifi": ["wifi-ssid"],
-
-        }
+        pages = ("/settings/box", "/settings/wifi", "/settings/lights",
+                 "/settings/alerts", "/settings/time",
+                 f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config")
+        # The fan's gains only show while it is on automatic, and a
+        # page that hides half its fields proves half as much.
+        import urllib.request
+        body = json.dumps({"mode": "auto"}).encode()
+        urllib.request.urlopen(urllib.request.Request(
+            f"{self.base_url}/api/fan", data=body, method="PUT",
+            headers={"Content-Type": "application/json", "Origin": self.base_url}),
+            timeout=10).read()
         tools = self.devtools()
-        for path, ids in pages.items():
+        checked = 0
+        for path in pages:
             with self.subTest(page=path):
                 self.open_page(tools, self.base_url + path)
                 seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
                                              awaitPromise=True, expression="""
                     (async () => {
-                      const ids = %s;
-                      const typed = {};
-                      for (const id of ids) {
-                        const el = document.getElementById(id);
-                        if (!el || el.offsetParent === null) continue;
-                        // Something that is never what the hub would send back.
-                        typed[id] = el.type === "number" ? "7.25" : "typed-by-hand";
-                        el.value = typed[id];
-                        el.dispatchEvent(new Event("input", { bubbles: true }));
+                      // Forms kept behind a button are opened first: the
+                      // lights page shows what exists and asks before
+                      // offering a blank one.
+                      const mode = document.getElementById("box-mode");
+                      if (mode && mode.offsetParent !== null) {
+                        mode.value = "auto";
+                        mode.dispatchEvent(new Event("change", { bubbles: true }));
+                        await new Promise((r) => setTimeout(r, 120));
                       }
-                      document.body.focus();
+                      for (const id of ["add-light"]) {
+                        const opener = document.getElementById(id);
+                        if (opener && opener.offsetParent !== null) opener.click();
+                      }
+                      await new Promise((r) => setTimeout(r, 150));
+                      const typeable = 'input[type="text"], input[type="number"],'
+                        + ' input[type="url"], input[type="search"], input:not([type]),'
+                        + ' textarea';
+                      const fields = [...document.querySelectorAll(typeable)]
+                        .filter((el) => el.offsetParent !== null && !el.disabled
+                                        && !el.readOnly);
+                      const typed = new Map();
+                      for (const el of fields) {
+                        const want = el.type === "number" ? "7.25" : "typed-by-hand";
+                        if (el.type === "number" && el.max && Number(el.max) < 7.25) continue;
+                        el.value = want;
+                        el.dispatchEvent(new Event("input", { bubbles: true }));
+                        typed.set(el, want);
+                      }
+                      /* A menu is a choice somebody made too, and a poll
+                         can put it back the same way. Moved to an option
+                         that is not the one already chosen. */
+                      for (const el of document.querySelectorAll("select")) {
+                        if (el.offsetParent === null || el.disabled) continue;
+                        if (el.options.length < 2) continue;
+                        const other = [...el.options].find((o) => o.value !== el.value);
+                        if (!other) continue;
+                        el.value = other.value;
+                        el.dispatchEvent(new Event("change", { bubbles: true }));
+                        typed.set(el, other.value);
+                      }
                       if (document.activeElement && document.activeElement.blur) {
                         document.activeElement.blur();
                       }
+                      document.body.focus();
                       for (let i = 0; i < 3; i++) await refresh();
                       await new Promise((r) => setTimeout(r, 200));
                       const lost = [];
-                      for (const [id, want] of Object.entries(typed)) {
-                        const el = document.getElementById(id);
-                        if (el.value !== want) lost.push(`${id}: typed ${want}, now ${el.value}`);
+                      for (const [el, want] of typed) {
+                        if (el.value !== want) {
+                          lost.push(`${el.id || el.name || el.type}: typed ${want},`
+                            + ` now ${JSON.stringify(el.value)}`);
+                        }
                       }
-                      return JSON.stringify({ checked: Object.keys(typed).length, lost });
-                    })()""" % json.dumps(ids))["result"]["value"])
-                self.assertGreater(seen["checked"], 0,
-                                   f"no fields were found to type into on {path}")
+                      return JSON.stringify({ checked: typed.size, lost });
+                    })()""")["result"]["value"])
+                checked += seen["checked"]
                 self.assertEqual(seen["lost"], [],
-                                 "the poll put these back while they were being edited")
+                                 f"the poll put these back on {path}")
                 self.assertEqual(tools.complaints, [])
+        self.assertGreater(checked, 12,
+                           "hardly any fields were found, so this proved little")
 
     def test_the_plant_menu_sits_beside_the_name_at_every_width(self) -> None:
         """Against the plant's name, on a phone as on a desktop.

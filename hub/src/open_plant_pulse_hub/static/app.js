@@ -2242,7 +2242,7 @@ async function refreshBoxPage() {
   renderPidPresets();
   fill("box-url", fan.moonraker_url);
   fill("box-fan-name", fan.fan_name);
-  showFanMode(fan.mode);
+  showFanMode(document.getElementById("box-mode").value || fan.mode);
   drawPidPreview();
 }
 
@@ -2529,14 +2529,14 @@ async function saveBoxSettings(event) {
 
 async function refreshAlertSettings() {
   const field = document.getElementById("alerts-url");
-  // Left alone while it is being typed into: a poll that puts the
-  // saved value back under somebody mid-edit is how an address gets
-  // half entered and saved.
-  if (!field || field === document.activeElement) return;
+  if (!field) return;
   try {
     const response = await fetch("/api/settings");
     if (!response.ok) return;
-    field.value = (await response.json()).ntfy_url || "";
+    /* Filled once. Leaving it alone only while it had focus was not
+       enough: an address typed and then looked away from was put back
+       by the next poll a second later. */
+    fillOnce(field, (await response.json()).ntfy_url || "", "alerts");
     showAlertTopic(field.value);
   } catch (_error) {
     /* the panel is still usable without it */
@@ -2566,6 +2566,8 @@ async function saveAlertSettings(event) {
     return;
   }
   const saved = await response.json();
+  // Saved, so the field may take what the hub now holds.
+  delete document.getElementById("alerts-url").dataset.filledFor;
   showAlertTopic(saved.ntfy_url);
   setText(message, saved.ntfy_url
     ? "Saved. Send a test to be sure it arrives."
@@ -9437,6 +9439,11 @@ document.querySelector("main").addEventListener("pointerdown", beginSectionDrag)
 document.querySelector("main").addEventListener("keydown", nudgeSection);
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 document.getElementById("box-form").addEventListener("submit", saveBoxSettings);
+// Choosing a mode shows what that mode is set by, without waiting for
+// a save to reveal the fields the choice was made for.
+document.getElementById("box-mode").addEventListener("change", (event) => {
+  showFanMode(event.target.value);
+});
 // Touched by hand, and so no longer the hub's to rewrite. "input" covers a
 // date sheet on a phone, which never focuses the field it belongs to.
 for (const signal of ["input", "change", "focusin"]) {
