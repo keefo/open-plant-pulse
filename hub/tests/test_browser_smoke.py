@@ -739,6 +739,127 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(tools.complaints, [])
 
 
+    def test_every_field_looks_the_same_as_every_other(self) -> None:
+        """One rule for how a control looks, in both modes.
+
+        This went wrong twice. Selects came out black on black after
+        dark, because nothing declared color-scheme and the platform
+        drew its dropdown for a white page. Then the plant page's date
+        field came out white on #3b3b3b -- the browser's own box, not
+        ours -- because its rule set a border and no colours, and the
+        yyyy-mm-dd hint was unreadable against it.
+
+        Both are the same mistake: a control left to the user agent. A
+        per-class rule may set width, margin or padding; anything about
+        colour or the box belongs to the one rule.
+        """
+        pages = ("/plants/1", "/plants/1/config", "/settings", "/settings/lights",
+                 "/settings/alerts", "/settings/rooms", "/zigbee/acebe6fffe0d7f18")
+        tools = self.devtools()
+        self.open_page(tools, self.base_url + "/")
+        looks = json.loads(tools.call("Runtime.evaluate", returnByValue=True, awaitPromise=True,
+                                      expression="""
+            (async () => {
+              const css = await (await fetch("/app.css")).text();
+              const at = css.indexOf("@media (prefers-color-scheme: dark)");
+              const open = css.indexOf("{", at);
+              let depth = 0, end = -1;
+              for (let i = open; i < css.length; i++) {
+                if (css[i] === "{") depth++;
+                else if (css[i] === "}") { depth--; if (!depth) { end = i; break; } }
+              }
+              const probe = document.createElement("style");
+              probe.textContent = css.slice(open + 1, end).replace(":root {", ":root, html {");
+              document.head.append(probe);
+              const fields = 'select, input[type="text"], input[type="number"],'
+                + ' input[type="date"], input[type="time"], input:not([type]), textarea';
+              const out = {};
+              for (const mode of ["dark", "light"]) {
+                probe.disabled = mode === "light";
+                const seen = new Set();
+                let counted = 0;
+                for (const path of %s) {
+                  history.pushState({}, "", path);
+                  window.dispatchEvent(new PopStateEvent("popstate"));
+                  await refresh();
+                  await new Promise((r) => setTimeout(r, 250));
+                  for (const el of document.querySelectorAll(fields)) {
+                    if (el.offsetParent === null) continue;
+                    // A field nobody can type in is meant to look spent.
+                    if (el.disabled || el.readOnly) continue;
+                    counted++;
+                    const cs = getComputedStyle(el);
+                    seen.add(`${cs.color} on ${cs.backgroundColor}`
+                      + ` | ${cs.borderTopWidth} ${cs.borderTopColor} | ${cs.borderRadius}`);
+                  }
+                }
+                out[mode] = { looks: [...seen], counted };
+              }
+              probe.remove();
+              return JSON.stringify(out);
+            })()""" % json.dumps(list(pages)))["result"]["value"])
+        for mode in ("dark", "light"):
+            self.assertGreater(looks[mode]["counted"], 10,
+                               f"hardly any fields were found to check in {mode}")
+            self.assertEqual(
+                len(looks[mode]["looks"]), 1,
+                f"{mode} mode draws {len(looks[mode]['looks'])} kinds of field: "
+                + " AND ".join(looks[mode]["looks"]))
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_care_calendar_opens_on_today(self) -> None:
+        """A year of squares is wider than a phone, and starts in January.
+
+        By November the end worth looking at was off the right side and
+        had to be dragged into view on every visit. Today is put three
+        quarters across -- the weeks behind it are the reason to look,
+        and ahead of it is empty squares waiting to happen -- and once
+        the reader scrolls it themselves it stays where they put it.
+        """
+        tools = self.devtools()
+        tools.call("Emulation.setDeviceMetricsOverride", width=390, height=844,
+                   deviceScaleFactor=3, mobile=True)
+        self.open_page(tools, self.base_url + "/plants/1")
+        seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, awaitPromise=True,
+                                     expression="""
+            (async () => {
+              const scroll = document.querySelector(".watering-calendar-scroll");
+              const today = document.querySelector('[data-today="true"]');
+              if (!scroll || !today) return JSON.stringify({ missing: true });
+              const reachable = scroll.scrollWidth - scroll.clientWidth;
+              if (reachable <= 0) return JSON.stringify({ fits: true });
+              const box = () => {
+                const s = scroll.getBoundingClientRect(), c = today.getBoundingClientRect();
+                return { visible: c.left >= s.left - 1 && c.right <= s.right + 1,
+                         across: (c.left - s.left) / s.width };
+              };
+              const opened = box();
+              // Now drag it away and make the calendar redraw.
+              scroll.scrollTo({ left: 0, behavior: "auto" });
+              scroll.dispatchEvent(new Event("scroll"));
+              await new Promise((r) => setTimeout(r, 60));
+              await refreshWateringCalendar();
+              await new Promise((r) => setTimeout(r, 200));
+              return JSON.stringify({
+                missing: false, fits: false,
+                opened,
+                stayedPut: Math.round(scroll.scrollLeft) === 0,
+                flagged: scroll.dataset.scrolledByHand === "true",
+              });
+            })()""")["result"]["value"])
+        if seen.get("missing"):
+            self.skipTest("this plant has no care calendar to look at")
+        if seen.get("fits"):
+            self.skipTest("the calendar fits without scrolling at this width")
+        self.assertTrue(seen["opened"]["visible"],
+                        "today is off the side when the page opens")
+        self.assertGreater(seen["opened"]["across"], 0.4,
+                           "today is crowded against the left, hiding the weeks behind it")
+        self.assertTrue(seen["flagged"], "a scroll by hand was not noticed")
+        self.assertTrue(seen["stayedPut"],
+                        "the calendar dragged itself back after the reader moved it")
+        self.assertEqual(tools.complaints, [])
+
     def test_a_plant_that_is_never_weighed_loses_the_weight_section(self) -> None:
         """And a weighed plant keeps it, including after hopping between them.
 

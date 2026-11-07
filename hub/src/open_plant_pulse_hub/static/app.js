@@ -5571,6 +5571,7 @@ function renderWateringCalendar(items, range, watering) {
        taking the square's colour, so neither answer hides the other. */
     setData(cell, "fertilized", fed ? "true" : "false");
     setData(cell, "future", date > range.todayStart ? "true" : "false");
+    if (dateKey === utcDateKey(range.todayStart)) setData(cell, "today", "true");
     setData(cell, "outsideYear", date < range.yearStart || date >= range.yearEnd ? "true" : "false");
     setAttr(cell, "role", "gridcell");
     if (!count && !activity.drying_level && moisture != null) {
@@ -5611,6 +5612,40 @@ function renderWateringCalendar(items, range, watering) {
     : "";
   setText(document.getElementById("watering-calendar-summary"),
     `${total} watering${total === 1 ? "" : "s"} and ${fedDays} feeding${fedDays === 1 ? "" : "s"} in ${range.year}${from}`);
+
+  showToday(grid.querySelector('[data-today="true"]'));
+}
+
+/* Put today on screen.
+ *
+ * A year of squares is wider than a phone, and it is drawn from
+ * January, so in November the interesting end was off the right side
+ * and had to be dragged into view every time the page was opened.
+ *
+ * Today sits at three quarters across rather than in the middle: what
+ * happened over the last weeks is the reason to look, and the rest of
+ * the year is empty squares waiting to happen.
+ *
+ * Only while the reader has left the scroll alone. This runs whenever
+ * the calendar is rebuilt, which a poll can do, and nothing is more
+ * annoying than a page that drags itself back while it is being read. */
+function showToday(cell) {
+  if (!cell) return;
+  const scroll = cell.closest(".watering-calendar-scroll");
+  if (!scroll || scroll.dataset.scrolledByHand === "true") return;
+  const reachable = scroll.scrollWidth - scroll.clientWidth;
+  if (reachable <= 0) return;
+  const wanted = cell.offsetLeft - scroll.clientWidth * 0.75 + cell.offsetWidth;
+  const to = Math.max(0, Math.min(reachable, wanted));
+  // Jumped rather than animated on the first draw: a calendar that
+  // slides sideways as the page arrives reads as the page still moving.
+  if (Math.abs(scroll.scrollLeft - to) < 1) return;
+  setData(scroll, "placing", "true");
+  scroll.scrollTo({ left: to, behavior: "auto" });
+  // Cleared after the scroll event this causes has been and gone.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    delete scroll.dataset.placing;
+  }));
 }
 
 async function refreshWateringCalendar() {
@@ -9037,6 +9072,15 @@ async function poll() {
   await refresh();
   window.setTimeout(poll, 1000);
 }
+/* Once the reader has moved the calendar themselves, it stays where
+ * they put it. Only a scroll they caused counts: the one showToday
+ * does sets this flag aside while it runs, or the calendar would
+ * decide on its first draw that it had been scrolled by hand. */
+document.querySelector(".watering-calendar-scroll")?.addEventListener("scroll", (event) => {
+  if (event.target.dataset.placing === "true") return;
+  setData(event.target, "scrolledByHand", "true");
+}, { passive: true });
+
 document.getElementById("add-plant").addEventListener("click", addPlant);
 /* Watering by hand, for a plant that is never weighed.
  *

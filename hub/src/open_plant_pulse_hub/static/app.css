@@ -237,6 +237,34 @@ body {
    otherwise draw in its own style beside everything else here: the same
    border, radius and weight as a secondary action, with the chevron drawn
    rather than left to the platform. */
+/* Every field you can type in, once.
+ *
+ * Same story as the select below. A date field on the plant page set
+ * a border and no colours, so the browser drew its own: white on
+ * #3b3b3b after dark, a different box from everything around it, with
+ * the yyyy-mm-dd hint too dim against it to read. Three kinds of
+ * input on one page, none of them matching.
+ *
+ * Listed by type rather than as `input`, because a checkbox, a radio
+ * and a file picker are not boxes to type in and the switch is drawn
+ * from scratch further down. */
+input[type="text"], input[type="number"], input[type="date"],
+input[type="time"], input[type="search"], input[type="email"],
+input[type="url"], input[type="tel"], input[type="password"],
+input:not([type]), textarea {
+  padding: 9px 11px;
+  max-width: 100%;
+  border: 1px solid var(--n200);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+input:not([type=checkbox]):not([type=radio]):not([type=file]):hover,
+textarea:hover { border-color: var(--brand); }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+input:disabled, textarea:disabled { color: var(--faint); background: var(--n100); cursor: not-allowed; }
+
 /* Every select, once.
  *
  * There were five rules and twenty-five selects. One set a colour and
@@ -664,7 +692,7 @@ main > * { min-width: 0; }
 .sensor-settings .section-heading code { overflow-wrap: anywhere; color: var(--dim); font-size: var(--t-xs); }
 .sensor-settings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 15px; }
 .sensor-settings-form label:not(.switch-row) { display: grid; gap: 5px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
-.sensor-settings-form input:not(.switch) { width: 100%; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); color: var(--text); font: inherit; }
+.sensor-settings-form input:not(.switch) { width: 100%; }
 .sensor-settings-form select { width: 100%; }
 .sensor-settings-form output { grid-column: 1 / -1; color: var(--dim); font-size: var(--t-xs); }
 .sensor-settings-form input[readonly] { color: var(--text); background: var(--n100); cursor: default; }
@@ -898,7 +926,7 @@ main > * { min-width: 0; }
 .photo-follow-latest { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .photo-follow-latest input { width: auto; margin: 0; }
 .photo-date-field { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
-.photo-date-field input { padding: 9px 11px; border: 1px solid var(--n200); border-radius: var(--r-ctl); font: inherit; font-weight: 400; }
+.photo-date-field input { font-weight: 400; }
 .photo-tile figcaption strong { color: var(--brand); }
 .link-button { padding: 0; border: 0; color: var(--dim); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
 .link-button:hover { color: var(--text); }
@@ -995,7 +1023,7 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
    and a button until a name field was added to it, and nothing in the
    cascade reached the new control: the rules that style inputs elsewhere
    are scoped to ancestors this block does not have. */
-.sensor-attach-row input { flex: 1 1 220px; min-width: 0; padding: 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); color: var(--text); font: inherit; }
+.sensor-attach-row input { flex: 1 1 220px; min-width: 0; }
 .sensor-attach-row select { flex: 1 1 220px; min-width: 0; }
 .sensor-attach-row button { flex: 0 0 auto; }
 
@@ -1192,7 +1220,7 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 .alert-rule-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
 .alert-field { display: grid; gap: 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 /* The input needs the box drawn; the select already has it. */
-.alert-field input { padding: 7px 9px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--surface); font: inherit; color: var(--text); text-transform: none; letter-spacing: normal; }
+.alert-field input { padding-block: 7px; }
 .alert-field select { padding-block: 7px; }
 .alert-field input { width: 90px; }
 .alert-check { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: var(--t-xs); }
