@@ -295,12 +295,12 @@ class BrowserSmokeTests(unittest.TestCase):
             JSON.stringify({
               sections: [...document.querySelectorAll("main [data-section]")]
                 .filter(s => !s.hasAttribute("hidden")).length,
-              checkbox: !!document.getElementById("plant-cover-follows")?.offsetParent,
+              addPhotos: !!document.getElementById("plant-photo-add")?.offsetParent,
               record: !!document.getElementById("plant-weight-record")?.offsetParent,
             })""")["result"]["value"])
 
         self.assertGreater(early["sections"], 0, "the page waited for data to show itself")
-        self.assertTrue(early["checkbox"])
+        self.assertTrue(early["addPhotos"])
         self.assertTrue(early["record"])
         self.assertEqual(tools.complaints, [])
 
@@ -806,6 +806,49 @@ class BrowserSmokeTests(unittest.TestCase):
                 f"{mode} mode draws {len(looks[mode]['looks'])} kinds of field: "
                 + " AND ".join(looks[mode]["looks"]))
         self.assertEqual(tools.complaints, [])
+
+    def test_the_pot_anchors_stay_on_one_row_on_a_phone(self) -> None:
+        """Four ends of one scale, four columns, not four lines.
+
+        They were loose flex siblings, so each label and its box wrapped
+        where it fell. The numbers are five digits at most and fit a
+        quarter of a phone; it was the labels beside them that did not,
+        so the label went above the box and Set went below the four.
+        """
+        tools = self.devtools()
+        for width in (320, 390):
+            with self.subTest(width=width):
+                tools.call("Emulation.setDeviceMetricsOverride", width=width,
+                           height=844, deviceScaleFactor=3, mobile=True)
+                self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}")
+                seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+                    (() => {
+                      const row = document.querySelector(".plant-weight-anchors");
+                      const cells = [...document.querySelectorAll(".anchor-field")];
+                      const boxes = cells.map((c) => c.getBoundingClientRect());
+                      const sameRow = boxes.every((b) =>
+                        b.top < boxes[0].bottom - 1 && b.bottom > boxes[0].top + 1);
+                      const set = document.getElementById("plant-weight-set-anchors");
+                      const de = document.documentElement;
+                      return JSON.stringify({
+                        cells: cells.length,
+                        sameRow,
+                        withinScreen: cells.every(
+                          (c) => c.getBoundingClientRect().right <= de.clientWidth + 1),
+                        setBelow: set.getBoundingClientRect().top
+                          >= cells[0].getBoundingClientRect().bottom - 1,
+                        boxesUsable: cells.every(
+                          (c) => c.querySelector("input").getBoundingClientRect().width >= 50),
+                      });
+                    })()""")["result"]["value"])
+                self.assertEqual(seen["cells"], 4, "the anchors are not four cells")
+                self.assertTrue(seen["sameRow"],
+                                f"the four anchors do not share a row at {width}px")
+                self.assertTrue(seen["withinScreen"], "an anchor runs off the side")
+                self.assertTrue(seen["setBelow"], "Set is sharing the row it should sit under")
+                self.assertTrue(seen["boxesUsable"],
+                                "the boxes are too narrow to read a five-digit weight in")
+                self.assertEqual(tools.complaints, [])
 
     def test_the_care_calendar_opens_on_today(self) -> None:
         """A year of squares is wider than a phone, and starts in January.
@@ -1457,9 +1500,15 @@ class WeightOffsetFieldTests(unittest.TestCase):
         self.app = (here / "app.js").read_text()
 
     def test_it_sits_in_the_anchors_row(self) -> None:
-        row = self.page.split('id="plant-weight-full"')[1].split("</div>")[0]
+        # Sliced on the row itself. Cutting at the first </div> after the
+        # first input broke the moment each label and box were paired into
+        # a cell of their own, which did not move anything.
+        row = self.page.split('class="inline-control plant-weight-anchors"')[1]
+        row = row.split('id="plant-weight-set-anchors"')[0]
+        self.assertIn('id="plant-weight-full"', row)
+        self.assertIn('id="plant-weight-thirsty"', row)
+        self.assertIn('id="plant-weight-dry"', row)
         self.assertIn('id="plant-weight-offset"', row)
-        self.assertIn('id="plant-weight-set-anchors"', row)
 
     def test_there_is_only_one_set_button_for_the_pot(self) -> None:
         self.assertNotIn('id="plant-weight-offset-save"', self.page)

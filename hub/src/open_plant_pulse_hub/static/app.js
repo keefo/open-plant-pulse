@@ -9081,6 +9081,16 @@ document.querySelector(".watering-calendar-scroll")?.addEventListener("scroll", 
   setData(event.target, "scrolledByHand", "true");
 }, { passive: true });
 
+/* A menu closes when the next thing is clicked, and when its own item
+ * is. <details> gives everything else; it does not give this. */
+document.addEventListener("click", (event) => {
+  for (const menu of document.querySelectorAll(".page-menu[open]")) {
+    if (!menu.contains(event.target) || event.target.closest(".page-menu-item")) {
+      menu.open = false;
+    }
+  }
+});
+
 document.getElementById("add-plant").addEventListener("click", addPlant);
 /* Watering by hand, for a plant that is never weighed.
  *

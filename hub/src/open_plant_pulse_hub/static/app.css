@@ -839,8 +839,29 @@ main > * { min-width: 0; }
 #plant-weight-date { width: auto; min-width: 158px; }
 /* A tick box, not one of the row's 100px entry fields. */
 .weight-watered-check input { width: auto; margin: 0; padding: 0; }
-.plant-weight-anchors { flex-wrap: wrap; margin-bottom: 16px; }
+/* The four anchors and their Set, as columns.
+ *
+ * They were loose flex siblings, so on a phone each label and its box
+ * wrapped where it fell and the four ends of one scale took four
+ * lines. The numbers are five digits at most, which fits a quarter of
+ * a phone easily; it was the labels beside them that did not. Label
+ * over box, four across, and the button below them. */
+.plant-weight-anchors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end; gap: 10px; margin-bottom: 16px; }
+.anchor-field { display: grid; gap: 4px; min-width: 0; }
+.anchor-field input { width: 100%; }
 .plant-weight-anchors label { color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
+/* Placed after the rule above rather than with the other phone rules,
+   which sit earlier in the file: a media query adds no weight, so from
+   up there it lost to the plain rule it means to override. */
+@media (max-width: 560px) {
+  /* Four across still, and Set on its own line under them: at this
+     width a fifth column would leave the numbers too narrow to read. */
+  .plant-weight-anchors { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+  .plant-weight-anchors label { font-size: 10px; letter-spacing: -.01em; line-height: 1.25; }
+  .anchor-field input { padding: 8px 6px; text-align: center; }
+  #plant-weight-set-anchors { grid-column: 1 / -1; }
+}
 .plant-weight-anchors output { color: var(--dim); font-size: var(--t-sm); }
 
 /* A plant whose weight arrives by itself. The manual form stays on the
@@ -923,8 +944,6 @@ main > * { min-width: 0; }
 .photo-date { padding: 2px 4px; border: 1px solid transparent; border-radius: var(--r-ctl); color: var(--dim); background: transparent; font: inherit; font-size: var(--t-xs); }
 .photo-date:hover, .photo-date:focus { border-color: var(--n200); background: var(--surface); }
 .photo-date[data-undated="true"] { font-style: italic; }
-.photo-follow-latest { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
-.photo-follow-latest input { width: auto; margin: 0; }
 .photo-date-field { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .photo-date-field input { font-weight: 400; }
 .photo-tile figcaption strong { color: var(--brand); }
@@ -1353,6 +1372,27 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
    target a finger needs, which is larger than the glyph inside it. */
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: var(--r-ctl); background: none; color: var(--dim); cursor: pointer; }
 .icon-button svg { width: 15px; height: 15px; }
+/* The plant page's own actions, behind one mark.
+ *
+ * Arrange and Configure plant are both rare, and on a phone the two
+ * of them took more width than the plant's name. A <details> gives
+ * the open and close, the Escape key and the focus handling without
+ * any script; the sheet is positioned so it hangs under the mark
+ * rather than pushing the header taller when it opens. */
+.page-menu { position: relative; }
+.page-menu > summary { list-style: none; cursor: pointer; }
+.page-menu > summary::-webkit-details-marker { display: none; }
+.page-menu-mark { display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; padding: 0; }
+.page-menu-mark svg { fill: currentColor; }
+.page-menu[open] > summary { color: var(--text); background: var(--n100); }
+.page-menu-sheet { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0;
+  min-width: 190px; display: grid; padding: 6px; border-radius: var(--r-card);
+  background: var(--surface); box-shadow: var(--sh-2); }
+.page-menu-item { padding: 10px 12px; border: 0; border-radius: var(--r-ctl);
+  color: var(--text); background: transparent; font: inherit; font-weight: 550;
+  text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.page-menu-item:hover { background: var(--n100); }
 .icon-button:hover { color: var(--text); background: var(--surface); border-color: var(--n200); }
 .icon-button:focus-visible { outline-offset: 1px; }
 /* Throwing a photograph away is the one action here that cannot be undone,

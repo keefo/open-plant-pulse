@@ -1565,6 +1565,11 @@ class PlantApiTests(unittest.TestCase):
         from collections import Counter
 
         page = self.call_text("/")
+        # Comments are not markup. A comment explaining that a menu is
+        # built on <details> counted as a third one opened and never
+        # closed, which is a note about the page failing a test of the
+        # page.
+        page = re.sub(r"<!--.*?-->", "", page, flags=re.S)
         void = {"area", "base", "br", "col", "embed", "hr", "img", "input",
                 "link", "meta", "source", "track", "wbr", "!doctype"}
         opened = Counter(m.group(1).lower()
