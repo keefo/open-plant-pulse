@@ -141,6 +141,8 @@
   select {
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%23a9b5ae' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   }
+  ::-webkit-calendar-picker-indicator { filter: invert(1) brightness(1.6); }
+
   /* A photograph lit for a white page is a lamp on a dark one. */
   .fleet-card-cover img, .photo-tile img { filter: brightness(.92); }
 }
@@ -263,6 +265,37 @@ input:not([type]), textarea {
 input:not([type=checkbox]):not([type=radio]):not([type=file]):hover,
 textarea:hover { border-color: var(--brand); }
 input::placeholder, textarea::placeholder { color: var(--faint); }
+/* A date field's yyyy-mm-dd is not a placeholder.
+ *
+ * It is the field's own sub-parts, drawn by the browser, and an empty
+ * one is dimmed by a colour the browser picks rather than the one the
+ * field was given. Chrome takes that colour from the field once
+ * color-scheme is set, which is why it reads correctly there; Safari
+ * keeps its own, which on a dark field is dark on dark.
+ *
+ * So they are told. The parts carry the field's colour, and the empty
+ * ones are muted deliberately rather than by whatever the platform
+ * thought a light page needed. */
+::-webkit-datetime-edit { color: var(--text); }
+::-webkit-datetime-edit-fields-wrapper { color: var(--text); }
+::-webkit-datetime-edit-text,
+::-webkit-datetime-edit-year-field,
+::-webkit-datetime-edit-month-field,
+::-webkit-datetime-edit-day-field,
+::-webkit-datetime-edit-hour-field,
+::-webkit-datetime-edit-minute-field,
+::-webkit-datetime-edit-ampm-field { color: var(--text); }
+/* An empty field names its own parts, which is how a date input says
+   it has nothing in it. */
+::-webkit-datetime-edit-year-field:not([aria-valuenow]),
+::-webkit-datetime-edit-month-field:not([aria-valuenow]),
+::-webkit-datetime-edit-day-field:not([aria-valuenow]),
+::-webkit-datetime-edit-hour-field:not([aria-valuenow]),
+::-webkit-datetime-edit-minute-field:not([aria-valuenow]) { color: var(--faint); }
+/* The little calendar mark is drawn by the platform in one colour.
+   Inverted after dark so it is not black on a dark field. */
+::-webkit-calendar-picker-indicator { opacity: .7; }
+::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 input:disabled, textarea:disabled { color: var(--faint); background: var(--n100); cursor: not-allowed; }
 
 /* Every select, once.
