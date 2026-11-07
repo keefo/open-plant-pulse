@@ -807,6 +807,62 @@ class BrowserSmokeTests(unittest.TestCase):
                 + " AND ".join(looks[mode]["looks"]))
         self.assertEqual(tools.complaints, [])
 
+    def test_the_poll_never_rewrites_a_box_somebody_typed_in(self) -> None:
+        """A field is filled once, not once a second.
+
+        The page refreshes every second and refilled its forms from
+        the hub each time. Every form grew its own flag to stop that,
+        and the Box page's was only ever set by the preset picker --
+        so a humidity target typed by hand was put back within a
+        second of looking away, before there was time to press Save.
+
+        Typed here, then focus deliberately moved away, because while
+        a field has focus the old guard happened to hold. Three polls
+        is three chances to overwrite it.
+        """
+        pages = {
+            "/settings/box": ["box-target-rh", "box-kp", "box-ki", "box-kd",
+                              "box-min-speed", "box-max-speed", "box-pulse-window",
+                              "box-url", "box-fan-name"],
+            "/settings/wifi": ["wifi-ssid"],
+
+        }
+        tools = self.devtools()
+        for path, ids in pages.items():
+            with self.subTest(page=path):
+                self.open_page(tools, self.base_url + path)
+                seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                             awaitPromise=True, expression="""
+                    (async () => {
+                      const ids = %s;
+                      const typed = {};
+                      for (const id of ids) {
+                        const el = document.getElementById(id);
+                        if (!el || el.offsetParent === null) continue;
+                        // Something that is never what the hub would send back.
+                        typed[id] = el.type === "number" ? "7.25" : "typed-by-hand";
+                        el.value = typed[id];
+                        el.dispatchEvent(new Event("input", { bubbles: true }));
+                      }
+                      document.body.focus();
+                      if (document.activeElement && document.activeElement.blur) {
+                        document.activeElement.blur();
+                      }
+                      for (let i = 0; i < 3; i++) await refresh();
+                      await new Promise((r) => setTimeout(r, 200));
+                      const lost = [];
+                      for (const [id, want] of Object.entries(typed)) {
+                        const el = document.getElementById(id);
+                        if (el.value !== want) lost.push(`${id}: typed ${want}, now ${el.value}`);
+                      }
+                      return JSON.stringify({ checked: Object.keys(typed).length, lost });
+                    })()""" % json.dumps(ids))["result"]["value"])
+                self.assertGreater(seen["checked"], 0,
+                                   f"no fields were found to type into on {path}")
+                self.assertEqual(seen["lost"], [],
+                                 "the poll put these back while they were being edited")
+                self.assertEqual(tools.complaints, [])
+
     def test_the_plant_menu_sits_beside_the_name_at_every_width(self) -> None:
         """Against the plant's name, on a phone as on a desktop.
 

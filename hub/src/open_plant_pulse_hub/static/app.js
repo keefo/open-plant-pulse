@@ -2190,7 +2190,6 @@ async function hearAlertSound(event) {
  * knows a fan exists. See docs/proposals/vzbot-humidity-control.md.
  */
 // Whether the form holds something not yet saved.
-let boxEdited = false;
 
 function showFanMode(mode) {
   // Only the controls that apply to what it is doing. A manual speed
@@ -2223,16 +2222,10 @@ async function refreshBoxPage() {
   setText(document.getElementById("box-why"), state.why || "");
 
   renderBoxSensors(fan.sensor_id);
-  // Unsaved changes survive the poll.
-  //
-  // Leaving it alone only while it has focus was not enough: a mode
-  // chosen and then a glance away is still an unsaved change, and a
-  // poll a second later put it back without saying anything.
-  if (boxEdited || form.contains(document.activeElement)) return;
-  const fill = (id, value) => {
-    const field = document.getElementById(id);
-    if (field) field.value = value;
-  };
+  /* Filled once, not every second. The flag this used to keep was
+     only ever set by the preset picker, so a humidity target typed by
+     hand was put back within a second of looking away. */
+  const fill = (id, value) => fillOnce(document.getElementById(id), value, "box");
   fill("box-mode", fan.mode);
   fill("box-manual-speed", fan.manual_speed);
   fill("box-target-rh", fan.target_rh);
@@ -2341,9 +2334,9 @@ function applyPidPreset(name) {
   if (!preset) return;
   for (const [id, value] of [["box-kp", preset.kp], ["box-ki", preset.ki],
                              ["box-kd", preset.kd]]) {
-    document.getElementById(id).value = value;
+    // A preset is the reader choosing, so it writes over what is there.
+    setValue(document.getElementById(id), value);
   }
-  boxEdited = true;
   drawPidPreview();
 }
 
@@ -2527,7 +2520,8 @@ async function saveBoxSettings(event) {
     setText(message, payload.error || "That could not be saved.");
     return;
   }
-  boxEdited = false;
+  // Saved, so the form may take what the hub now holds.
+  forgetFilled(document.getElementById("box-form"));
   setText(message, mode === "off" ? "Saved. The hub will not touch the fan."
                                   : "Saved. It takes effect within a minute.");
   await refreshBoxPage();
@@ -7345,6 +7339,35 @@ function fillPlantVarietySelect(variety) {
  * page is opened. */
 let plantConfigDraftPlantId = null;
 
+/* A box somebody types in is filled once and then left alone.
+ *
+ * The page polls every second, and every form on it was refilled on
+ * every tick from whatever the hub last said. Each one grew its own
+ * flag to stop that -- boxEdited, anchorsEdited, a draft id -- and
+ * each flag had to be remembered at every place that writes a field.
+ * The box's was only ever set by the preset picker, so typing a new
+ * humidity target and looking away had it put back within a second,
+ * which is the bug this is here to make structurally impossible.
+ *
+ * `subject` is what the form is about: a plant's id, a sensor's, or
+ * a constant for a form about the hub itself. The field is filled
+ * when that changes and at no other time. After a save, forget()
+ * lets the saved values back in.
+ */
+function fillOnce(element, value, subject) {
+  if (!element) return;
+  const key = String(subject ?? "");
+  if (element.dataset.filledFor === key) return;
+  element.dataset.filledFor = key;
+  setValue(element, value);
+}
+
+function forgetFilled(root) {
+  for (const field of root.querySelectorAll("[data-filled-for]")) {
+    delete field.dataset.filledFor;
+  }
+}
+
 function setValue(element, value) {
   // Assigning a date input the value it already holds still throws away a
   // part-entered date, so nothing is written unless it changed.
@@ -9413,6 +9436,7 @@ document.getElementById("arrange-cancel").addEventListener("click", () => stopAr
 document.querySelector("main").addEventListener("pointerdown", beginSectionDrag);
 document.querySelector("main").addEventListener("keydown", nudgeSection);
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
+document.getElementById("box-form").addEventListener("submit", saveBoxSettings);
 // Touched by hand, and so no longer the hub's to rewrite. "input" covers a
 // date sheet on a phone, which never focuses the field it belongs to.
 for (const signal of ["input", "change", "focusin"]) {
