@@ -1604,6 +1604,50 @@ class PlantApiTests(unittest.TestCase):
         }
         self.assertEqual(missing, set())
 
+    def test_a_number_field_can_hold_what_the_hub_holds(self) -> None:
+        """A step is a promise about which values exist.
+
+        The fan's integral gain was 0.0008 and its field said
+        step="0.001". A number input accepts only multiples of its
+        step, so the browser called the hub's own setting invalid,
+        refused to submit the form, and the whole Box page could not
+        be saved -- over a field nobody had touched.
+
+        A gain is continuous and the hub stores whatever it is given,
+        so the field has to say so rather than invent a grid the value
+        may not sit on. Checked by setting the awkward value rather
+        than hoping the defaults are awkward: they are round, which is
+        exactly why this went unnoticed.
+        """
+        import re
+
+        # Values that sit between any sensible step.
+        awkward = {"kp": 0.0325, "ki": 0.00075, "kd": 0.0015}
+        self.call("PUT", "/api/fan", awkward)
+        fan = json.loads(self.call_text("/api/fan"))
+        for key, sent in awkward.items():
+            self.assertEqual(fan[key], sent, f"the hub rounded {key}, which it should not")
+
+        page = self.call_text("/")
+        fields = {"kp": "box-kp", "ki": "box-ki", "kd": "box-kd",
+                  "manual_speed": "box-manual-speed", "min_speed": "box-min-speed",
+                  "max_speed": "box-max-speed", "pulse_window_s": "box-pulse-window"}
+        unholdable = []
+        for key, field_id in fields.items():
+            found = re.search(rf'<input id="{field_id}"[^>]*>', page)
+            if found is None or fan.get(key) is None:
+                continue
+            tag = found.group(0)
+            step = (re.search(r'step="([^"]+)"', tag) or [None, "1"])[1]
+            if step == "any":
+                continue
+            low = float((re.search(r'min="([^"]+)"', tag) or [None, "0"])[1])
+            steps = (float(fan[key]) - low) / float(step)
+            if abs(steps - round(steps)) > 1e-9:
+                unholdable.append(f'{field_id} step="{step}" cannot hold {key}={fan[key]}')
+        self.assertEqual(unholdable, [],
+                         "these fields call the hub's own settings invalid")
+
     def test_every_rule_in_the_stylesheet_has_something_to_style(self) -> None:
         """The other direction: a rule nobody uses is read and trusted.
 

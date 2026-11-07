@@ -377,7 +377,7 @@
             <select id="box-sensor"></select>
             <div id="box-gains">
               <h3>Tuning</h3>
-              <p class="note mute">Kp acts on how far off it is now. Ki acts on how long it has been off, per minute. Kd is off by default: two readings minutes apart, each rounded to a tenth, are mostly noise. The slowest speed is a floor, not a threshold: below it a fan tends to buzz without moving air, so when less than that is wanted the fan runs at its floor for part of a pulse window and stops for the rest &mdash; the trick a slow PWM plays on a heater. It stops entirely only once the box is back to target.</p>
+              <p class="note mute">These three take any value, not a round one: the hub stores what is typed. Kp acts on how far off it is now. Ki acts on how long it has been off, per minute. Kd is off by default: two readings minutes apart, each rounded to a tenth, are mostly noise. The slowest speed is a floor, not a threshold: below it a fan tends to buzz without moving air, so when less than that is wanted the fan runs at its floor for part of a pulse window and stops for the rest &mdash; the trick a slow PWM plays on a heater. It stops entirely only once the box is back to target.</p>
               <label for="box-preset">Start from</label>
               <select id="box-preset"></select>
               <p id="box-preset-note" class="note mute"></p>
@@ -390,13 +390,13 @@
               <p id="box-pid-caption" class="note mute"></p>
               <div class="box-field-row">
                 <label for="box-kp">Kp &middot; per %RH
-                  <input id="box-kp" type="number" step="0.01" min="0" max="1">
+                  <input id="box-kp" type="number" step="any" min="0" max="1">
                 </label>
                 <label for="box-ki">Ki &middot; per %RH per min
-                  <input id="box-ki" type="number" step="0.001" min="0" max="1">
+                  <input id="box-ki" type="number" step="any" min="0" max="1">
                 </label>
                 <label for="box-kd">Kd &middot; per %RH per min
-                  <input id="box-kd" type="number" step="0.01" min="0" max="5">
+                  <input id="box-kd" type="number" step="any" min="0" max="5">
                 </label>
               </div>
               <div class="box-field-row">
