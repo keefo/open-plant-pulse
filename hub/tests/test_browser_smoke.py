@@ -296,12 +296,12 @@ class BrowserSmokeTests(unittest.TestCase):
               sections: [...document.querySelectorAll("main [data-section]")]
                 .filter(s => !s.hasAttribute("hidden")).length,
               addPhotos: !!document.getElementById("plant-photo-add")?.offsetParent,
-              record: !!document.getElementById("plant-weight-record")?.offsetParent,
+              watered: !!document.getElementById("plant-watered")?.offsetParent,
             })""")["result"]["value"])
 
         self.assertGreater(early["sections"], 0, "the page waited for data to show itself")
         self.assertTrue(early["addPhotos"])
-        self.assertTrue(early["record"])
+        self.assertTrue(early["watered"])
         self.assertEqual(tools.complaints, [])
 
     def test_every_page_runs_without_complaint(self) -> None:
@@ -805,6 +805,55 @@ class BrowserSmokeTests(unittest.TestCase):
                 len(looks[mode]["looks"]), 1,
                 f"{mode} mode draws {len(looks[mode]['looks'])} kinds of field: "
                 + " AND ".join(looks[mode]["looks"]))
+        self.assertEqual(tools.complaints, [])
+
+    def test_a_section_that_does_not_apply_is_never_drawn_first(self) -> None:
+        """Watched from the first frame, not asked about at the end.
+
+        The pot section used to be drawn from the markup, stand there
+        while the plant loaded, and then vanish once the plant said it
+        was never weighed. Asking what the page looks like after it has
+        settled cannot see that at all, so this watches every frame
+        from before the document runs.
+        """
+        import urllib.request
+        tools = self.devtools()
+        with urllib.request.urlopen(f"{self.base_url}/api/plants", timeout=10) as answer:
+            plants = json.loads(answer.read())["items"]
+        unweighed = next((p for p in plants if p.get("pot_is_weighed") is False), None)
+        if unweighed is None:
+            # Take one off the scale for the length of this test.
+            unweighed = plants[0]
+            body = json.dumps({"display_name": unweighed["display_name"],
+                               "room_id": unweighed.get("room_id"),
+                               "pot_is_weighed": False}).encode()
+            request = urllib.request.Request(
+                f"{self.base_url}/api/plants/{unweighed['plant_id']}", data=body,
+                headers={"Content-Type": "application/json", "Origin": self.base_url},
+                method="PUT")
+            urllib.request.urlopen(request, timeout=10).read()
+        # Installed before any of the page's own script runs.
+        tools.call("Page.addScriptToEvaluateOnNewDocument", source="""
+            window.__weightSeen = [];
+            const look = () => {
+              const s = document.querySelector(".plant-weight");
+              if (s) window.__weightSeen.push(s.hasAttribute("hidden") ? "hidden" : "SHOWN");
+              requestAnimationFrame(look);
+            };
+            requestAnimationFrame(look);
+        """)
+        self.open_page(tools, f"{self.base_url}/plants/{unweighed['plant_id']}")
+        self.after_a_poll(tools, rounds=2)
+        seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              frames: window.__weightSeen.length,
+              shown: window.__weightSeen.filter((s) => s === "SHOWN").length,
+            })""")["result"]["value"])
+        self.assertGreater(seen["frames"], 30,
+                           "too few frames were watched to say anything")
+        self.assertEqual(seen["shown"], 0,
+                         f"the pot section was drawn on {seen['shown']} of "
+                         f"{seen['frames']} frames for a plant that is never weighed")
         self.assertEqual(tools.complaints, [])
 
     def test_the_pot_anchors_stay_on_one_row_on_a_phone(self) -> None:

@@ -2992,8 +2992,16 @@ function renderPage() {
     const askedAbout = plantIdFromLocation();
     const knownPlant = selectedPlant && (askedAbout === null
       || selectedPlant.plant_id === askedAbout) ? selectedPlant : null;
+    /* Shown once the plant has said it is weighed, not until.
+     *
+     * Read the other way round -- hidden only once the plant has said
+     * it is not -- the section was drawn from the markup, stood there
+     * while the plant loaded, and then vanished. A section that
+     * appears and is taken away again is worse than one that arrives
+     * a moment late: the first makes the page jump under the reader
+     * and makes them doubt what they saw. */
     const weighed = element.dataset.needsWeighing === undefined
-      || knownPlant?.pot_is_weighed !== false;
+      || knownPlant?.pot_is_weighed === true;
     /* A section that decides for itself is left alone once it is on the
        right page: showing it here and letting its renderer hide it again
        is the same flip this function was written to stop, and at one
@@ -5740,6 +5748,15 @@ async function refresh() {
     if (page === "zigbee-device") await refreshDeviceAlerts();
     if (page === "plant") {
       await Promise.all([refreshPlant(), refreshPlantPhotos()]);
+      /* Which sections this plant has, decided the moment it says so.
+       *
+       * renderPage runs at the top of each poll, off whatever plant the
+       * poll before it had, so a section that depends on this one has
+       * to be judged again here. At the end of this branch instead it
+       * waited for the charts, the calendar and the lighting -- three
+       * quarters of a second of the pot section not being there yet on
+       * a plant that has one. */
+      renderPage();
       /* What the plant's probe says, asked for by the plant.
        *
        * The soil chemistry, the readings, the drying trend, the watering
@@ -9066,6 +9083,12 @@ window.addEventListener("popstate", () => {
   sensorSettingsDraftSensorId = null;
   plantLightingDraftSubject = null;
   selectedSensorId = sensorIdFromLocation();
+  /* The same first move navigate() makes. Without it the back button
+   * left the page it was leaving on screen until the data for the one
+   * it went to arrived -- so stepping back from a weighed plant to one
+   * that is never weighed showed the pot section and then took it
+   * away, which is the thing this is all meant to stop. */
+  renderPage();
   refresh();
 });
 async function poll() {
