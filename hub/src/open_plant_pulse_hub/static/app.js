@@ -3137,11 +3137,20 @@ function sensorState(sensor) {
   // The profile's conductivity range is pore-water EC, so it is held against
   // the hub's estimate of that; the probe's bulk EC always reads lower.
   const poreWaterEc = sensor.latest?.chemistry?.pore_water_ec_us_cm;
+  /* A measurement that was not taken is not a low one.
+   *
+   * These read `null` from a device that does not measure them, and
+   * `null < 32` is true in JavaScript because null becomes 0 in a
+   * comparison. So an air thermometer attached to a plant -- which
+   * reports humidity and no soil at all -- was called bone dry, and
+   * said "moisture low" about a pot watered a minute earlier. */
+  const moisture = latest?.moisture_percent;
   const alerts = [];
-  if (moistureLow != null && latest?.moisture_percent < moistureLow) {
+  if (moistureLow != null && typeof moisture === "number" && moisture < moistureLow) {
     alerts.push("moisture low");
   }
-  if (conductivityHigh != null && poreWaterEc > conductivityHigh) {
+  if (conductivityHigh != null && typeof poreWaterEc === "number"
+      && poreWaterEc > conductivityHigh) {
     alerts.push("nutrients high");
   }
   // Not hearing a sensor and hearing one that measures nothing are different

@@ -1829,6 +1829,40 @@ class PhotoFromAnIPhoneTests(unittest.TestCase):
         self.assertEqual(browser, hub)
 
 
+class AMeasurementNotTakenTests(unittest.TestCase):
+    """A reading the device never took is not a low reading.
+
+    An air thermometer attached to a plant reports humidity and no
+    soil at all, so its moisture arrives as null -- and `null < 32` is
+    true in JavaScript, because null becomes 0 in a comparison. The
+    dracaena was watered, weighed, and its card said "moisture low"
+    about a pot at 100%.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.script = (here / "app.js").read_text()
+
+    def test_a_verdict_asks_whether_the_number_is_a_number(self) -> None:
+        import re
+
+        body = self.script.split("function sensorState(")[1].split("\nfunction ")[0]
+        # Whole conditions, not lines: the guard and the comparison it
+        # guards often sit on different lines.
+        conditions = re.findall(r"if \((.*?)\)\s*\{", body, re.S)
+        for reading in ("moisture", "poreWaterEc"):
+            with self.subTest(reading=reading):
+                compared = [c for c in conditions
+                            if re.search(rf"\b{reading}\b\s*[<>]", c)]
+                self.assertTrue(compared, f"{reading} is no longer compared here")
+                for condition in compared:
+                    self.assertTrue(
+                        f"typeof {reading}" in condition
+                        or f"Number.isFinite({reading})" in condition,
+                        f"{reading} is compared without checking it is a number, "
+                        "so a device that does not measure it reads as zero: "
+                        + " ".join(condition.split()))
+
 class AnchorsStatedInTheSameSecondTests(unittest.TestCase):
     """Three Dry weights can share a timestamp to the second.
 
