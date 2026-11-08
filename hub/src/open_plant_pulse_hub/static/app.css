@@ -188,7 +188,7 @@ body {
 .nav-link.active { color: var(--text); background: var(--surface); box-shadow: var(--sh-1); }
 .hub-health { margin-bottom: 40px; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 12px; border-radius: var(--r-ctl); color: var(--dim); background: color-mix(in srgb, var(--surface) 80%, transparent); font-size: var(--t-xs); box-shadow: var(--sh-1); }
 .hub-health strong { color: var(--text); }
-.fleet-overview { padding: 30px; background: transparent; }
+.fleet-overview { padding: 30px 10px; background: transparent; }
 .fleet-overview .section-heading p:last-child { margin: 0; color: var(--dim); }
 /* auto-fill, not auto-fit: an empty track is kept rather than collapsed, so
    the one plant with a sensor is a tile the size of every other tile instead
