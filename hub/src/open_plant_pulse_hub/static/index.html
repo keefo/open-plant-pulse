@@ -355,7 +355,7 @@
           </p>
         </section>
 
-        <form id="box-form" class="settings-panel">
+        <form id="box-form" class="settings-panel" hidden>
           <h2>Control</h2>
           <p class="settings-note" data-foldable>The enclosure holds humidity well, which is why the begonias are in it and why it reaches 86&nbsp;% on a closed afternoon. The way down is the exhaust fan, and this holds it at a number instead of somebody typing <code>SET_FAN_SPEED</code> when they notice. It steps when a reading arrives rather than on a timer, stands down while the printer is printing, and switches the fan off if the sensor goes quiet &mdash; acting on an old humidity is guessing.</p>
           <label for="box-mode">Mode</label>
@@ -510,7 +510,7 @@
       </div>
 
       <div id="settings-wifi-panel" class="settings-panel-group" hidden>
-        <form id="household-network-form" class="settings-panel">
+        <form id="household-network-form" class="settings-panel" hidden>
           <h2>Household network</h2>
           <p>Entered once here. Any sensor whose console you switch on is given these details over its encrypted link.</p>
           <label for="wifi-ssid">Network name</label>

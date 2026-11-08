@@ -952,57 +952,67 @@ class BrowserSmokeTests(unittest.TestCase):
                 self.assertGreater(seen["tall"], 20, "the menu has no size")
                 self.assertEqual(tools.complaints, [])
 
-    def test_a_control_is_never_drawn_in_the_wrong_state(self) -> None:
-        """Watched from the first frame, not asked once it has settled.
+    def test_no_control_is_drawn_with_a_value_it_then_changes(self) -> None:
+        """Watched from the first frame, over every page that has a form.
 
-        The configuration form was painted from the markup -- every
-        box empty, every tick off -- and filled when the plant
-        arrived. An empty box reads as an empty setting and an
-        unticked box as a setting that is off, so "newest photo is
-        the cover" showed off on a plant where it was on, then
-        corrected itself a moment later.
+        A form painted from the markup and filled when its data lands
+        shows an empty box where a setting is, and an unticked box
+        where a setting is on. That does not read as a page still
+        loading -- it reads as a page that disagreed with you and then
+        changed its mind, and the first thing it said was false.
 
-        A form that does not hold its answers yet is not shown. Asking
-        what the page looks like after it settles cannot see this;
-        settling is what hides it.
+        This watches every visible field on every page and reports any
+        that changed value after being drawn. Asking what a page looks
+        like once it has settled cannot see this; settling is exactly
+        what hides it. So a form that does not hold its answers yet is
+        not shown at all, and the watcher sees it appear already
+        right.
         """
-        import urllib.request
-
-        body = json.dumps({"follows_latest": True}).encode()
-        urllib.request.urlopen(urllib.request.Request(
-            f"{self.base_url}/api/plants/{self.plant_id}/cover", data=body, method="PUT",
-            headers={"Content-Type": "application/json", "Origin": self.base_url}),
-            timeout=10).read()
-
-        tools = self.devtools()
-        tools.call("Page.addScriptToEvaluateOnNewDocument", source="""
-            window.__seen = [];
+        watch = """
+            window.__flips = [];
+            window.__frames = 0;
+            const was = new WeakMap();
+            const nameOf = (el) => el.id || el.name
+              || ((el.closest("[id]") || {}).id) || el.type;
+            const valueOf = (el) => (el.type === "checkbox" || el.type === "radio")
+              ? String(el.checked) : String(el.value);
             const look = () => {
-              const box = document.getElementById("plant-cover-follows");
-              const form = document.getElementById("plant-config-form");
-              if (box && form) {
-                window.__seen.push(form.hasAttribute("hidden") ? "hidden"
-                                   : (box.checked ? "ticked" : "UNTICKED"));
+              window.__frames++;
+              for (const el of document.querySelectorAll(
+                    "input:not([type=hidden]):not([type=file]), select, textarea")) {
+                // Out of sight is not drawn, so it cannot have been drawn wrong.
+                if (el.offsetParent === null) { was.delete(el); continue; }
+                const now = valueOf(el);
+                if (was.has(el) && was.get(el) !== now) {
+                  window.__flips.push(nameOf(el) + ": " + JSON.stringify(was.get(el))
+                                      + " then " + JSON.stringify(now));
+                }
+                was.set(el, now);
               }
               requestAnimationFrame(look);
             };
             requestAnimationFrame(look);
-        """)
-        self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}/config")
-        self.after_a_poll(tools, rounds=2)
-        seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
-            JSON.stringify({
-              frames: window.__seen.length,
-              wrong: window.__seen.filter((s) => s === "UNTICKED").length,
-              ended: window.__seen[window.__seen.length - 1],
-            })""")["result"]["value"])
-        self.assertGreater(seen["frames"], 30, "too few frames to say anything")
-        self.assertEqual(seen["wrong"], 0,
-                         f"the tick was drawn off on {seen['wrong']} of {seen['frames']}"
-                         " frames for a plant where the hub says it is on")
-        self.assertEqual(seen["ended"], "ticked",
-                         "the form never arrived at the state the hub holds")
-        self.assertEqual(tools.complaints, [])
+        """
+        tools = self.devtools()
+        tools.call("Page.addScriptToEvaluateOnNewDocument", source=watch)
+        pages = ("/", f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config",
+                 "/rooms", "/settings", "/settings/box", "/settings/wifi",
+                 "/settings/time", "/settings/alerts", "/settings/lights",
+                 "/settings/rooms")
+        for path in pages:
+            with self.subTest(page=path):
+                self.open_page(tools, self.base_url + path)
+                self.after_a_poll(tools, rounds=2)
+                seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                             expression="""
+                    JSON.stringify({ frames: window.__frames,
+                                     flips: [...new Set(window.__flips)] })"""
+                    )["result"]["value"])
+                self.assertGreater(seen["frames"], 20,
+                                   f"too few frames watched on {path}")
+                self.assertEqual(seen["flips"], [],
+                                 f"drawn and then changed on {path}")
+                self.assertEqual(tools.complaints, [])
 
     def test_a_tick_shows_what_the_hub_holds(self) -> None:
         """A control that always draws unticked cannot be told it is on.

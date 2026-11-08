@@ -2243,6 +2243,10 @@ async function refreshBoxPage() {
   fill("box-url", fan.moonraker_url);
   fill("box-fan-name", fan.fan_name);
   showFanMode(document.getElementById("box-mode").value || fan.mode);
+  /* Shown now that it holds the fan's own answers. Drawn from the
+     markup first, the printer's address and the fan's name came up
+     blank -- which reads as "not set" rather than "not here yet". */
+  setHidden(form, false);
   drawPidPreview();
 }
 

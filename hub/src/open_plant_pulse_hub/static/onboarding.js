@@ -156,6 +156,10 @@ function renderHouseholdNetwork() {
     // the serialised DOM rather than only as a live property.
     setAttr(ssidField, "value", ssidField.value);
   }
+  /* Shown once it holds the network's name. An empty box reads as a
+     network nobody has set, which is a different thing from one that
+     has not arrived yet. */
+  setHidden(document.getElementById("household-network-form"), householdNetwork === null);
   const using = fleetSensors.filter((sensor) => sensor.wifi_enabled).length;
   setText(document.getElementById("wifi-usage-count"), using
     ? using + " of " + fleetSensors.length + " sensors is using it"
