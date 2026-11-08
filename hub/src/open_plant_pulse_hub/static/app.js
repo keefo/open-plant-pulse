@@ -7403,6 +7403,13 @@ function renderPlantConfig() {
     selectedPlant.expected_watering_days ?? "");
   document.getElementById("plant-config-weighed").checked =
     selectedPlant.pot_is_weighed !== false;
+  /* The cover rule moved here from the photographs, and its tick was
+   * still being filled by the photographs' own render -- which this
+   * page never runs. So it read unticked whatever the hub held, and
+   * toggling it on a plant that already followed its newest picture
+   * looked like a setting that would not save. The plant knows. */
+  document.getElementById("plant-cover-follows").checked =
+    selectedPlant.cover_follows_latest !== false;
   const started = document.getElementById("plant-config-started");
   setAttr(started, "max", localDate(new Date()));
   setValue(started, selectedPlant.started_at

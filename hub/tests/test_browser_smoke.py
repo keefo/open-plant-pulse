@@ -952,6 +952,40 @@ class BrowserSmokeTests(unittest.TestCase):
                 self.assertGreater(seen["tall"], 20, "the menu has no size")
                 self.assertEqual(tools.complaints, [])
 
+    def test_a_tick_shows_what_the_hub_holds(self) -> None:
+        """A control that always draws unticked cannot be told it is on.
+
+        The cover rule moved to the configuration page and its tick
+        stayed behind: it was filled by the photographs' own render,
+        which that page never runs. So it read unticked whatever the
+        hub held. Turning it on for a plant that already followed its
+        newest picture changed nothing visible, coming back showed it
+        off again, and it looked like a setting that would not save.
+        """
+        import urllib.request
+
+        tools = self.devtools()
+        for holds in (True, False):
+            with self.subTest(hub=holds):
+                body = json.dumps({"follows_latest": holds}).encode()
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{self.base_url}/api/plants/{self.plant_id}/cover", data=body,
+                    method="PUT",
+                    headers={"Content-Type": "application/json", "Origin": self.base_url}),
+                    timeout=10).read()
+                self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}/config")
+                shown = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                              expression="""
+                    JSON.stringify({
+                      tick: document.getElementById("plant-cover-follows").checked,
+                      visible: document.getElementById("plant-cover-follows")
+                        .closest("label").offsetParent !== null,
+                    })""")["result"]["value"])
+                self.assertTrue(shown["visible"], "the tick is not on the page")
+                self.assertEqual(shown["tick"], holds,
+                                 f"the hub holds {holds} and the tick shows {shown['tick']}")
+                self.assertEqual(tools.complaints, [])
+
     def test_a_section_that_does_not_apply_is_never_drawn_first(self) -> None:
         """Watched from the first frame, not asked about at the end.
 
