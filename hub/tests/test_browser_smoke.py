@@ -952,6 +952,58 @@ class BrowserSmokeTests(unittest.TestCase):
                 self.assertGreater(seen["tall"], 20, "the menu has no size")
                 self.assertEqual(tools.complaints, [])
 
+    def test_a_control_is_never_drawn_in_the_wrong_state(self) -> None:
+        """Watched from the first frame, not asked once it has settled.
+
+        The configuration form was painted from the markup -- every
+        box empty, every tick off -- and filled when the plant
+        arrived. An empty box reads as an empty setting and an
+        unticked box as a setting that is off, so "newest photo is
+        the cover" showed off on a plant where it was on, then
+        corrected itself a moment later.
+
+        A form that does not hold its answers yet is not shown. Asking
+        what the page looks like after it settles cannot see this;
+        settling is what hides it.
+        """
+        import urllib.request
+
+        body = json.dumps({"follows_latest": True}).encode()
+        urllib.request.urlopen(urllib.request.Request(
+            f"{self.base_url}/api/plants/{self.plant_id}/cover", data=body, method="PUT",
+            headers={"Content-Type": "application/json", "Origin": self.base_url}),
+            timeout=10).read()
+
+        tools = self.devtools()
+        tools.call("Page.addScriptToEvaluateOnNewDocument", source="""
+            window.__seen = [];
+            const look = () => {
+              const box = document.getElementById("plant-cover-follows");
+              const form = document.getElementById("plant-config-form");
+              if (box && form) {
+                window.__seen.push(form.hasAttribute("hidden") ? "hidden"
+                                   : (box.checked ? "ticked" : "UNTICKED"));
+              }
+              requestAnimationFrame(look);
+            };
+            requestAnimationFrame(look);
+        """)
+        self.open_page(tools, f"{self.base_url}/plants/{self.plant_id}/config")
+        self.after_a_poll(tools, rounds=2)
+        seen = json.loads(tools.call("Runtime.evaluate", returnByValue=True, expression="""
+            JSON.stringify({
+              frames: window.__seen.length,
+              wrong: window.__seen.filter((s) => s === "UNTICKED").length,
+              ended: window.__seen[window.__seen.length - 1],
+            })""")["result"]["value"])
+        self.assertGreater(seen["frames"], 30, "too few frames to say anything")
+        self.assertEqual(seen["wrong"], 0,
+                         f"the tick was drawn off on {seen['wrong']} of {seen['frames']}"
+                         " frames for a plant where the hub says it is on")
+        self.assertEqual(seen["ended"], "ticked",
+                         "the form never arrived at the state the hub holds")
+        self.assertEqual(tools.complaints, [])
+
     def test_a_tick_shows_what_the_hub_holds(self) -> None:
         """A control that always draws unticked cannot be told it is on.
 

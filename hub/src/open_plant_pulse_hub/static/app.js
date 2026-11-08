@@ -7386,6 +7386,8 @@ function setValue(element, value) {
   if (element.value !== text) element.value = text;
 }
 
+let plantConfigFilledFor = null;
+
 function renderPlantConfig() {
   if (!selectedPlant) return;
   setText(document.getElementById("plant-config-name"), selectedPlant.display_name);
@@ -7397,6 +7399,10 @@ function renderPlantConfig() {
   }
 
   if (plantConfigDraftPlantId === selectedPlant.plant_id) return;
+  // Hidden again while it is refilled for a different plant.
+  setHidden(document.getElementById("plant-config-form"),
+            plantConfigFilledFor !== selectedPlant.plant_id);
+  plantConfigFilledFor = selectedPlant.plant_id;
   setValue(document.getElementById("plant-config-display-name"), selectedPlant.display_name);
   fillPlantRoomSelect(document.getElementById("plant-config-room"), selectedPlant.room_id);
   setValue(document.getElementById("plant-config-watering-days"),
@@ -7434,6 +7440,13 @@ function renderPlantConfig() {
       ? "" : (selectedPlant.purchase_price_cents / 100).toFixed(2));
   fillPlantProfileSelect(document.getElementById("plant-config-profile"), selectedPlant.profile_id);
   fillPlantVarietySelect(selectedPlant.variety);
+  /* Shown now that it holds this plant's answers, and not before.
+   *
+   * An empty box is read as an empty setting and an unticked box as a
+   * setting that is off, so a form drawn from the markup and filled a
+   * moment later does not look like a form still loading -- it looks
+   * like a form that disagrees with you, and then changes its mind. */
+  setHidden(document.getElementById("plant-config-form"), false);
 }
 
 async function savePlantConfig(event) {
