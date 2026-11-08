@@ -19,6 +19,7 @@ class PlantProfileLoaderTests(unittest.TestCase):
                 "generic_foliage",
                 "jasmine",
                 "monstera",
+                "phalaenopsis",
                 "pothos",
                 "spider_plant",
                 "strelitzia",

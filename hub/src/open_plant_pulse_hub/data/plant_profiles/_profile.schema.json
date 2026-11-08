@@ -150,7 +150,13 @@
       "properties": {
         "strategy": {
           "type": "string",
-          "minLength": 1
+          "enum": [
+            "even_moisture",
+            "partial_dry_back",
+            "full_dry_back",
+            "soak_and_dry"
+          ],
+          "description": "How this plant wants the pot taken through a cycle. A closed set, so two names cannot grow for one habit: begonia said evenly_moist while jasmine said even_moisture."
         },
         "label": {
           "type": "string",

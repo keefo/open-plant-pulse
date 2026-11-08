@@ -1,0 +1,139 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "phalaenopsis",
+  "name": "Moth orchid",
+  "scientific_name": "Phalaenopsis spp.",
+  "varieties": [
+    {
+      "id": "standard",
+      "name": "Standard",
+      "note": "The supermarket moth orchid. An epiphyte: in the wild it hangs off bark with its roots in the air, so the pot holds chunks of bark rather than soil and the roots want light and draught as much as water. Silver-grey roots are thirsty, bright green ones have just drunk."
+    },
+    {
+      "id": "mini",
+      "name": "Mini",
+      "note": "The same plant in a small pot, which is the whole difference: a few handfuls of bark dry through in a fraction of the time, so it wants water oftener while wanting exactly as little of it at a time. The commonest way to lose one is treating it like the big one."
+    }
+  ],
+  "root_zone": {
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [0, 100]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "°C",
+      "ideal": [18, 28],
+      "scale": [10, 35]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "µS/cm",
+      "ideal": [200, 700],
+      "scale": [0, 3000]
+    }
+  },
+  "watering": {
+    "strategy": "full_dry_back",
+    "label": "Soak it through, then let the bark go properly dry. Standing water in the crown or the cache pot is what kills these",
+    "refill_below": 22,
+    "post_water_target": [55, 75],
+    "comfortable_cycle": [22, 75],
+    "concern_below": 10,
+    "concern_above": 85
+  },
+  "drainage": {
+    "label": "Bark, not compost. It should drain within a minute and the pot should never stand in what came out",
+    "preferred_response": "fast",
+    "acceptable_responses": ["fast"],
+    "maximum_settle_minutes": 8
+  },
+  "climate": {
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "°C",
+      "ideal": [18, 29],
+      "scale": [10, 35]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [50, 75],
+      "scale": [20, 95]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m²/day",
+      "ideal": [4, 9],
+      "scale": [0, 20],
+      "bands": [
+        {
+          "upto": 2,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark for a young plant. A seedling or a keiki has nothing spare and simply sits.",
+              "Dim. The first leaves come up thin and stay small.",
+              "A little short for a young plant. It holds what it has and adds nothing."
+            ],
+            "established": [
+              "Too dark. Leaves go deep forest green, which looks healthy and is the plant stretching for light.",
+              "Dim. It will keep its leaves and never spike: flowers are what goes first here.",
+              "A little short. It grows slowly and may skip a season's flowering."
+            ]
+          }
+        },
+        {"upto": 4, "name": "getting by"},
+        {"upto": 9, "name": "healthy"},
+        {"upto": 13, "name": "bright"},
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Too much for a young plant. New leaves come up hard, small and reddish.",
+              "Well past what a young plant takes. Thin leaves bleach before they finish opening.",
+              "Far too much for a young plant. A leaf can burn through in a single afternoon."
+            ],
+            "established": [
+              "Too much. Leaves turn yellow-green and flush red, which is sunburn beginning.",
+              "Burning. Dry white or tan patches appear where the sun falls and do not heal.",
+              "Far too much. These grow in shade under branches; a bare south window cooks them."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 18
+    }
+  },
+  "chemistry": {
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [5.5, 6.5],
+      "scale": [4.0, 9.0]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [25, 70],
+      "scale": [0, 200]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [10, 35],
+      "scale": [0, 140]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [40, 110],
+      "scale": [0, 240]
+    }
+  }
+}

@@ -66,7 +66,7 @@
     }
   },
   "watering": {
-    "strategy": "evenly_moist",
+    "strategy": "even_moisture",
     "label": "Keep evenly moist; let only the top settle before watering again",
     "refill_below": 38,
     "post_water_target": [
