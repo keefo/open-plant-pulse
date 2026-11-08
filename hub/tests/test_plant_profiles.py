@@ -15,6 +15,7 @@ class PlantProfileLoaderTests(unittest.TestCase):
             {
                 "alocasia",
                 "begonia",
+                "dracaena",
                 "generic_foliage",
                 "jasmine",
                 "monstera",
@@ -27,6 +28,36 @@ class PlantProfileLoaderTests(unittest.TestCase):
         self.assertNotIn("schema_version", catalog["profiles"]["strelitzia"])
         self.assertNotIn("$schema", catalog["profiles"]["strelitzia"])
         self.assertEqual(catalog["profiles"]["monstera"]["drainage"]["preferred_response"], "balanced")
+
+    def test_every_profile_matches_the_schema_it_names(self) -> None:
+        """The schema sits beside them and nothing was holding them to it.
+
+        Each profile points at _profile.schema.json for an editor to
+        validate against, and two of them did not match: a light
+        band's effects are the bottom, middle and top third of that
+        band, three sentences, and alocasia and begonia had two and
+        one. An editor would have said so; no check ever did, so the
+        file said one thing and the data another for as long as it
+        took somebody to add the eleventh profile.
+        """
+        try:
+            import jsonschema
+        except ImportError:  # pragma: no cover - only on a bare checkout
+            self.skipTest("jsonschema is not installed")
+
+        schema = json.loads(
+            (PROFILE_DATA_DIR / "_profile.schema.json").read_text(encoding="utf-8"))
+        files = sorted(f for f in PROFILE_DATA_DIR.glob("*.json")
+                       if not f.name.startswith("_"))
+        self.assertGreater(len(files), 5, "hardly any profiles were found to check")
+        wrong = []
+        for path in files:
+            try:
+                jsonschema.validate(json.loads(path.read_text(encoding="utf-8")), schema)
+            except jsonschema.ValidationError as error:
+                where = "/".join(str(part) for part in error.absolute_path)
+                wrong.append(f"{path.name} at {where}: {error.message}")
+        self.assertEqual(wrong, [], "these profiles do not match the schema they name")
 
     def test_discovers_new_file_without_python_registration(self) -> None:
         with tempfile.TemporaryDirectory() as directory_name:

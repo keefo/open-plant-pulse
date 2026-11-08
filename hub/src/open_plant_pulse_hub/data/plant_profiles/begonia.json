@@ -134,7 +134,8 @@
           "effects": {
             "young": [
               "Too dark for a young plant. It stalls rather than grows, and the first leaves stay small.",
-              "Dim. A cutting or a fresh division will sulk here instead of rooting away."
+              "Dim. A cutting or a fresh division will sulk here instead of rooting away.",
+              "A little short for a young plant. It roots slowly and holds at the size it came."
             ],
             "established": [
               "Too dark. The colour washes towards plain green and the leaf stalks stretch.",
@@ -160,6 +161,8 @@
           "name": "scorching",
           "effects": {
             "young": [
+              "Too much for a young plant. Fresh leaves pale and their markings wash out.",
+              "Well past what a young plant takes. New leaves scorch at the edge as they open.",
               "Far too much for a young plant. Thin new leaves bleach and crisp within a day."
             ],
             "established": [

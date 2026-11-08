@@ -1,0 +1,159 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "dracaena",
+  "name": "Dracaena",
+  "scientific_name": "Dracaena spp.",
+  "varieties": [
+    {
+      "id": "surculosa_gold_dust",
+      "name": "Gold Dust (D. surculosa)",
+      "note": "Not a cane dracaena at all: a shrubby West African understory plant with thin bamboo-like stems and oval leaves flecked cream and gold. It takes the least light of this group and scorches in a bright window, and it is slow enough that a season with no new leaf is not a complaint. Spots fade toward plain green in a dark corner."
+    },
+    {
+      "id": "marginata",
+      "name": "Madagascar dragon tree (D. marginata)",
+      "note": "Thin arching canes with narrow red-edged leaves. Wants the brightest light in this profile's range and drops its lowest leaves steadily as a matter of habit, not of health."
+    },
+    {
+      "id": "fragrans",
+      "name": "Corn plant (D. fragrans)",
+      "note": "Thick canes and wide strappy leaves, often with a pale central stripe. The most forgiving of a dim room and the quickest to show tip burn from tap water."
+    },
+    {
+      "id": "janet_craig",
+      "name": "Janet Craig (D. fragrans 'Janet Craig')",
+      "note": "Plain dark green and glossy. Every leaf is working, so it holds up in lower light than the variegated kinds."
+    },
+    {
+      "id": "lemon_lime",
+      "name": "Lemon Lime (D. fragrans 'Lemon Lime')",
+      "note": "Bright chartreuse edges on green. More variegation means less leaf doing the work: slower, and it wants the brighter end of the range to keep its colour."
+    },
+    {
+      "id": "reflexa",
+      "name": "Song of India (D. reflexa)",
+      "note": "Short whorled leaves edged in cream on a branching stem. Resents cold draughts more than the rest and sulks after a move."
+    }
+  ],
+  "root_zone": {
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [0, 100]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "°C",
+      "ideal": [18, 27],
+      "scale": [10, 35]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "µS/cm",
+      "ideal": [350, 1000],
+      "scale": [0, 3000]
+    }
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Let the top third dry, and water with something other than hard tap water if the tips brown",
+    "refill_below": 32,
+    "post_water_target": [55, 72],
+    "comfortable_cycle": [32, 72],
+    "concern_below": 18,
+    "concern_above": 86
+  },
+  "drainage": {
+    "label": "Free-draining mix. These rot from the roots up long before they look thirsty",
+    "preferred_response": "fast",
+    "acceptable_responses": ["fast", "balanced"],
+    "maximum_settle_minutes": 18
+  },
+  "climate": {
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "°C",
+      "ideal": [18, 27],
+      "scale": [10, 35]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [45, 70],
+      "scale": [20, 90]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m²/day",
+      "ideal": [3, 9],
+      "scale": [0, 20],
+      "bands": [
+        {
+          "upto": 1.5,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark for a young plant. A rooted cutting has nothing in reserve and simply stops.",
+              "Dim. The stem stretches between leaves and the spots come through pale.",
+              "A little short for a young plant. It will hold the leaves it has and add none."
+            ],
+            "established": [
+              "Too dark. The stems run bare and the plant leans toward whatever light there is.",
+              "Dim. Cream flecking fades toward plain green, which is the first thing to go.",
+              "A little short. It holds, but it will not put out a new stem."
+            ]
+          }
+        },
+        {"upto": 3, "name": "getting by"},
+        {"upto": 9, "name": "healthy"},
+        {"upto": 13, "name": "bright"},
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Too much for a young plant. The newest leaves pale and their flecks wash out.",
+              "Well past what a young plant takes. New leaves crisp at the edge as they open.",
+              "Far too much for a young plant. Thin new leaves bleach and dry out within an afternoon."
+            ],
+            "established": [
+              "Burning. The pale flecks go papery first, then dry to tan patches that do not recover.",
+              "Too much. Leaves bleach to a washed-out yellow and crisp at the edges.",
+              "Far too much. These grow under a canopy; a bare window burns them through."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 12
+    }
+  },
+  "chemistry": {
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [6.0, 6.5],
+      "scale": [4.0, 9.0]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [40, 100],
+      "scale": [0, 200]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [15, 45],
+      "scale": [0, 140]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [60, 140],
+      "scale": [0, 240]
+    }
+  }
+}

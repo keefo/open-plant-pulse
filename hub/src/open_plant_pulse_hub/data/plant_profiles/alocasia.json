@@ -40,56 +40,97 @@
     "moisture_percent": {
       "label": "Soil moisture",
       "unit": "%",
-      "scale": [0, 100]
+      "scale": [
+        0,
+        100
+      ]
     },
     "soil_temperature_c": {
       "label": "Soil temperature",
       "unit": "°C",
-      "ideal": [18, 26],
-      "scale": [10, 35]
+      "ideal": [
+        18,
+        26
+      ],
+      "scale": [
+        10,
+        35
+      ]
     },
     "conductivity_us_cm": {
       "label": "Pore-water EC",
       "unit": "µS/cm",
-      "ideal": [400, 1200],
-      "scale": [0, 3000]
+      "ideal": [
+        400,
+        1200
+      ],
+      "scale": [
+        0,
+        3000
+      ]
     }
   },
   "watering": {
     "strategy": "partial_dry_back",
     "label": "Water well, then let the top third dry before the next. The corm rots in standing wet",
     "refill_below": 35,
-    "post_water_target": [60, 75],
-    "comfortable_cycle": [35, 75],
+    "post_water_target": [
+      60,
+      75
+    ],
+    "comfortable_cycle": [
+      35,
+      75
+    ],
     "concern_below": 22,
     "concern_above": 88
   },
   "drainage": {
     "label": "Chunky aroid mix, bark and perlite. Water should run through, not sit",
     "preferred_response": "fast",
-    "acceptable_responses": ["fast"],
+    "acceptable_responses": [
+      "fast"
+    ],
     "maximum_settle_minutes": 12
   },
   "climate": {
     "air_temperature_c": {
       "label": "Air temperature",
       "unit": "°C",
-      "ideal": [18, 29],
-      "scale": [10, 35]
+      "ideal": [
+        18,
+        29
+      ],
+      "scale": [
+        10,
+        35
+      ]
     },
     "air_humidity_percent": {
       "label": "Air humidity",
       "unit": "%",
-      "ideal": [60, 80],
-      "scale": [20, 95]
+      "ideal": [
+        60,
+        80
+      ],
+      "scale": [
+        20,
+        95
+      ]
     }
   },
   "light": {
     "dli_mol_m2_day": {
       "label": "Daily light",
       "unit": "mol/m²/day",
-      "ideal": [5, 12],
-      "scale": [0, 25],
+      "ideal": [
+        5,
+        12
+      ],
+      "scale": [
+        0,
+        25
+      ],
       "bands": [
         {
           "upto": 2.5,
@@ -97,7 +138,8 @@
           "effects": {
             "young": [
               "Too dark for a young plant. A two-leaf nursery plant has no reserve to spend and simply stops.",
-              "Dim. The next leaf comes up smaller than the one before it, which is how this genus fades out."
+              "Dim. The next leaf comes up smaller than the one before it, which is how this genus fades out.",
+              "A little short for a young plant. It keeps the leaves it has and makes no more."
             ],
             "established": [
               "Too dark. Leaf stalks stretch and lean, and the plant carries fewer leaves at a time.",
@@ -106,14 +148,25 @@
             ]
           }
         },
-        {"upto": 5, "name": "getting by"},
-        {"upto": 12, "name": "healthy"},
-        {"upto": 16, "name": "bright"},
+        {
+          "upto": 5,
+          "name": "getting by"
+        },
+        {
+          "upto": 12,
+          "name": "healthy"
+        },
+        {
+          "upto": 16,
+          "name": "bright"
+        },
         {
           "upto": null,
           "name": "scorching",
           "effects": {
             "young": [
+              "Too much for a young plant. The newest leaf pales between its veins.",
+              "Well past what a young plant takes. New leaves crisp at the edge as they open.",
               "Far too much for a young plant. Thin new leaves bleach and crisp in a single afternoon."
             ],
             "established": [
@@ -131,26 +184,50 @@
     "soil_ph": {
       "label": "pH",
       "unit": "",
-      "ideal": [5.5, 6.5],
-      "scale": [4.0, 9.0]
+      "ideal": [
+        5.5,
+        6.5
+      ],
+      "scale": [
+        4.0,
+        9.0
+      ]
     },
     "nitrogen_mg_kg": {
       "label": "Nitrogen",
       "unit": "mg/kg",
-      "ideal": [60, 120],
-      "scale": [0, 200]
+      "ideal": [
+        60,
+        120
+      ],
+      "scale": [
+        0,
+        200
+      ]
     },
     "phosphorus_mg_kg": {
       "label": "Phosphorus",
       "unit": "mg/kg",
-      "ideal": [20, 55],
-      "scale": [0, 140]
+      "ideal": [
+        20,
+        55
+      ],
+      "scale": [
+        0,
+        140
+      ]
     },
     "potassium_mg_kg": {
       "label": "Potassium",
       "unit": "mg/kg",
-      "ideal": [70, 160],
-      "scale": [0, 300]
+      "ideal": [
+        70,
+        160
+      ],
+      "scale": [
+        0,
+        300
+      ]
     }
   }
 }
