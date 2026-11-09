@@ -1652,6 +1652,37 @@ class PlantApiTests(unittest.TestCase):
         self.assertEqual(unholdable, [],
                          "these fields call the hub's own settings invalid")
 
+    def test_every_function_the_scripts_define_is_reached(self) -> None:
+        """A handler nothing calls is a button that does nothing.
+
+        The commit that removed the Bluetooth subsystem took a run of
+        listeners with it. Five belonged to the pages that went; ten
+        did not, and their elements and handlers sat on the page with
+        nothing joining the two. Every alert button -- Test, Edit,
+        Turn off, Delete, Stop the sound -- did nothing at all, a room
+        could not be saved or deleted, the tuning presets did nothing,
+        and the Plants and Settings links in the nav had quietly gone
+        back to reloading the whole page.
+
+        Nothing failed. There is no error when a click lands on an
+        element nobody is listening to, which is why this went unseen
+        from one release to the next.
+        """
+        import re
+
+        static = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        scripts = {f.name: f.read_text(encoding="utf-8") for f in static.glob("*.js")}
+        everywhere = "\n".join(scripts.values()) + (static / "index.html").read_text(encoding="utf-8")
+        orphans = []
+        for name, text in scripts.items():
+            for found in re.finditer(r"^(?:async )?function (\w+)\s*\(", text, re.M):
+                fn = found.group(1)
+                # Its own definition is the one mention it is allowed.
+                if len(re.findall(rf"\b{re.escape(fn)}\b", everywhere)) <= 1:
+                    orphans.append(f"{name}: {fn}")
+        self.assertEqual(sorted(orphans), [],
+                         "defined and never reached, so whatever should call it does nothing")
+
     def test_every_rule_in_the_stylesheet_has_something_to_style(self) -> None:
         """The other direction: a rule nobody uses is read and trusted.
 

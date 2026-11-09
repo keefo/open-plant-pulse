@@ -541,22 +541,6 @@ class InterfaceTests(unittest.TestCase):
 
 
 
-    def test_the_delivered_revision_is_shown_and_flashes_when_it_moves(self):
-        page = self.get("/")
-        script = self.get("/app.js")
-        css = self.get("/app.css")
-        self.assertIn(b'id="settings-config-revision"', page)
-        # The number that matters is the one the sensor acknowledged, not the one
-        # the hub wants.
-        self.assertIn(b"device_config_applied_revision", script)
-        self.assertIn(b"just-changed", script)
-        self.assertIn(b"revision-landed", css)
-        self.assertIn(b"prefers-reduced-motion", css)
-
-
-
-
-
     def test_the_navigation_calls_the_fleet_plants(self):
         self.assertIn(b">Plants</a>", self.get("/"))
 

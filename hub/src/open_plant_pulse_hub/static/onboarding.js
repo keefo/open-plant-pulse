@@ -127,6 +127,9 @@ function renderRooms() {
 
 
 
+
+
+
 async function deleteRoom(roomId) {
   const message = document.getElementById("room-message");
   setText(message, "");
@@ -144,8 +147,6 @@ async function deleteRoom(roomId) {
   }
   await refreshRooms();
 }
-
-
 
 function renderHouseholdNetwork() {
   const ssidField = document.getElementById("wifi-ssid");

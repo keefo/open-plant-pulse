@@ -3580,28 +3580,7 @@ function updateHouseholdCard(card, plant, sensor) {
 }
 
 
-function formatReportingInterval(intervalSeconds) {
-  if (intervalSeconds < 60) {
-    return `${intervalSeconds} second${intervalSeconds === 1 ? "" : "s"}`;
-  }
-  const intervalMinutes = intervalSeconds / 60;
-  if (intervalMinutes < 60) {
-    return `${intervalMinutes} minute${intervalMinutes === 1 ? "" : "s"}`;
-  }
-  const intervalHours = intervalMinutes / 60;
-  return `${intervalHours} hour${intervalHours === 1 ? "" : "s"}`;
-}
 
-function selectReportingInterval(select, intervalSeconds) {
-  select.querySelectorAll("[data-current-interval]").forEach((option) => option.remove());
-  const value = String(intervalSeconds);
-  if (![...select.options].some((option) => option.value === value)) {
-    const currentOption = new Option(`${formatReportingInterval(intervalSeconds)} (current)`, value);
-    setData(currentOption, "currentInterval", "true");
-    select.add(currentOption);
-  }
-  select.value = value;
-}
 
 /* Configuration is delivered rather than saved, so the number that matters is
  * the one the sensor has acknowledged. Flashing it when it moves is how somebody
@@ -3609,22 +3588,6 @@ function selectReportingInterval(select, intervalSeconds) {
  * a status line that reads the same either way. */
 let renderedConfigRevision = null;
 
-function renderConfigRevision(sensor) {
-  const element = document.getElementById("settings-config-revision");
-  const applied = sensor.device_config_applied_revision;
-  const text =
-    applied > 0 ? `revision ${applied}` : "no configuration delivered yet";
-  if (element.textContent === text) return;
-  setText(element, text);
-  if (renderedConfigRevision !== null && applied !== renderedConfigRevision) {
-    element.classList.remove("just-changed");
-    // Reading offsetWidth restarts the animation when the value changes twice
-    // in quick succession.
-    void element.offsetWidth;
-    element.classList.add("just-changed");
-  }
-  renderedConfigRevision = applied;
-}
 
 
 function describeAge(seconds) {
@@ -4155,23 +4118,6 @@ async function refreshFleet() {
   renderPage();
 }
 
-async function selectSensor(sensorId) {
-  sensorSettingsDraftSensorId = null;
-  selectedSensorId = sensorId;
-  selectedSensor = fleetSensors.find((sensor) => sensor.sensor_id === sensorId) || null;
-  history.pushState({}, "", `/sensors/${encodeURIComponent(sensorId)}`);
-  latestReading = null;
-  latestReadingAt = null;
-  historyRequestKey = null;
-  climateHistory = null;
-  moistureTrendItems = [];
-  moistureTrendSensorId = null;
-  wateringCalendarRequestKey = null;
-  renderedCareEventIds = new Set();
-  careLogInitialized = false;
-  renderPage();
-  await refresh();
-}
 
 
 
@@ -4468,15 +4414,6 @@ function renderProfileRanges() {
   if (climateHistory) renderClimateHistory(...climateHistory);
 }
 
-function formatAge(seconds) {
-  if (seconds == null) return "";
-  if (seconds < 120) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} minutes ago`;
-  const hours = Math.round(seconds / 3600);
-  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  return `${Math.round(seconds / 86400)} days ago`;
-}
 
 
 function drainageResponseClass(retainedFraction) {
@@ -5109,48 +5046,6 @@ const bulkEcChartMs = 2 * 24 * 60 * 60 * 1000;
 const bulkEcLeadInMs = 30 * 60 * 1000;
 const WATERING_RISE_PERCENT = 15;
 
-function bulkEcPoints() {
-  const points = moistureTrendItems.map((item) => ({
-    timestamp: Date.parse(item.reading.observed_at || item.received_at),
-    value: item.reading.conductivity_us_cm,
-    moisture: item.reading.moisture_percent,
-  }));
-  if (latestReading && latestReadingAt) {
-    points.push({
-      timestamp: Date.parse(latestReadingAt),
-      value: latestReading.conductivity_us_cm,
-      moisture: latestReading.moisture_percent,
-    });
-  }
-  const valid = points
-    .filter((point) => point.value != null && Number.isFinite(point.timestamp)
-      && Number.isFinite(Number(point.value))
-      && point.timestamp >= Date.now() - bulkEcChartMs)
-    .map((point) => ({ timestamp: point.timestamp, value: Number(point.value),
-                       moisture: Number(point.moisture) }))
-    .sort((a, b) => a.timestamp - b.timestamp);
-  const ordered = valid.filter((point, index) =>
-    index === 0 || point.timestamp > valid[index - 1].timestamp);
-
-  /* Start a little before the last watering where there was one.
-   *
-   * Two days of a pot that was dry for most of them is a flat line at zero
-   * with the whole story squeezed into the last few pixels. The shape worth
-   * seeing runs from just before the pour to wherever it has settled, so
-   * that is the window when a pour can be found in it. */
-  let wateredAt = null;
-  for (let index = 1; index < ordered.length; index += 1) {
-    const rise = ordered[index].moisture - ordered[index - 1].moisture;
-    if (Number.isFinite(rise) && rise >= WATERING_RISE_PERCENT) {
-      wateredAt = ordered[index - 1].timestamp;
-    }
-  }
-  if (wateredAt === null) return ordered;
-  const from = wateredAt - bulkEcLeadInMs;
-  const since = ordered.filter((point) => point.timestamp >= from);
-  // Not worth re-anchoring on a pour so recent there is nothing after it.
-  return since.length >= 4 ? since : ordered;
-}
 
 
 function renderMoistureTrend(profile) {
@@ -9472,10 +9367,56 @@ document.querySelector("main").addEventListener("pointerdown", beginSectionDrag)
 document.querySelector("main").addEventListener("keydown", nudgeSection);
 document.getElementById("plant-config-form").addEventListener("submit", savePlantConfig);
 document.getElementById("box-form").addEventListener("submit", saveBoxSettings);
+/* Put back after being deleted by accident.
+ *
+ * The commit that removed the Bluetooth subsystem took a run of
+ * listeners with it. Five belonged to the onboarding and firmware
+ * pages that went with it; these nine did not, and their elements and
+ * their handlers have been sitting on the page ever since with
+ * nothing joining the two. Test, Edit and every other alert button
+ * did nothing at all, and a room could not be saved or deleted from
+ * its own page. */
+document.getElementById("fleet-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  navigate("/");
+});
+document.getElementById("settings-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  navigate("/settings");
+});
+document.getElementById("room-list").addEventListener("click", (event) => {
+  const remove = event.target.closest(".delete-room");
+  if (remove) deleteRoom(Number(remove.dataset.roomId));
+});
+document.getElementById("alert-test").addEventListener("change", (event) => {
+  // "reported" is a thing that either happened or did not, so there is
+  // no number to compare it against.
+  setHidden(document.getElementById("alert-threshold-field"),
+            event.target.value === "true");
+});
+document.getElementById("alerts-form").addEventListener("submit", saveAlertSettings);
+document.getElementById("alerts-test").addEventListener("click", testAlert);
+document.getElementById("alerts-generate").addEventListener("click", generateAlertAddress);
+document.getElementById("zigbee-alert-form").addEventListener("submit", addAlertRule);
+document.getElementById("zigbee-alert-rules").addEventListener("click", changeAlertRule);
+document.getElementById("alert-hear").addEventListener("click", hearAlertSound);
+document.getElementById("alert-cancel").addEventListener("click", clearRuleForm);
+document.getElementById("room-page-form").addEventListener("submit", saveRoomPage);
+document.getElementById("room-page-delete").addEventListener("click", deleteRoomFromItsPage);
 // Choosing a mode shows what that mode is set by, without waiting for
 // a save to reveal the fields the choice was made for.
 document.getElementById("box-mode").addEventListener("change", (event) => {
   showFanMode(event.target.value);
+});
+// Also taken out by that commit: choosing a tuning preset did nothing
+// at all, and the preview did not follow the numbers as they were
+// typed.
+document.getElementById("box-preset").addEventListener("change", (event) => {
+  applyPidPreset(event.target.value);
+});
+document.getElementById("box-form").addEventListener("input", (event) => {
+  if (["box-kp", "box-ki", "box-kd", "box-target-rh", "box-min-speed",
+       "box-max-speed"].includes(event.target.id)) drawPidPreview();
 });
 // Touched by hand, and so no longer the hub's to rewrite. "input" covers a
 // date sheet on a phone, which never focuses the field it belongs to.
