@@ -247,7 +247,11 @@ def create_server(
             elif path.startswith("/api/plants/") and path.endswith("/lighting"):
                 self._send_plant_lighting_of(path[len("/api/plants/") : -len("/lighting")])
             elif path.startswith("/api/plants/"):
-                self._send_plant(path[len("/api/plants/") :])
+                # Whether to read this pot's history from its last
+                # repotting, which is where it became this pot.
+                self._send_plant(
+                    path[len("/api/plants/") :],
+                    parse_qs(request.query).get("since_repot", ["0"])[0] == "1")
             elif path == "/api/sensors":
                 self._send_sensors(request.query)
             elif path == "/api/light-drivers":
@@ -1138,7 +1142,7 @@ def create_server(
             except ValueError as error:
                 raise ValueError("plant_id must be a number") from error
 
-        def _send_plant(self, raw: str) -> None:
+        def _send_plant(self, raw: str, since_repot: bool = False) -> None:
             try:
                 plant_id = self._plant_id(raw)
             except ValueError as error:
@@ -1168,12 +1172,16 @@ def create_server(
             plant["room_air"] = store.room_air(plant["room_id"])
             plant["air_sources"] = store.room_air_sources(plant["room_id"])
             plant["soil_sources"] = store.plant_soil_sources(plant["plant_id"])
-            plant["forecast"] = store.watering_forecast(plant_id)
+            # Everything the pot says, optionally from the repotting
+            # onward: a drying rate measured across a repot is the
+            # average of two different pots.
+            plant["last_repot_at"] = store.last_repot_at(plant_id)
+            plant["forecast"] = store.watering_forecast(plant_id, since_repot=since_repot)
             plant["water_use"] = {
-                **store.water_use(plant_id),
-                "findings": store.water_use_findings(plant_id),
+                **store.water_use(plant_id, since_repot=since_repot),
+                "findings": store.water_use_findings(plant_id, since_repot=since_repot),
             }
-            plant["weights"] = store.plant_weights(plant_id, 30)
+            plant["weights"] = store.plant_weights(plant_id, 30, since_repot=since_repot)
             self._send_json(plant)
 
         def _read_json(self) -> Dict[str, Any]:

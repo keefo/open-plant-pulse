@@ -3962,8 +3962,13 @@ class ReadingStore:
             raise ValueError("a pot cannot be weighed in the future")
         return _timestamp(when)
 
-    def plant_weights(self, plant_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+    def plant_weights(self, plant_id: int, limit: int = 50,
+                      since_repot: bool = False) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(limit, 500))
+        # The stated anchors come whatever happens -- they say what this
+        # pot is, not what it weighed on a day -- so only the weighings
+        # are cut at the repot.
+        cut = self.last_repot_at(plant_id) if since_repot else None
         with self._condition:
             # The limit counts weighings. Every stated anchor comes too,
             # however old.
@@ -3983,11 +3988,12 @@ class ReadingStore:
                 FROM plant_weights WHERE weight_id IN (
                     SELECT weight_id FROM plant_weights
                     WHERE plant_id = ? AND observed = 1
+                      AND (? IS NULL OR at >= ?)
                     ORDER BY at DESC, weight_id DESC LIMIT ?
                 )
                 ORDER BY at DESC, weight_id DESC
                 """,
-                (plant_id, plant_id, safe_limit),
+                (plant_id, plant_id, cut, cut, safe_limit),
             ).fetchall()
         return [
             {
@@ -4461,8 +4467,25 @@ class ReadingStore:
                 rates.append(lost / (span.total_seconds() / 86400.0))
         return sum(rates) / len(rates) if rates else None
 
+    def last_repot_at(self, plant_id: int) -> Optional[str]:
+        """When this pot was last changed, if it ever was.
+
+        A repot is the one event that makes older weighings describe a
+        different object. The pot's own mass changes, so a drying rate
+        measured across one is the average of two pots, and the figures
+        drawn from it are about neither.
+        """
+        with self._condition:
+            row = self._database.execute(
+                "SELECT MAX(detected_at) FROM care_events "
+                "WHERE plant_id = ? AND kind = 'repotting'",
+                (plant_id,),
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
     def water_use(
-        self, plant_id: int, days: int = 90, with_air: bool = True
+        self, plant_id: int, days: int = 90, with_air: bool = True,
+        since_repot: bool = False,
     ) -> Dict[str, Any]:
         """How much water this plant has been using, and over what.
 
@@ -4485,6 +4508,13 @@ class ReadingStore:
         """
         now = datetime.now(timezone.utc)
         since = now - timedelta(days=max(1, min(days, 3650)))
+        if since_repot:
+            # Whichever is later: the window asked for, or the pot this
+            # plant is actually in.
+            repotted = self.last_repot_at(plant_id)
+            if repotted:
+                moment = datetime.fromisoformat(repotted.replace("Z", "+00:00"))
+                since = max(since, moment)
         with self._condition:
             if self.plant(plant_id) is None:
                 raise ValueError("unknown plant")
@@ -4790,7 +4820,8 @@ class ReadingStore:
             return None, round(len(found) / len(wanted), 2) if wanted else 0.0
         return round(sum(found) / len(found), 3), round(len(found) / len(wanted), 2)
 
-    def water_use_findings(self, plant_id: int) -> List[Dict[str, Any]]:
+    def water_use_findings(self, plant_id: int,
+                           since_repot: bool = False) -> List[Dict[str, Any]]:
         """What a change in water use suggests, where it suggests anything.
 
         A plant that stops drinking is saying one of two things, and which
@@ -4817,7 +4848,7 @@ class ReadingStore:
         at least a third; below that it is the weather, the scale, or
         nothing.
         """
-        use = self.water_use(plant_id, days=60)
+        use = self.water_use(plant_id, days=60, since_repot=since_repot)
         intervals = use["intervals"]
         if len(intervals) < 4:
             return []
@@ -5001,7 +5032,8 @@ class ReadingStore:
             ).fetchone()
         return row[0] if row else None
 
-    def watering_forecast(self, plant_id: int, with_air: bool = True) -> Dict[str, Any]:
+    def watering_forecast(self, plant_id: int, with_air: bool = True,
+                          since_repot: bool = False) -> Dict[str, Any]:
         """When the pot will reach the weight at which this plant wants water.
 
         Three things are needed and the hub has no business guessing any of
@@ -5019,7 +5051,7 @@ class ReadingStore:
         precision that four weighings do not have.
         """
         status = self.plant_weight_status(plant_id)
-        use = self.water_use(plant_id, with_air=with_air)
+        use = self.water_use(plant_id, with_air=with_air, since_repot=since_repot)
         missing: List[Dict[str, str]] = []
 
         if status["latest"] is None:

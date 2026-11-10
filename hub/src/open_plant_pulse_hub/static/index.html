@@ -721,7 +721,17 @@
     <section class="plant-weight" data-page="plant" data-section="weight" data-needs-weighing="true" aria-labelledby="plant-weight-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">POT WEIGHT</p><h2 id="plant-weight-title">Water in the pot</h2></div>
-        <span id="plant-weight-summary">Nothing weighed yet</span>
+        <div class="weight-heading-aside">
+          <!-- Only where there is a repotting to cut at. On a plant that has
+               never been repotted it would do nothing, and a control that does
+               nothing is worse than no control. -->
+          <div id="plant-weight-scope" class="history-range-selector"
+               role="group" aria-label="Which weighings to use" hidden>
+            <button type="button" data-weight-scope="all" aria-pressed="true">All</button>
+            <button type="button" data-weight-scope="repot" aria-pressed="false">Since repotting</button>
+          </div>
+          <span id="plant-weight-summary">Nothing weighed yet</span>
+        </div>
       </div>
       <div class="journey-stats" aria-live="polite">
         <div><strong id="plant-weight-latest" class="measure" data-unit="g" data-unit-hidden="true">--</strong><span id="plant-weight-latest-label">Weighs now</span></div>

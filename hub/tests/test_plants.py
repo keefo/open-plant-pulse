@@ -171,6 +171,59 @@ def ago(days: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+class WeighingsSinceTheRepotTests(unittest.TestCase):
+    """A rate measured across a repot is the average of two pots.
+
+    The pot's own mass changes, so weighings either side of one are
+    about different objects. The hub can read the history from the
+    last repotting instead, and the figures drawn from it follow.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore()
+        self.plant_id = self.store.create_plant("Repotted")["plant_id"]
+        # A small pot drying fast, then a big one drying slowly.
+        for day, grams in ((1, 900), (2, 800), (3, 700), (4, 600)):
+            self.store.record_plant_weight(
+                self.plant_id, grams, at=f"2026-10-0{day}T09:00:00Z")
+        self.store.record_plant_care(
+            self.plant_id, "repotting", at="2026-10-06T09:00:00Z")
+        for day, grams in ((7, 2000), (9, 1980), (11, 1960), (13, 1940)):
+            self.store.record_plant_weight(
+                self.plant_id, grams, at=f"2026-10-{day:02d}T09:00:00Z")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_it_knows_when_the_pot_was_last_changed(self) -> None:
+        self.assertTrue(self.store.last_repot_at(self.plant_id).startswith("2026-10-06"))
+        never = self.store.create_plant("Never repotted")["plant_id"]
+        self.assertIsNone(self.store.last_repot_at(never))
+
+    def test_the_weighings_can_start_there(self) -> None:
+        weighed = lambda rows: [r["grams"] for r in rows if r["observed"]]
+        self.assertEqual(weighed(self.store.plant_weights(self.plant_id)),
+                         [1940, 1960, 1980, 2000, 600, 700, 800, 900])
+        self.assertEqual(
+            weighed(self.store.plant_weights(self.plant_id, since_repot=True)),
+            [1940, 1960, 1980, 2000],
+            "weighings from the pot it is no longer in are still counted")
+
+    def test_what_it_drinks_is_worked_out_from_this_pot(self) -> None:
+        across = self.store.water_use(self.plant_id)["daily_grams"]
+        since = self.store.water_use(self.plant_id, since_repot=True)["daily_grams"]
+        self.assertEqual(across, 40)
+        self.assertEqual(since, 10,
+                         "the small pot's fast drying is still in the average")
+
+    def test_a_stated_anchor_is_kept_whenever_it_was_set(self) -> None:
+        """Full, Thirsty and Dry say what the pot is, not what it weighed."""
+        self.store.record_plant_weight(self.plant_id, 450, kind="dry", observed=False,
+                                       at="2026-10-02T10:00:00Z")
+        rows = self.store.plant_weights(self.plant_id, since_repot=True)
+        self.assertIn("dry", [r["kind"] for r in rows],
+                      "an anchor set before the repot was cut away with the weighings")
+
 class PlantWeightTests(unittest.TestCase):
     """For a pot, mass is the measure of water with nothing assumed about soil."""
 

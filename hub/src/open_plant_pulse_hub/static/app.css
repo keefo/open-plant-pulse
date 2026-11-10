@@ -616,6 +616,12 @@ main > * { min-width: 0; }
 .climate-history, .plant-lighting-summary, .plant-verdicts,
 .plant-light, .plant-photos { padding: 24px; background: var(--surface); border-radius: var(--r-card); box-shadow: var(--sh-1); }
 .climate-history-heading { align-items: center; }
+/* The weight heading carries a control and a sentence. Side by side
+   on a wide screen, stacked on a phone rather than squeezed. */
+.weight-heading-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+@media (max-width: 760px) {
+  .weight-heading-aside { align-items: flex-start; width: 100%; }
+}
 .history-range-selector { display: flex; padding: 3px; border: 1px solid var(--n200); border-radius: var(--r-ctl); background: var(--n100); }
 .history-range-selector button { padding: 6px 10px; border: 0; background: transparent; color: var(--dim); font-size: var(--t-xs); font-weight: 700; }
 .history-range-selector button[aria-pressed="true"] { color: var(--on-brand); background: var(--brand); }
@@ -1038,6 +1044,10 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 .weighing-log-list { margin-top: 10px; display: grid; gap: 2px; }
 .weighing-row { display: grid; grid-template-columns: minmax(150px, auto) 90px 1fr auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: var(--r-ctl); font-size: var(--t-sm); }
 .weighing-row:nth-child(odd) { background: var(--n100); }
+/* The repotting, marked in the list the way it is on the chart. */
+.weighing-repot { color: var(--warn-ink); background: var(--warn-wash); font-weight: 600; }
+.weighing-repot:nth-child(odd) { background: var(--warn-wash); }
+.weighing-repot span { font-weight: 400; }
 .weighing-row time, .weighing-row span { color: var(--dim); }
 
 /* pH calibration: the figures first, then the one number to type. */

@@ -7989,9 +7989,37 @@ function renderWeighingLog() {
   setHidden(document.getElementById("weighing-log"), weighings.length === 0);
   setText(document.getElementById("weighing-log-summary"),
     `${weighings.length} weighing${weighings.length === 1 ? "" : "s"} recorded`);
-  if (!renderKeyChanged(list, [weighings])) return;
+  /* Where the pot changed, said in the list as well as on the chart.
+   *
+   * Without it the weight steps by a few hundred grams between two
+   * rows for no stated reason, and the reader is left to remember
+   * which day the repotting was. Newest first, like the rows, so a
+   * marker goes in before the first weighing older than it. */
+  const repots = (selectedPlant?.care_log || [])
+    .filter((event) => event.kind === "repotting")
+    .map((event) => Date.parse(event.detected_at))
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a);
+  if (!renderKeyChanged(list, [weighings, repots])) return;
   list.replaceChildren();
+  let nextRepot = 0;
   for (const weighing of weighings) {
+    const at = Date.parse(weighing.at);
+    while (nextRepot < repots.length && Number.isFinite(at) && repots[nextRepot] > at) {
+      const marker = document.createElement("div");
+      marker.className = "weighing-row weighing-repot";
+      const when = document.createElement("time");
+      when.dateTime = new Date(repots[nextRepot]).toISOString();
+      setText(when, new Date(repots[nextRepot]).toLocaleString([],
+        { dateStyle: "medium", timeStyle: "short" }));
+      const what = document.createElement("strong");
+      setText(what, "Repotted");
+      const why = document.createElement("span");
+      setText(why, "a different pot from here down");
+      marker.append(when, what, why, document.createElement("span"));
+      list.append(marker);
+      nextRepot += 1;
+    }
     const row = document.createElement("div");
     row.className = "weighing-row";
     const when = document.createElement("time");
@@ -8589,11 +8617,51 @@ function fillPlantAnchorFields() {
   }
 }
 
+/* Whether the pot's history is read from its last repotting.
+ *
+ * A repot changes the pot's own mass, so a drying rate measured across
+ * one is the average of two pots and describes neither. The hub can
+ * work the figures either way; which it does is the reader's call,
+ * and it is remembered because somebody who wants it for one plant
+ * usually wants it for the next.
+ */
+const WEIGHT_SCOPE_KEY = "opp.weight-scope";
+
+function weightScope() {
+  try {
+    return window.localStorage.getItem(WEIGHT_SCOPE_KEY) === "repot" ? "repot" : "all";
+  } catch (_error) {
+    return "all";
+  }
+}
+
+function setWeightScope(scope) {
+  try {
+    window.localStorage.setItem(WEIGHT_SCOPE_KEY, scope);
+  } catch (_error) {
+    /* a private window still works, it just forgets */
+  }
+  renderWeightScope();
+  refreshPlant();
+}
+
+function renderWeightScope() {
+  const group = document.getElementById("plant-weight-scope");
+  if (!group) return;
+  // Hidden where there is nothing to cut at.
+  setHidden(group, !selectedPlant?.last_repot_at);
+  const scope = weightScope();
+  for (const button of group.querySelectorAll("[data-weight-scope]")) {
+    setAttr(button, "aria-pressed", button.dataset.weightScope === scope ? "true" : "false");
+  }
+}
+
 async function refreshPlant() {
   const plantId = currentPlantId();
   if (plantId === null) return;
   try {
-    const response = await fetch(`/api/plants/${plantId}`);
+    const since = weightScope() === "repot" ? "?since_repot=1" : "";
+    const response = await fetch(`/api/plants/${plantId}${since}`);
     if (!response.ok) {
       setText(document.getElementById("plant-page-name"), "Plant not found");
       return;
@@ -8602,6 +8670,7 @@ async function refreshPlant() {
   } catch (_error) {
     return;
   }
+  renderWeightScope();
   renderPlantPage();
 }
 
@@ -9393,6 +9462,10 @@ document.getElementById("alert-test").addEventListener("change", (event) => {
   // no number to compare it against.
   setHidden(document.getElementById("alert-threshold-field"),
             event.target.value === "true");
+});
+document.getElementById("plant-weight-scope").addEventListener("click", (event) => {
+  const chosen = event.target.closest("[data-weight-scope]");
+  if (chosen) setWeightScope(chosen.dataset.weightScope);
 });
 document.getElementById("alerts-form").addEventListener("submit", saveAlertSettings);
 document.getElementById("alerts-test").addEventListener("click", testAlert);
