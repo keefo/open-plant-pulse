@@ -345,6 +345,7 @@ class EzspGateway:
             return
         asyncio.run_coroutine_threadsafe(app.remove(ieee), self._loop)
 
+    @property
     def released(self) -> bool:
         return self._released
 

@@ -107,6 +107,18 @@ class ZigbeeNetwork(Protocol):
         """
         ...
 
+    @property
+    def released(self) -> bool:
+        """Whether the hub has deliberately let go of the radio.
+
+        A property, like `connected`, and said here because it was not:
+        one backend offered it as a property and the other as a plain
+        method, and the status read it with getattr -- which hands back
+        the bound method, and bool() of a method is True for ever. The
+        panel said "Dongle released" for months with the dongle in hand.
+        """
+        ...
+
     def devices(self) -> List[Device]: ...
 
     def permit_join(self, seconds: int) -> None: ...

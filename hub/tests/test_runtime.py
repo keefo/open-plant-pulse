@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -1105,3 +1106,47 @@ class RemovingASensorKeepsWhatHappenedTests(unittest.TestCase):
         self.store.delete_sensor(self.sensor)
         after = sorted(e["kind"] for e in self.store.care_log(50, plant_id=self.plant))
         self.assertEqual(after, before, "removing a sensor rewrote the plant's past")
+
+
+class EveryGatewaySaysTheSameThingTests(unittest.TestCase):
+    """The gateway backends have to answer the panel identically.
+
+    One offered `released` as a property and the other as a plain method.
+    The status reads it with getattr and wraps it in bool(), which hands
+    back a bound method object -- always truthy -- so the troubleshooting
+    panel read "Dongle released", and the button offered to reconnect a
+    dongle that had never been let go. Nothing failed; it just lied.
+    """
+
+    def test_released_is_a_property_on_every_backend(self):
+        from open_plant_pulse_hub.application.zigbee import (
+            ezsp_gateway, network, serial_gateway,
+        )
+        backends = [ezsp_gateway.EzspGateway, serial_gateway.SerialGateway,
+                    network.ZigbeeNetwork]
+        for cls in backends:
+            with self.subTest(backend=cls.__name__):
+                attribute = inspect.getattr_static(cls, "released", None)
+                self.assertIsNotNone(
+                    attribute, f"{cls.__name__} does not offer released at all")
+                self.assertIsInstance(
+                    attribute, property,
+                    f"{cls.__name__}.released is a {type(attribute).__name__}, "
+                    "not a property: the status reads it with getattr, and "
+                    "bool() of a bound method is True for ever")
+
+    def test_the_status_reports_what_the_gateway_actually_says(self):
+        """bool() of the real value, not of the thing that returns it."""
+        class Gateway:
+            released_value = False
+
+            @property
+            def released(self) -> bool:
+                return self.released_value
+
+        gateway = Gateway()
+        self.assertFalse(bool(getattr(gateway, "released", False)),
+                         "a gateway holding the radio must not read as released")
+        gateway.released_value = True
+        self.assertTrue(bool(getattr(gateway, "released", False)),
+                        "a gateway that let go must read as released")
