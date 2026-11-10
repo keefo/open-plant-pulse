@@ -8195,7 +8195,7 @@ function attachNearestReadout(chart, size, marks) {
  * Returns the stretches between changes, each with the anchors that
  * were in force through it.
  */
-function anchorSegments(weights, startTime, endTime) {
+function anchorSegments(weights, startTime, endTime, ignoreBefore) {
   const stated = (weights || [])
     .filter((w) => !w.observed && ["full", "thirsty", "dry"].includes(w.kind))
     .map((w) => ({ at: Date.parse(w.at), kind: w.kind, grams: w.grams,
@@ -8209,13 +8209,34 @@ function anchorSegments(weights, startTime, endTime) {
     // at all, so the chart quietly drew none.
     .sort((one, two) => one.at - two.at || one.id - two.id);
 
+  /* Reading this pot only: anchors from the one before it are not in
+   * force at any point of it.
+   *
+   * Starting the window at the repotting was not enough. The anchors
+   * stated before it were still the newest "at or before" the window's
+   * first instant, so they held for the moment between the repotting
+   * and the first anchor stated after it -- a sliver of the old pot's
+   * band, hundreds of grams tall, against the left edge.
+   *
+   * Where nothing has been stated since, the old anchors are left to
+   * hold: a band from the pot before is a poorer answer than none,
+   * but it is the only one there is, and the repot line says so. */
+  const sinceRepot = Number.isFinite(ignoreBefore)
+    ? stated.filter((row) => row.at >= ignoreBefore) : stated;
+  const usable = sinceRepot.length ? sinceRepot : stated;
+
   // What was in force when the window opens: the newest of each kind
-  // stated at or before it.
+  // stated at or before it. Where the first of a kind comes after the
+  // window opens -- an anchor set minutes after the repotting -- it
+  // holds from the start rather than leaving a gap nothing describes.
   const held = {};
-  for (const row of stated) {
+  for (const row of usable) {
     if (row.at <= startTime) held[row.kind] = row.grams;
   }
-  const changes = stated.filter((row) => row.at > startTime && row.at <= endTime);
+  for (const row of usable) {
+    if (held[row.kind] === undefined) held[row.kind] = row.grams;
+  }
+  const changes = usable.filter((row) => row.at > startTime && row.at <= endTime);
 
   const segments = [];
   let from = startTime;
@@ -8323,7 +8344,7 @@ function renderPlantWeightChart() {
   // above a line that never left 550 -- a pot that did not exist
   // yet. Each stretch now carries the anchors that were in force
   // through it, and the step between them is the repot.
-  const segments = anchorSegments(selectedPlant?.weights, startTime, axisEnd);
+  const segments = anchorSegments(selectedPlant?.weights, startTime, axisEnd, repotAt);
   const gradientId = `pot-dry-${currentPlantId()}`;
   const gradient = svgElement("linearGradient", {
     id: gradientId, x1: 0, y1: 0, x2: 0, y2: 1,
@@ -8439,12 +8460,17 @@ function renderPlantWeightChart() {
         class: "trend-repot", x1: where, x2: where,
         y1: plot.top, y2: plot.top + plotHeight,
       }),
-      // To the left of the line: a repot is usually the newest thing
-      // on the chart, and a label hung off its right would run out
-      // past the edge.
+      /* Usually to the left of the line, because a repot is usually the
+       * newest thing on the chart and a label hung off its right would
+       * run past the edge. But when the chart is read from the repot,
+       * the line is at the left edge and a label to its left lands on
+       * the axis numbers -- so it goes to the right instead, whichever
+       * side has the room. */
       svgElement("text", {
-        class: "trend-repot-label", x: where - 5, y: plot.top + 10,
-        "text-anchor": "end",
+        class: "trend-repot-label",
+        x: where - plot.left > 56 ? where - 5 : where + 5,
+        y: plot.top + 10,
+        "text-anchor": where - plot.left > 56 ? "end" : "start",
       }, "Repotted")
     );
   }
