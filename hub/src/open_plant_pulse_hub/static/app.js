@@ -8260,9 +8260,19 @@ function renderPlantWeightChart() {
    * not be a sliver at the right edge. */
   const endTime = points[points.length - 1].timestamp;
   const firstTime = points[0].timestamp;
-  const startTime = endTime - firstTime < plantWeightTrendMs
+  /* Reading this pot only: the window opens at the repotting.
+   *
+   * The weighings were already cut there, but the bands are built from
+   * the anchor history, which keeps every anchor however old -- so the
+   * old pot's band went on being drawn across the whole chart, at
+   * weights the new scale has no room for. */
+  const repotAt = weightScope() === "repot" && selectedPlant?.last_repot_at
+    ? Date.parse(selectedPlant.last_repot_at) : NaN;
+  const windowStart = endTime - firstTime < plantWeightTrendMs
     ? Math.min(firstTime, endTime - 24 * 60 * 60 * 1000)
     : endTime - plantWeightTrendMs;
+  const startTime = Number.isFinite(repotAt)
+    ? Math.max(windowStart, repotAt) : windowStart;
 
   /* The scale always holds both anchors, so the band they make is visible
    * even when every weighing sits above or below it. */
@@ -8323,9 +8333,24 @@ function renderPlantWeightChart() {
     svgElement("stop", { offset: "55%", "stop-color": "#e8b45a", "stop-opacity": "0.78" }),
     svgElement("stop", { offset: "100%", "stop-color": "#d4503f", "stop-opacity": "0.82" })
   );
+  /* Nothing is drawn outside the chart's own box.
+   *
+   * A band is as tall as the anchors that made it, and an anchor from
+   * a pot this plant is no longer in can be far outside the scale the
+   * current one sets. Without this the band ran up off the top of the
+   * chart and over the figures above it, which is a drawing fault
+   * whatever put the number out of range. */
+  const clipId = `pot-plot-${currentPlantId()}`;
+  const clip = svgElement("clipPath", { id: clipId });
+  clip.append(svgElement("rect", {
+    x: plot.left, y: plot.top, width: plotWidth, height: plotHeight,
+  }));
   const defs = svgElement("defs", {});
-  defs.append(gradient);
+  defs.append(gradient, clip);
   chart.append(defs);
+
+  const bands = svgElement("g", { "clip-path": `url(#${clipId})` });
+  chart.append(bands);
 
   let bandDrawn = false;
   for (const [index, piece] of segments.entries()) {
@@ -8349,7 +8374,7 @@ function renderPlantWeightChart() {
     // would sit past the end of the chart.
     const labelX = Math.max(plot.left + 4,
                             Math.min(left + 4, width - plot.right - 190));
-    chart.append(
+    bands.append(
       svgElement("rect", {
         class: "trend-cycle", x: left, width: span,
         y: y(fullGrams), height: Math.max(0, y(comfortableTo) - y(fullGrams)),
@@ -8366,7 +8391,7 @@ function renderPlantWeightChart() {
       }, `Full at ${showWeight(fullGrams)} g`));
     }
     if (refill != null) {
-      chart.append(
+      bands.append(
         svgElement("rect", {
           class: "trend-reserve", x: left, width: span,
           y: y(refill), height: Math.max(0, y(dryGrams) - y(refill)),
