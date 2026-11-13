@@ -200,6 +200,48 @@ spans. A model that has been predicting within 10 % for a fortnight has earned a
 narrow band; a new pot with three weighings has not, and should say so rather
 than printing `0.9 to 0.9`.
 
+## What was built, and what the data refused
+
+Implemented 2026-11-13, in the order the measurements allowed.
+
+**Stage 1, the three states.** Done. "Water now" is "Thirsty" when the pot is
+at or past its mark, "Today" when the forecast is under a day, and "Water in
+N d" otherwise.
+
+**Stage 3, the air divided out.** Done, with one change the backtest forced.
+The two-coefficient fit of `a + b * kPa` was worse than the plain mean at
+every sample size -- a slope through noise on this much history. Dividing by
+the deficit and multiplying by what the air is doing lately was better at
+every size, so the air enters as a divisor and not as a second coefficient.
+It waits for eight spans; below that the plain mean is steadier. Measured
+walking forward, mean error in grams a day: 19.1 against 16.7 at six spans,
+15.5 against 13.0 at eight, 11.4 against 8.8 at ten.
+
+**Stage 5, the band.** Done. It is the median miss of this plant's own
+walked-forward history rather than the spread of its weather, with a floor so
+three weighings cannot buy a narrow answer and a ceiling so the slow end never
+divides by zero.
+
+**Stage 2, the night, was not built.** It cannot be, here. Separating a day
+rate from a night rate needs spans that sit inside one or the other, and
+eighteen of this household's nineteen weighed plants are weighed about once a
+day: every span straddles both. The one exception is the plant on the
+automatic scale. When more pots are weighed automatically there will be
+something to fit; until then it would be a model with no observations under
+it.
+
+**Stage 4, the depletion fraction, was not built.** Nineteen of twenty plants
+already have a thirsty weight set by hand, and the twentieth is an air plant
+with no pot weighing at all. The fraction exists to supply a default where
+nobody has said; nobody here has not said. What fact forces this to exist? A
+household that weighs pots and does not mark them, which is not this one.
+Worth revisiting when a plant arrives without one.
+
+**The learner is waiting on evidence.** The button is on the card and the
+presses are recorded with the weight they were made at. Nothing reads them
+yet, and nothing should until there are enough to measure the lapse rate and
+the surprise threshold against, rather than the author's guesses at them.
+
 ## What not to build
 
 **Not a weather API.** The room has its own sensors and its own box; outside
