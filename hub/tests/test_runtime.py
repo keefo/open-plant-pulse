@@ -1354,3 +1354,57 @@ class TheWeatherDividedOutTests(unittest.TestCase):
             self.store.water_use(self.plant, with_air=True)
         self.assertEqual(len(calls), 1,
                          "the same room and hour was asked more than once")
+
+
+class ABandThatSaysHowSureItIsTests(unittest.TestCase):
+    """The band was a range of weather, not a confidence.
+
+    It ran from the fastest to the slowest the plant had ever drunk,
+    so an alocasia two spans into a cycle reported 0.9 to 0.9 days --
+    a certainty nobody has -- while a plant that once dried fast in a
+    heatwave carried that week around for a season.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("fern")["plant_id"]
+        self.store.record_plant_weight(self.plant, 2000, kind="full", observed=False)
+        self.store.record_plant_weight(self.plant, 1000, kind="thirsty", observed=False)
+
+    def _weigh(self, grams, day):
+        self.store.record_plant_weight(self.plant, grams,
+                                       at=f"2026-10-{day:02d}T06:00:00Z")
+
+    def test_a_plant_with_no_history_is_not_certain(self) -> None:
+        self._weigh(2000, 1)
+        self._weigh(1900, 2)
+        forecast = self.store.watering_forecast(self.plant)
+        self.assertGreater(forecast["days_latest"], forecast["days_soonest"],
+                           "two weighings produced a band of zero width")
+
+    def test_a_steady_plant_earns_a_narrow_band(self) -> None:
+        grams = 2000
+        for day in range(1, 13):
+            self._weigh(grams, day)
+            grams -= 50
+        forecast = self.store.watering_forecast(self.plant)
+        width = forecast["days_latest"] - forecast["days_soonest"]
+        self.assertLess(width / forecast["days"], 0.8,
+                        "a plant that drinks the same every day was given a "
+                        "band as wide as one that does not")
+
+    def test_an_erratic_plant_is_told_it_is_erratic(self) -> None:
+        for day, grams in enumerate(
+                (2000, 1990, 1700, 1690, 1400, 1390, 1380, 1100), start=1):
+            self._weigh(grams, day)
+        forecast = self.store.watering_forecast(self.plant)
+        width = forecast["days_latest"] - forecast["days_soonest"]
+        self.assertGreater(width / forecast["days"], 0.3,
+                           "a plant whose rate jumps about was given a "
+                           "confident answer")
+
+    def test_the_band_never_closes_and_never_runs_away(self) -> None:
+        """A floor, because three weighings have not earned a narrow answer;
+        a ceiling, because at 1.0 the slow end divides by zero."""
+        self.assertGreater(self.store.RATE_ERROR_FLOOR, 0)
+        self.assertLess(self.store.RATE_ERROR_CEILING, 1.0)

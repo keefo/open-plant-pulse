@@ -5385,28 +5385,63 @@ class ReadingStore:
         now = datetime.now(timezone.utc)
         days = to_go / typical
 
-        # How fast it drinks is read from this cycle, which is the same plant
-        # in the same pot in the same weather. How much that varies cannot be:
-        # a cycle one weighing old has a rate and no spread, and a band drawn
-        # from it would say 2.3 to 2.3 days, which is a certainty nobody has.
-        # So the band is every span in the window -- the fastest and slowest
-        # it has drunk, which is what the chart has always claimed to show --
-        # with this cycle's rate among them, so the estimate is always inside
-        # its own band.
-        window_rates = [
-            span["grams_per_day"] for span in use["intervals"]
-            if span["grams_per_day"] > 0
-        ]
-        band = (window_rates or rates) + [typical]
+        # How sure the day is, taken from how wrong this plant's rate has
+        # been before.
+        #
+        # The band used to be the fastest and slowest it had ever drunk,
+        # which is a range of weather rather than a confidence: an alocasia
+        # two spans into its cycle reported 0.9 to 0.9 days -- a certainty
+        # nobody has -- while a plant that had once dried fast in a heatwave
+        # carried that week around for a season.
+        #
+        # This asks the only question a band should answer: told this rate
+        # before, how far out was it? Walked forward over the plant's own
+        # history, so each prediction is made from what came before it and
+        # nothing sees its own answer.
+        error = self._rate_error(use["intervals"])
+        spread_rates = [typical * (1 + error), typical * (1 - error)]
         forecast.update({
             "days": round(days, 1),
-            # Fastest it has drunk brings the day forward; slowest pushes it out.
-            "days_soonest": round(to_go / max(band), 1),
-            "days_latest": round(to_go / min(band), 1),
-            "band_spans_used": len(band) - 1,
+            # Drinking faster than usual brings the day forward; slower
+            # pushes it out.
+            "days_soonest": round(to_go / max(spread_rates), 1),
+            "days_latest": round(to_go / min(spread_rates), 1),
+            "band_spans_used": sum(
+                1 for span in use["intervals"] if span["grams_per_day"] > 0),
             "water_on": _timestamp(now + timedelta(days=days)),
         })
         return forecast
+
+    # The widest a band is allowed to be, and the narrowest.
+    #
+    # A floor because a plant with three weighings has not earned a narrow
+    # answer however well those three agreed, and a ceiling because at 1.0
+    # the slow end divides by zero and the day never arrives at all.
+    RATE_ERROR_FLOOR = 0.15
+    RATE_ERROR_CEILING = 0.6
+
+    def _rate_error(self, intervals: List[Dict[str, Any]]) -> float:
+        """How far out this plant's own rate has been, as a fraction.
+
+        Walked forward: predict each span from the mean of the spans
+        before it, and see. Fewer than four spans is not a history, and
+        gets the floor rather than a number made from two guesses.
+        """
+        rates = [float(span["grams_per_day"]) for span in intervals
+                 if span["grams_per_day"] > 0]
+        if len(rates) < 4:
+            return self.RATE_ERROR_CEILING if len(rates) < 2 else 0.35
+        errors = []
+        for index in range(2, len(rates)):
+            predicted = sum(rates[:index]) / index
+            actual = rates[index]
+            if actual > 0:
+                errors.append(abs(predicted - actual) / actual)
+        if not errors:
+            return self.RATE_ERROR_FLOOR
+        errors.sort()
+        middle = errors[len(errors) // 2]
+        return max(self.RATE_ERROR_FLOOR, min(self.RATE_ERROR_CEILING, middle))
 
     def plants(self, include_archived: bool = False) -> List[Dict[str, Any]]:
         """Every plant the household has, instrumented or not."""
