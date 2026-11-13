@@ -3570,11 +3570,20 @@ function updateHouseholdCard(card, plant, sensor) {
      nothing. It echoes what it was told instead, until the pot has
      dried enough for the question to be a new one. */
   const saidWet = plant?.watering_deferred != null;
+  /* And when it will be wanted instead. "Still wet" only repeated what it
+     had just been told; the useful half is where the day went. The press
+     says the plant did not want water at the mark and does not say where
+     it did, so the furthest the hub can honestly go is the driest this
+     pot has been -- past that there is nothing left to dry. */
+  const delayed = plant?.water_in_days_if_still_wet;
   /* "Thirsty" survives having no forecast. A pot under its mark with one
      weighing has no drinking rate and so no days, and used to show no
      chip at all -- the plant the list most needed to surface was the one
      it said nothing about. */
-  setText(due, saidWet ? "Still wet"
+  setText(due, saidWet
+      ? (delayed == null ? "Still wet"
+         : delayed < 1 ? "Delayed, water today"
+         : `Delayed, water in ${Math.round(delayed)}d`)
     : thirstyNow ? "Thirsty"
     : days == null ? ""
     : days < 1 ? "Today" : `Water in ${Math.round(days)}d`);

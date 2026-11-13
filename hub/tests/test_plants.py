@@ -3008,6 +3008,38 @@ class StillTooWetTests(unittest.TestCase):
         self.store.record_plant_care(self.plant, "watering")
         self.assertIsNone(self.store.watering_deferred_at(self.plant))
 
+    def test_it_says_where_the_day_went(self) -> None:
+        """"Still wet" only repeated what it had just been told.
+
+        The useful half is when water will be wanted instead. The press
+        says the plant did not want water at its mark and does not say
+        where it did, so the hub takes the furthest it can honestly go:
+        the driest this pot has been, past which nothing is left to dry.
+        """
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("alocasia")["plant_id"]
+        for grams, kind in ((762, "full"), (669, "thirsty"), (607, "dry")):
+            store.record_plant_weight(plant, grams, kind=kind, observed=False)
+        store.record_plant_weight(plant, 733, at="2026-10-01T06:00:00Z")
+        store.record_plant_weight(plant, 699, at="2026-10-02T06:00:00Z")
+
+        forecast = store.watering_forecast(plant)
+
+        self.assertIsNotNone(forecast["days_if_still_wet"])
+        self.assertGreater(
+            forecast["days_if_still_wet"], forecast["days"],
+            "being told the soil is wet should push the day out, not in")
+
+    def test_a_pot_already_at_its_driest_has_nowhere_to_go(self) -> None:
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("alocasia")["plant_id"]
+        for grams, kind in ((762, "full"), (669, "thirsty"), (607, "dry")):
+            store.record_plant_weight(plant, grams, kind=kind, observed=False)
+        store.record_plant_weight(plant, 650, at="2026-10-01T06:00:00Z")
+        store.record_plant_weight(plant, 600, at="2026-10-02T06:00:00Z")
+
+        self.assertEqual(store.watering_forecast(plant)["days_if_still_wet"], 0.0)
+
     def test_the_card_stops_saying_otherwise(self) -> None:
         """It went on reading "Today" after the press.
 
@@ -3018,11 +3050,11 @@ class StillTooWetTests(unittest.TestCase):
         here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
         script = (here / "app.js").read_text()
         style = (here / "app.css").read_text()
-        self.assertIn('saidWet ? "Still wet"', script,
-                      "the chip still asserts its own forecast after being "
-                      "told the soil is wet")
+        self.assertIn('`Delayed, water in ${Math.round(delayed)}d`', script,
+                      "the chip repeats what it was told instead of saying "
+                      "when water will be wanted")
         # Before the two it replaces, or it never shows.
-        self.assertLess(script.index('saidWet ? "Still wet"'),
+        self.assertLess(script.index("setText(due, saidWet"),
                         script.index(': thirstyNow ? "Thirsty"'))
         self.assertIn('small[data-state="said-wet"]', style,
                       "without a rule of its own it falls to the catch-all "

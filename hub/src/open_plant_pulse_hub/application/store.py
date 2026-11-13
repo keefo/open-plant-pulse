@@ -5353,6 +5353,10 @@ class ReadingStore:
             "rate_from": None,
             "spans_used": len(spans),
             "band_spans_used": 0,
+            # Always present, whichever way out the forecast takes: a key
+            # that exists on one path and not another is a caller reading
+            # the happy case and throwing on the other.
+            "days_if_still_wet": None,
             # Past the weight it asks for water at. A fact about two
             # numbers, so it is answered wherever both are known -- the
             # forecast needs a drinking rate and this does not, and a pot
@@ -5431,6 +5435,7 @@ class ReadingStore:
             # "minus fifty millilitres to go"; it is thirsty now.
             forecast.update({"grams_to_go": 0, "thirsty_now": True, "days": 0.0,
                              "days_soonest": 0.0, "days_latest": 0.0,
+                             "days_if_still_wet": self._days_to_dry(status, typical),
                              "water_on": _timestamp(datetime.now(timezone.utc))})
             return forecast
 
@@ -5458,11 +5463,30 @@ class ReadingStore:
             # pushes it out.
             "days_soonest": round(to_go / max(spread_rates), 1),
             "days_latest": round(to_go / min(spread_rates), 1),
+            # Where the day goes if the soil was still wet at the mark.
+            #
+            # The press says the plant did not want water there and does
+            # not say where it did, so the hub takes the furthest it can
+            # honestly go: the driest this pot has ever been. That is the
+            # latest the plant can want water by, because past it there is
+            # nothing left to dry. A rough answer, and roomier than the
+            # one that was just contradicted.
+            "days_if_still_wet": self._days_to_dry(status, typical),
             "band_spans_used": sum(
                 1 for span in use["intervals"] if span["grams_per_day"] > 0),
             "water_on": _timestamp(now + timedelta(days=days)),
         })
         return forecast
+
+    @staticmethod
+    def _days_to_dry(status: Dict[str, Any], rate: float) -> Optional[float]:
+        """How long to the driest this pot has been, at what it drinks now."""
+        if not (status["latest"] and status["dry"]) or rate <= 0:
+            return None
+        to_dry = status["latest"]["grams"] - status["dry"]["grams"]
+        if to_dry <= 0:
+            return 0.0
+        return round(to_dry / rate, 1)
 
     # The widest a band is allowed to be, and the narrowest.
     #
@@ -5552,11 +5576,18 @@ class ReadingStore:
                 # weight this plant asks for water at, and a card that
                 # cannot tell them apart says "Water now" to a plant with a
                 # day in hand and to one that has been dry since Tuesday.
-                **(lambda f: {"water_in_days": f["days"],
-                              "thirsty_now": f["thirsty_now"]})(
-                    self.watering_forecast(row[0], with_air=True)),
-                # Having been told it is still too wet, the card stops
-                # saying otherwise until the pot has moved on.
+                # One forecast, three fields off it. Asking twice doubles
+                # the cost of the whole household list for a figure it has
+                # already worked out.
+                **(lambda f: {
+                    "water_in_days": f["days"],
+                    "thirsty_now": f["thirsty_now"],
+                    # Having been told it is still too wet, the card stops
+                    # saying otherwise until the pot has moved on -- and
+                    # says when it will ask again rather than only that it
+                    # was told.
+                    "water_in_days_if_still_wet": f.get("days_if_still_wet"),
+                })(self.watering_forecast(row[0], with_air=True)),
                 "watering_deferred": self.watering_deferred_at(row[0]),
             }
             for row in rows
