@@ -3563,15 +3563,24 @@ function updateHouseholdCard(card, plant, sensor) {
      first is a forecast, the second is a fact, and reading the forecast
      as a fact is what made a pot at 59 % look like an emergency. */
   const thirstyNow = plant?.thirsty_now === true;
+  /* Having been told the soil is still wet, the card stops saying
+     otherwise. It went on reading "Today" after the press, which is the
+     hub holding its own estimate against somebody who had just put a
+     finger in the pot -- and it made the button look like it had done
+     nothing. It echoes what it was told instead, until the pot has
+     dried enough for the question to be a new one. */
+  const saidWet = plant?.watering_deferred != null;
   /* "Thirsty" survives having no forecast. A pot under its mark with one
      weighing has no drinking rate and so no days, and used to show no
      chip at all -- the plant the list most needed to surface was the one
      it said nothing about. */
-  setText(due, thirstyNow ? "Thirsty"
+  setText(due, saidWet ? "Still wet"
+    : thirstyNow ? "Thirsty"
     : days == null ? ""
     : days < 1 ? "Today" : `Water in ${Math.round(days)}d`);
-  setHidden(due, days == null && !thirstyNow);
-  setData(due, "state", thirstyNow ? "now"
+  setHidden(due, days == null && !thirstyNow && !saidWet);
+  setData(due, "state", saidWet ? "said-wet"
+    : thirstyNow ? "now"
     : days == null ? "unknown" : days < 1 ? "today" : "later");
 
   /* Three rules, and the third is the one that needs saying.

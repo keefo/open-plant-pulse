@@ -3008,6 +3008,26 @@ class StillTooWetTests(unittest.TestCase):
         self.store.record_plant_care(self.plant, "watering")
         self.assertIsNone(self.store.watering_deferred_at(self.plant))
 
+    def test_the_card_stops_saying_otherwise(self) -> None:
+        """It went on reading "Today" after the press.
+
+        Which is the hub holding its own estimate against somebody who
+        had just put a finger in the pot, and it made the button look
+        like it had done nothing at all.
+        """
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        script = (here / "app.js").read_text()
+        style = (here / "app.css").read_text()
+        self.assertIn('saidWet ? "Still wet"', script,
+                      "the chip still asserts its own forecast after being "
+                      "told the soil is wet")
+        # Before the two it replaces, or it never shows.
+        self.assertLess(script.index('saidWet ? "Still wet"'),
+                        script.index(': thirstyNow ? "Thirsty"'))
+        self.assertIn('small[data-state="said-wet"]', style,
+                      "without a rule of its own it falls to the catch-all "
+                      "that paints anything unrecognised as an alarm")
+
     def test_the_card_only_offers_it_while_the_hub_is_asking(self) -> None:
         here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
         script = (here / "app.js").read_text()

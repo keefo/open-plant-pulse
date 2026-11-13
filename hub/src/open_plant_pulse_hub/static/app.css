@@ -367,6 +367,11 @@ select:disabled { color: var(--faint); background-color: var(--n100); cursor: no
 .fleet-card small[data-state="later"] { color: var(--brand); background: var(--brand-wash); }
 .fleet-card small[data-state="today"] { color: var(--warn-ink); background: var(--warn-wash); }
 .fleet-card small[data-state="now"] { color: var(--alarm); background: var(--alarm-wash); }
+/* Told, rather than worked out. Quiet on purpose: it is not a verdict
+   about the plant, it is the hub repeating what it was told and waiting.
+   Green would claim the hub agrees; amber would be the nagging the press
+   was made to stop. */
+.fleet-card small[data-state="said-wet"] { color: var(--dim); background: var(--n100); }
 /* Answering the card, on the card. Quiet, because it is a correction and
    not an action: it should be findable the moment it is wanted and
    invisible the rest of the time, which is most of the time -- it is
