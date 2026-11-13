@@ -3016,3 +3016,55 @@ class StillTooWetTests(unittest.TestCase):
         # The card is a link to the plant; the press answers it rather
         # than following it.
         self.assertIn("event.preventDefault();", script)
+
+
+class TheForecastSaysWhatItHasBeenToldTests(unittest.TestCase):
+    """A press belongs beside the figure it disagreed with.
+
+    It was going into the care log, where it reads as one more line
+    among the waterings. The forecast is only trustworthy to somebody
+    who can see it has been contradicted, and three presses on one
+    plant say more than any of them alone.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("pothos")["plant_id"]
+        self.store.record_plant_weight(self.plant, 1200, kind="full", observed=False)
+        self.store.record_plant_weight(self.plant, 940, kind="thirsty", observed=False)
+        self.store.record_plant_weight(self.plant, 1100, at="2026-10-01T06:00:00Z")
+        self.store.record_plant_weight(self.plant, 971, at="2026-10-03T06:00:00Z")
+
+    def _caution(self):
+        forecast = self.store.watering_forecast(self.plant)
+        return next((c for c in forecast["cautions"]
+                     if c["code"] == "said_still_too_wet"), None)
+
+    def test_nothing_is_said_when_nothing_was_said(self) -> None:
+        self.assertIsNone(self._caution())
+
+    def test_a_press_is_reported_with_how_far_above_the_mark(self) -> None:
+        self.store.defer_watering(self.plant)
+        caution = self._caution()
+        self.assertIsNotNone(caution, "the press is nowhere near the forecast")
+        self.assertIn("31 g above", caution["what"])
+
+    def test_presses_above_the_mark_are_about_being_asked_early(self) -> None:
+        """Above the mark disputes the timing; at or below disputes the mark."""
+        self.store.defer_watering(self.plant)
+        self.assertIn("asked early", self._caution()["what"])
+
+    def test_a_press_at_the_mark_makes_no_such_claim(self) -> None:
+        self.store.record_plant_weight(self.plant, 930, at="2026-10-04T06:00:00Z")
+        self.store.defer_watering(self.plant)
+        self.assertNotIn("asked early", self._caution()["what"])
+
+    def test_watering_clears_what_was_said(self) -> None:
+        self.store.defer_watering(self.plant)
+        self.store.record_plant_care(self.plant, "watering")
+        self.assertIsNone(self._caution(),
+                          "a watering answers the question and the note with it")
+
+    def test_it_says_plainly_that_nothing_has_changed(self) -> None:
+        self.store.defer_watering(self.plant)
+        self.assertIn("Nothing has been changed by it yet", self._caution()["how"])

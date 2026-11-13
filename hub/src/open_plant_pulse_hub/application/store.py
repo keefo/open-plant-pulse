@@ -4035,6 +4035,30 @@ class ReadingStore:
                 return None
         return {"at": row[0], "grams": said_at}
 
+    def _deferrals_since_watering(self, plant_id: int) -> List[Dict[str, Any]]:
+        """Every "still too wet" since the last watering answered them."""
+        with self._condition:
+            rows = self._database.execute(
+                """
+                SELECT changes_json FROM care_events
+                WHERE plant_id = ? AND kind = 'watering_deferred'
+                  AND detected_at > COALESCE(
+                      (SELECT MAX(detected_at) FROM care_events
+                       WHERE plant_id = ? AND kind = 'watering'), '')
+                ORDER BY detected_at
+                """,
+                (plant_id, plant_id),
+            ).fetchall()
+        said = []
+        for (changes_json,) in rows:
+            try:
+                changes = json.loads(changes_json) or {}
+            except (TypeError, ValueError):
+                changes = {}
+            said.append({"grams": changes.get("grams"),
+                         "thirsty_grams": changes.get("thirsty_grams")})
+        return said
+
     def _open_watering_window(self, plant_id: int) -> bool:
         """Write down that this plant has asked for water.
 
@@ -5285,6 +5309,34 @@ class ReadingStore:
                            "next watering and press Just watered to set the full "
                            "weight again.",
                 })
+
+        # What the person has said about this, since it was last watered.
+        #
+        # A press is evidence and was going straight into the care log,
+        # where it reads as one more line among the waterings. It belongs
+        # beside the forecast it disagreed with: the figure is only
+        # trustworthy to somebody who can see it has been contradicted,
+        # and three presses on one plant say more than any of them alone.
+        said_wet = self._deferrals_since_watering(plant_id)
+        if said_wet:
+            above = [d["grams"] - d["thirsty_grams"] for d in said_wet
+                     if d["grams"] is not None and d["thirsty_grams"] is not None]
+            how_many = ("Once since this was last watered" if len(said_wet) == 1
+                        else f"{len(said_wet)} times since this was last watered")
+            where = ""
+            if above and all(gap > 0 for gap in above):
+                typical = round(sum(above) / len(above))
+                where = (f", at about {typical} g above the weight it asks water "
+                         "at -- so this is about being asked early, not about "
+                         "the weight being wrong")
+            cautions.append({
+                "code": "said_still_too_wet",
+                "what": f"{how_many} you have said the soil was still wet{where}",
+                "how": "Nothing has been changed by it yet. The presses are kept "
+                       "with the weight each was made at, and once there are "
+                       "enough of them on one plant they are what the hub will "
+                       "learn this plant's own weight from.",
+            })
 
         forecast: Dict[str, Any] = {
             "ready": False,
