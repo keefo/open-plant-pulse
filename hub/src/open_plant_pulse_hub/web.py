@@ -517,7 +517,12 @@ def create_server(
             if path.startswith("/api/plants/"):
                 try:
                     self._require_same_origin()
-                    store.delete_plant(self._plant_id(path[len("/api/plants/") :]))
+                    # The rows go here; the files they named are taken off
+                    # disk afterwards, because a digest shared with a plant
+                    # that is staying is still wanted.
+                    gone = store.delete_plant(self._plant_id(path[len("/api/plants/") :]))
+                    if photos is not None and gone:
+                        photos.prune(gone)
                 except ValueError as error:
                     self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
                     return
@@ -877,6 +882,9 @@ def create_server(
                         self._plant_id(path[len("/api/plants/") : -len("/photos")]),
                         parse_qs(urlparse(self.path).query).get("taken_at", [None])[0],
                     )
+                elif path.startswith("/api/plants/") and path.endswith("/defer"):
+                    result = store.defer_watering(
+                        self._plant_id(path[len("/api/plants/") : -len("/defer")]))
                 elif path.startswith("/api/plants/") and path.endswith("/care"):
                     plant_id = self._plant_id(path[len("/api/plants/") : -len("/care")])
                     result = store.record_plant_care(

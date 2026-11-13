@@ -1027,13 +1027,12 @@ function renderZigbeeDevicePage() {
   renderZigbeeSubject(device);
 
   // A way back to the device's own page, offered only when the device says
-  // its Wi-Fi is on and has told us what it answers to. Guessing an address
-  // would produce a link that goes nowhere.
+  // its Wi-Fi has an address and has told us what it answers to. Guessing
+  // an address would produce a link that goes nowhere.
   const notes = (device && device.notes) || {};
   const host = notes.ip || notes.host;
   const ownFigure = document.getElementById("zigbee-own-page-figure");
   const own = document.getElementById("zigbee-own-page");
-  // Only while Wi-Fi is on, which is a temporary state by design.
   const reachable = Boolean(host) && last.wifi === true;
   setHidden(ownFigure, !reachable);
   if (reachable) {
@@ -1090,34 +1089,6 @@ function renderZigbeeDevicePage() {
   loadZigbeeMeasurements(eui);
 
   if (!device || kind !== "scale") return;
-
-  // One button showing the action, from what the device reports.
-  //
-  // Wi-Fi off is the normal state of a finished scale, not a fault to
-  // recover from. This panel used to read the other way round -- off
-  // was "Zigbee is the only way to reach this scale", as though
-  // something had gone wrong -- which had it backwards: Zigbee is how
-  // the scale is meant to be reached, and the web server exists for
-  // bringing a board up and for flashing it. Left on it keeps a second
-  // radio associated to a router all day, which is the largest single
-  // draw on a battery device.
-  const button = document.getElementById("zigbee-scale-wifi");
-  const state = document.getElementById("zigbee-scale-wifi-state");
-  if (last.wifi === true || last.wifi === false) {
-    button.textContent = last.wifi ? "Turn Wi-Fi off" : "Turn Wi-Fi on for now";
-    button.dataset.command = last.wifi ? "w 0" : "w 1";
-    button.disabled = false;
-    setText(state, last.wifi
-      ? "Wi-Fi is on, which is for updates and debugging and costs battery."
-        + " Turn it off when you have finished."
-      : "Running on Zigbee alone, which is how it should sit."
-        + " Turn Wi-Fi on when you need its own page or an update.");
-  } else {
-    button.textContent = "Wi-Fi";
-    button.disabled = true;
-    button.removeAttribute("data-command");
-    setText(state, "Waiting for the device to report whether its Wi-Fi is on.");
-  }
 
   const select = document.getElementById("zigbee-scale-interval");
   const intervalState = document.getElementById("zigbee-scale-interval-state");
@@ -2970,6 +2941,10 @@ document.addEventListener("keydown", (event) => {
 
 function renderPage() {
   const page = pageFromLocation();
+  // Left the page with the question open: it is not asked again on the
+  // way back in, and an open confirmation nobody has just opened is one
+  // a stray press answers.
+  if (page !== "plant-config") plantDangerDrawnFor = null;
   /* A section may serve more than one page: the lighting form is the same
    * form whether the plant has a sensor or not. A section may also belong
    * to one kind of device, and that is decided here too rather than being
@@ -3377,7 +3352,12 @@ function createHouseholdCard(key) {
     + '<b class="water-pct"></b></div>'
     // When it needs water first: that is what the list is scanned for.
     + '<div class="fleet-card-tags"><small class="fleet-card-due"></small>'
-    + '<small></small><small class="fleet-card-rate" data-state="rate"></small></div>';
+    + '<small></small><small class="fleet-card-rate" data-state="rate"></small>'
+    // Beside the sentence it disagrees with. Correcting the hub where it
+    // is wrong, rather than on a page two taps away, is the difference
+    // between a control that is used and one that is not.
+    + '<button class="fleet-card-wet" type="button" hidden>Still too wet</button>'
+    + '</div>';
   return card;
 }
 
@@ -3534,13 +3514,17 @@ function updateHouseholdCard(card, plant, sensor) {
   const water = card.querySelector(".fleet-card-water");
   setHidden(water, left == null);
   if (left != null) {
-    /* The length is how full the pot is. The colour is whether the
-     * plant wants anything, which is not the same question: the orchid
-     * sat at 8% above a thirsty mark of 5% -- calm blue, beside a chip
-     * reading "Water now". Two elements on one card disagreeing about
-     * the same plant is worse than either being wrong alone. */
+    /* The length is how full the pot is, and so is the colour: both
+     * answer "where is this pot", and the chip beside them answers
+     * "when". They disagreed once -- the orchid at 8 % above a thirsty
+     * mark of 5 %, calm blue beside a chip reading "Water now" -- and
+     * the fix then was to colour the bar from the forecast, which made
+     * the bar stop meaning what its length meant. With the chip now
+     * saying "Today" for a forecast and "Thirsty" for a fact there is
+     * nothing left to disagree about: a half-full bar beside "Today"
+     * reads exactly as it should. */
     const thirsty = weight.thirsty_percent ?? 15;
-    const dueNow = plant?.water_in_days != null && plant.water_in_days < 1;
+    const dueNow = plant?.thirsty_now === true;
     setStyle(water.querySelector(".water-fill"), "width",
              `${Math.max(0, Math.min(100, left))}%`);
     setData(water, "state", left <= thirsty || dueNow ? "low" : "ok");
@@ -3573,10 +3557,40 @@ function updateHouseholdCard(card, plant, sensor) {
    * Only where the hub can actually say; the plant's page explains why not. */
   const due = card.querySelector(".fleet-card-due");
   const days = plant?.water_in_days;
-  setText(due, days == null ? ""
-    : days < 1 ? "Water now" : `Water in ${Math.round(days)}d`);
-  setHidden(due, days == null);
-  setData(due, "state", days == null ? "unknown" : days < 1 ? "now" : "later");
+  /* Three sentences, because there are three situations and the card had
+     two words for them. "Water now" was said to a plant twenty-one hours
+     from its mark and to one that had been past it since Tuesday: the
+     first is a forecast, the second is a fact, and reading the forecast
+     as a fact is what made a pot at 59 % look like an emergency. */
+  const thirstyNow = plant?.thirsty_now === true;
+  /* "Thirsty" survives having no forecast. A pot under its mark with one
+     weighing has no drinking rate and so no days, and used to show no
+     chip at all -- the plant the list most needed to surface was the one
+     it said nothing about. */
+  setText(due, thirstyNow ? "Thirsty"
+    : days == null ? ""
+    : days < 1 ? "Today" : `Water in ${Math.round(days)}d`);
+  setHidden(due, days == null && !thirstyNow);
+  setData(due, "state", thirstyNow ? "now"
+    : days == null ? "unknown" : days < 1 ? "today" : "later");
+
+  /* Three rules, and the third is the one that needs saying.
+     Only while the hub is asking: a plant three days off has made no
+     claim worth disputing, and a button on every card is noise.
+     Not again once answered: the hub has the answer.
+     Again when the question is new, which the pot having moved decides
+     rather than a clock -- and the same rule keeps the arithmetic
+     honest, because two presses at 699 g and 697 g are one fact counted
+     twice, and a posterior that counts them twice narrows on nothing. */
+  const asking = days != null && (thirstyNow || days < 1);
+  const wet = card.querySelector(".fleet-card-wet");
+  if (wet) {
+    setHidden(wet, !asking || plant?.watering_deferred != null);
+    // Through the guarded helper: written straight, this is a mutation on
+    // every card on every poll, and the page stops holding still under
+    // somebody's hands.
+    setData(wet, "plant", plant?.plant_id ?? "");
+  }
 }
 
 
@@ -6563,11 +6577,19 @@ function renderPhotoViewer() {
   setText(document.getElementById("photo-viewer-when"),
     new Date(taken).toLocaleDateString([], {year: "numeric", month: "long", day: "numeric"}));
   /* How long before now, and how far from the picture above it -- the gap
-     is what says whether a change took a fortnight or half a year. */
+     is what says whether a change took a fortnight or half a year.
+     "2 days after the one below" said it at twice the length, and the
+     bar it shares with the date and the count has only one line: the
+     long way round pushed the count off the end on a phone. "apart"
+     needs no referent, because the only thing a photograph can be
+     apart from here is its neighbour. */
   const previous = photos[at + 1];
-  const apart = previous
-    ? ` \u00b7 ${describeSpan(Date.parse(taken) - Date.parse(previous.taken_at || previous.added_at))} after the one below`
-    : "";
+  const gap = previous
+    ? describeSpan(Date.parse(taken) - Date.parse(previous.taken_at || previous.added_at))
+    : null;
+  // describeSpan says a bare "hours" inside a day, which reads as a
+  // length beside "apart" and as nonsense beside a number.
+  const apart = gap === null ? "" : ` \u00b7 ${gap === "hours" ? "hours" : gap} apart`;
   setText(document.getElementById("photo-viewer-since"), `${daysSince(taken)}${apart}`);
   setText(document.getElementById("photo-viewer-count"), `${at + 1} of ${photos.length}`);
 
@@ -7346,6 +7368,99 @@ function renderPlantConfig() {
    * moment later does not look like a form still loading -- it looks
    * like a form that disagrees with you, and then changes its mind. */
   setHidden(document.getElementById("plant-config-form"), false);
+  renderPlantDanger();
+}
+
+/* What this plant is attached to, named rather than counted.
+ *
+ * "3 attachments" tells nobody whether the probe they rely on is about
+ * to be freed or destroyed. These are let go of: the sensor stays
+ * adopted and the lights keep their schedules. Saying which is the
+ * difference between a delete somebody meant and one they regret, and
+ * it is the half of this that is not irreversible.
+ */
+function plantAttachmentsSentence() {
+  if (!selectedPlant) return "";
+  const held = [];
+  if (selectedPlant.sensor_id) held.push(`the sensor ${selectedPlant.sensor_id}`);
+  if (selectedPlant.room) held.push(`the room ${selectedPlant.room}`);
+  const lights = (selectedPlant.light_days || []).length;
+  if (lights) held.push(lights === 1 ? "one light" : `${lights} lights`);
+  if (!held.length) return "This plant is not attached to anything else.";
+  const last = held.pop();
+  const list = held.length ? `${held.join(", ")} and ${last}` : last;
+  return `${list} will be let go of, not deleted: a sensor stays adopted `
+    + "and a light keeps its schedule.";
+}
+
+/* Drawn once per plant, not once a second.
+ *
+ * The poll calls this, and it used to shut the confirmation every time
+ * it ran: the two buttons appeared and were gone again before a hand
+ * could reach them. A question the page keeps withdrawing cannot be
+ * answered. So the confirmation is closed when the plant changes --
+ * which is the only time a stale question would be about the wrong
+ * plant -- and left alone otherwise.
+ */
+let plantDangerDrawnFor = null;
+
+function renderPlantDanger() {
+  setText(document.getElementById("plant-delete-lets-go"), plantAttachmentsSentence());
+  if (plantDangerDrawnFor === selectedPlant.plant_id) return;
+  plantDangerDrawnFor = selectedPlant.plant_id;
+  keepPlant();
+}
+
+/* Two presses, and the second one names the plant.
+ *
+ * A red button at the foot of a page is reachable by a stray tap, and
+ * what it takes cannot be put back. The second press is not a
+ * formality: it is the one that says which plant, so the wrong page is
+ * caught by reading rather than by remembering.
+ */
+function askToDeletePlant() {
+  if (!selectedPlant) return;
+  setText(document.getElementById("plant-delete-summary"),
+    `Delete ${selectedPlant.display_name} and everything recorded about it?`
+    + " This cannot be undone.");
+  setText(document.getElementById("plant-delete-really"),
+    `Yes, delete ${selectedPlant.display_name}`);
+  setHidden(document.getElementById("plant-delete-confirm"), false);
+  setHidden(document.getElementById("plant-delete"), true);
+  setText(document.getElementById("plant-delete-message"), "");
+}
+
+function keepPlant() {
+  setHidden(document.getElementById("plant-delete-confirm"), true);
+  setHidden(document.getElementById("plant-delete"), false);
+  document.getElementById("plant-delete-really").disabled = false;
+}
+
+async function deletePlantFromItsPage() {
+  if (!selectedPlant) return;
+  const plantId = selectedPlant.plant_id;
+  const message = document.getElementById("plant-delete-message");
+  const button = document.getElementById("plant-delete-really");
+  button.disabled = true;
+  setText(message, "");
+  let response;
+  try {
+    response = await fetch(`/api/plants/${plantId}`, { method: "DELETE" });
+  } catch (_error) {
+    button.disabled = false;
+    setText(message, "The hub could not be reached. The plant was not deleted.");
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    button.disabled = false;
+    setText(message, payload.error || "Could not delete the plant.");
+    return;
+  }
+  // Dropped before leaving, so the next poll cannot draw a page from a
+  // copy of a plant that is no longer there.
+  selectedPlant = null;
+  navigate("/plants");
 }
 
 async function savePlantConfig(event) {
@@ -8218,12 +8333,25 @@ function anchorSegments(weights, startTime, endTime, ignoreBefore) {
    * and the first anchor stated after it -- a sliver of the old pot's
    * band, hundreds of grams tall, against the left edge.
    *
-   * Where nothing has been stated since, the old anchors are left to
-   * hold: a band from the pot before is a poorer answer than none,
-   * but it is the only one there is, and the repot line says so. */
-  const sinceRepot = Number.isFinite(ignoreBefore)
-    ? stated.filter((row) => row.at >= ignoreBefore) : stated;
-  const usable = sinceRepot.length ? sinceRepot : stated;
+   * Where a kind has not been stated since, its last word before the
+   * repotting is left to hold, because that is the anchor still in
+   * force -- it is the number the figures above the chart are showing.
+   * Only that one, not its history, or the old pot's steps come back.
+   *
+   * Per kind, and not for the set: this dropped a Dry stated seven
+   * minutes before the repotting was logged, while Full and Thirsty
+   * were restated after it. Two anchors are not a band, so the chart
+   * drew a bare line and the figures above it still said "Dry at
+   * 171 g". The pot was not repotted between those two statements --
+   * one person was setting all three. */
+  const kinds = ["full", "thirsty", "dry"];
+  const usable = !Number.isFinite(ignoreBefore) ? stated : kinds
+    .flatMap((kind) => {
+      const ofKind = stated.filter((row) => row.kind === kind);
+      const since = ofKind.filter((row) => row.at >= ignoreBefore);
+      return since.length ? since : ofKind.slice(-1);
+    })
+    .sort((one, two) => one.at - two.at || one.id - two.id);
 
   // What was in force when the window opens: the newest of each kind
   // stated at or before it. Where the first of a kind comes after the
@@ -8294,6 +8422,23 @@ function renderPlantWeightChart() {
     : endTime - plantWeightTrendMs;
   const startTime = Number.isFinite(repotAt)
     ? Math.max(windowStart, repotAt) : windowStart;
+
+  /* The heading says the window that is drawn, because the window moves.
+   *
+   * It was fixed markup reading "last 30 days", and the chart has always
+   * fitted itself to the history there is -- so a pot first weighed this
+   * morning was drawn over a few hours under a title claiming a month.
+   * The reader trusts the title and misreads every gap in the line. */
+  /* Said with the one describeSpan there is, not a second of the same
+   * name: a duplicate declaration wins for every caller of the first,
+   * and the first is what dates the photographs. Where a repotting cut
+   * the window, the repotting is the more useful answer than the hours
+   * it leaves -- and the only case narrower than the chart's own floor
+   * of a day. */
+  setText(document.getElementById("plant-weight-chart-title"),
+          Number.isFinite(repotAt) && repotAt > windowStart
+            ? "Pot weight · since repotting"
+            : `Pot weight · last ${describeSpan(endTime - startTime)}`);
 
   /* The scale always holds both anchors, so the band they make is visible
    * even when every weighing sits above or below it. */
@@ -9060,11 +9205,6 @@ document.getElementById("zigbee-name-save").addEventListener("click", async () =
 document.getElementById("zigbee-scale-tare").addEventListener("click", () => {
   sendZigbeeCommand(zigbeeEuiFromLocation(), "t");
 });
-document.getElementById("zigbee-scale-wifi").addEventListener("click", (event) => {
-  if (event.target.dataset.command) {
-    sendZigbeeCommand(zigbeeEuiFromLocation(), event.target.dataset.command);
-  }
-});
 // What the person chose, until the scale confirms it by reporting that rate.
 // A sleepy device collects its commands on its own schedule, so "not yet"
 // is a normal state and has to look different from "no".
@@ -9304,8 +9444,15 @@ document.getElementById("plant-photo-add").addEventListener("keydown", (event) =
   }
 });
 document.getElementById("photo-viewer-close").addEventListener("click", closePhotoViewer);
-document.getElementById("photo-viewer-newer").addEventListener("click", () => stepPhotoViewer(-1));
-document.getElementById("photo-viewer-older").addEventListener("click", () => stepPhotoViewer(1));
+/* The sides of the picture: older towards the left, newer towards the
+   right, the way the scrubber beneath them runs. A tap that was the end
+   of a swipe has already been counted. */
+function reachPhotoViewer(by) {
+  if (Date.now() - photoSwipeSteppedAt < 400) return;
+  stepPhotoViewer(by);
+}
+document.getElementById("photo-viewer-newer").addEventListener("click", () => reachPhotoViewer(-1));
+document.getElementById("photo-viewer-older").addEventListener("click", () => reachPhotoViewer(1));
 // The backdrop closes; the picture and its controls do not, or every
 // attempt to look closely would shut the thing being looked at.
 document.getElementById("photo-viewer").addEventListener("click", (event) => {
@@ -9330,6 +9477,7 @@ document.addEventListener("keydown", (event) => {
  * that simply does not move. */
 const DOUBLE_TAP_MS = 320;
 let photoSwipeFrom = null;
+let photoSwipeSteppedAt = 0;
 let photoLastTap = 0;
 const photoViewerFrame = document.getElementById("photo-viewer");
 
@@ -9373,6 +9521,11 @@ photoViewerFrame.addEventListener("pointerup", (event) => {
   if (photoZoom !== 1 || from.moved) return;
   // Far enough to be meant, and more vertical than horizontal.
   if (Math.abs(down) < 60 || across > Math.abs(down)) return;
+  /* A swipe that began on one of the sides ends in a click on it, and
+     the two would step twice for one gesture. The swipe has the
+     movement to prove it was meant, so it wins and the click is
+     dropped. */
+  photoSwipeSteppedAt = Date.now();
   stepPhotoViewer(down > 0 ? -1 : 1);
 });
 
@@ -9527,6 +9680,44 @@ document.getElementById("alert-hear").addEventListener("click", hearAlertSound);
 document.getElementById("alert-cancel").addEventListener("click", clearRuleForm);
 document.getElementById("room-page-form").addEventListener("submit", saveRoomPage);
 document.getElementById("room-page-delete").addEventListener("click", deleteRoomFromItsPage);
+/* "Still too wet", from the card that just asked.
+ *
+ * Delegated, because the cards are rebuilt as the list sorts and
+ * refreshes, and a listener per card would be hundreds re-attached on a
+ * poll. The card is a link to the plant, so the press has to be stopped
+ * from following it: the person is answering the card, not leaving it. */
+document.getElementById("fleet-grid").addEventListener("click", async (event) => {
+  const wet = event.target.closest(".fleet-card-wet");
+  if (!wet) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const plantId = wet.dataset.plant;
+  if (!plantId) return;
+  wet.disabled = true;
+  try {
+    // With a body, because the hub refuses a POST without one.
+    const answered = await fetch(`/api/plants/${plantId}/defer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (!answered.ok) {
+      wet.disabled = false;
+      return;
+    }
+  } catch (_error) {
+    wet.disabled = false;
+    return;
+  }
+  // Gone at once rather than on the next poll: the answer has been given
+  // and a question still on screen invites it to be given twice.
+  setHidden(wet, true);
+  wet.disabled = false;
+  refresh();
+});
+document.getElementById("plant-delete").addEventListener("click", askToDeletePlant);
+document.getElementById("plant-delete-cancel").addEventListener("click", keepPlant);
+document.getElementById("plant-delete-really").addEventListener("click", deletePlantFromItsPage);
 // Choosing a mode shows what that mode is set by, without waiting for
 // a save to reveal the fields the choice was made for.
 document.getElementById("box-mode").addEventListener("change", (event) => {

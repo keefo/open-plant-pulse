@@ -203,6 +203,10 @@ def vapour_pressure_deficit(celsius: float, humidity_percent: float) -> float:
 CARE_KINDS = {
     "watering": "Waterings",
     "watering_due": "Overdue reminders",
+    # The hub asked and was told no. Kept as care, because it is a
+    # judgement somebody made about a plant while looking at it, and the
+    # weight it was made at is what makes it worth keeping.
+    "watering_deferred": "Said still too wet",
     "fertilizing": "Feedings",
     "lighting": "Lights on and off",
     "repotting": "Repottings",
@@ -2147,11 +2151,12 @@ class ReadingStore:
                 """,
                 (display_name, display_name, display_name, sensor_id),
             )
-            if row[0] is not None:
-                self._database.execute(
-                    "UPDATE plants SET display_name = ? WHERE plant_id = ?",
-                    (display_name, row[0]),
-                )
+            # The plant keeps its own name. This renamed whatever the
+            # sensor was attached to, which is the same mistake as a plant
+            # renaming its sensor and worse in this direction: naming a
+            # thermometer after the room it measures silently renamed a
+            # dracaena to "living_thermometer". Each page edits the thing
+            # it is about.
         result = self.sensor(sensor_id)
         assert result is not None
         return result
@@ -3937,7 +3942,152 @@ class ReadingStore:
             # the part-built history it is read against would have the hub
             # announcing findings it will contradict two rows later.
             self.record_water_use_findings(plant_id)
+        # Only an ordinary weighing. Setting an anchor is calibration, and
+        # the person doing it is holding the pot: telling them it wants
+        # water is answering a question nobody asked, and it would file a
+        # window every time a number was corrected.
+        if kind == "reading" and observed:
+            self._open_watering_window(plant_id)
         return self.plant_weight_status(plant_id)
+
+    # How much of the headroom a pot must lose before the same question is
+    # worth asking again.
+    #
+    # Deferring at 699 g and being asked again at 697 g is one question
+    # asked twice; at 650 g it is a different question, because the plant
+    # has moved and so has the evidence. A fixed cooldown in hours would be
+    # wrong both ways -- too short for a slow pot in winter, too long for an
+    # alocasia that crosses its whole band in four and a half days.
+    DEFERRAL_MOVES_ON = 0.25
+
+    def defer_watering(self, plant_id: int) -> Dict[str, Any]:
+        """Somebody looked at the plant and said it is still too wet.
+
+        The only evidence nothing else can supply: a judgement, at a known
+        weight, that this plant did not want water there. It says the
+        weight it asks for water at is lower than the hub thinks, and it
+        is kept with the weight attached, because without that it is not
+        evidence about anything.
+
+        Nothing is learned from it yet. It is recorded so that there is
+        something to learn from, and so the hub stops asking until the
+        question has changed.
+        """
+        status = self.plant_weight_status(plant_id)
+        if self.plant(plant_id) is None:
+            raise ValueError("unknown plant")
+        grams = status["latest"]["grams"] if status["latest"] else None
+        thirsty_grams = status["thirsty"]["grams"] if status["thirsty"] else None
+        with self._condition:
+            self._save_event(
+                CareEvent(
+                    event_id=f"deferred-{plant_id}-{uuid4().hex}",
+                    sensor_id="",
+                    kind="watering_deferred",
+                    detected_at=_timestamp(datetime.now(timezone.utc)),
+                    title="Still too wet",
+                    summary=(f"Said still too wet at {grams} g."
+                             if grams is not None else "Said still too wet."),
+                    confidence="recorded",
+                    changes={"source": "manual", "grams": grams,
+                             "thirsty_grams": thirsty_grams},
+                ),
+                plant_id=plant_id,
+            )
+        return self.plant_weight_status(plant_id)
+
+    def watering_deferred_at(self, plant_id: int) -> Optional[Dict[str, Any]]:
+        """The last "still too wet", if it still stands.
+
+        It stands until the plant is watered -- which answers it -- or
+        until the pot has lost enough for the question to be a new one.
+        """
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT detected_at, changes_json FROM care_events
+                WHERE plant_id = ? AND kind = 'watering_deferred'
+                  AND detected_at > COALESCE(
+                      (SELECT MAX(detected_at) FROM care_events
+                       WHERE plant_id = ? AND kind = 'watering'), '')
+                ORDER BY detected_at DESC LIMIT 1
+                """,
+                (plant_id, plant_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            changes = json.loads(row[1]) or {}
+        except (TypeError, ValueError):
+            changes = {}
+        said_at = changes.get("grams")
+        status = self.plant_weight_status(plant_id)
+        now_grams = status["latest"]["grams"] if status["latest"] else None
+        dry = status["dry"]["grams"] if status["dry"] else None
+        if said_at is not None and now_grams is not None:
+            # The headroom it had then, and how much of it has gone. Against
+            # the dry weight where there is one, because that is the end of
+            # what the pot can lose; against the deferral itself otherwise.
+            floor = dry if dry is not None else 0
+            headroom = max(1.0, float(said_at) - float(floor))
+            if (float(said_at) - float(now_grams)) / headroom >= self.DEFERRAL_MOVES_ON:
+                return None
+        return {"at": row[0], "grams": said_at}
+
+    def _open_watering_window(self, plant_id: int) -> bool:
+        """Write down that this plant has asked for water.
+
+        `watering_due` has been a kind the hub knows, and reads in four
+        places, and has never once written: the missed-watering count is
+        built from these events, so it has always been zero, and nothing
+        records what the hub said in order to compare it with what the
+        person then did.
+
+        Opened when the pot is at or under the weight it asks water at --
+        a fact about two numbers rather than a forecast, so a window is
+        never opened by an estimate that later moves. One window at a
+        time: the scale reports every half minute and a window is a
+        question, not a reading. It closes when the plant is watered,
+        which is how `_open_missed_windows` already reads them.
+        """
+        status = self.plant_weight_status(plant_id)
+        if not (status["latest"] and status["thirsty"]):
+            return False
+        if status["latest"]["grams"] > status["thirsty"]["grams"]:
+            return False
+        with self._condition, self._database:
+            already = self._database.execute(
+                """
+                SELECT 1 FROM care_events
+                WHERE plant_id = ? AND kind = 'watering_due'
+                  AND detected_at > COALESCE(
+                      (SELECT MAX(detected_at) FROM care_events
+                       WHERE plant_id = ? AND kind = 'watering'), '')
+                LIMIT 1
+                """,
+                (plant_id, plant_id),
+            ).fetchone()
+            if already:
+                return False
+        grams = status["latest"]["grams"]
+        thirsty_grams = status["thirsty"]["grams"]
+        with self._condition:
+            self._save_event(
+                CareEvent(
+                    event_id=f"due-{plant_id}-{uuid4().hex}",
+                    sensor_id="",
+                    kind="watering_due",
+                    detected_at=_timestamp(datetime.now(timezone.utc)),
+                    title=MANUAL_CARE_KINDS.get("watering_due", "Wants water"),
+                    summary=f"{grams} g, at or under the {thirsty_grams} g "
+                            "this plant asks for water at.",
+                    confidence="measured",
+                    changes={"source": "weighing", "grams": grams,
+                             "thirsty_grams": thirsty_grams},
+                ),
+                plant_id=plant_id,
+            )
+        return True
 
     @staticmethod
     def _validate_weighing_time(at: Optional[str]) -> str:
@@ -4777,6 +4927,16 @@ class ReadingStore:
         Averaged by the hour before the deficit is worked out, because the
         deficit does not average linearly and an hour is short enough for
         that not to matter.
+
+        Each reading is averaged on its own, and the two are put together
+        afterwards. Asking for both on one row looked harmless and was
+        not: a thermometer that reports temperature and humidity in
+        separate reports never writes a row holding both, so the join
+        matched nothing at all. Every interval of every plant came back
+        with no drying power -- 356 of them -- and the figure read the
+        same as "there is no sensor in this room", which is why it went
+        unnoticed. An hour with only one of the two is still dropped,
+        below, where an hour with neither would be.
         """
         if room_id is None:
             return {}
@@ -4790,8 +4950,8 @@ class ReadingStore:
                 WHERE sensors.room_id = ?
                   AND sensor_readings.observed_at >= ?
                   AND sensor_readings.observed_at <= ?
-                  AND air_temperature_c IS NOT NULL
-                  AND air_humidity_percent IS NOT NULL
+                  AND (air_temperature_c IS NOT NULL
+                       OR air_humidity_percent IS NOT NULL)
                 GROUP BY hour
                 """,
                 (room_id, _timestamp(start), _timestamp(end)),
@@ -5117,7 +5277,15 @@ class ReadingStore:
             "rate_from": None,
             "spans_used": len(spans),
             "band_spans_used": 0,
-            "thirsty_now": False,
+            # Past the weight it asks for water at. A fact about two
+            # numbers, so it is answered wherever both are known -- the
+            # forecast needs a drinking rate and this does not, and a pot
+            # sitting under its mark since Tuesday should not be reported
+            # as nothing at all merely because it has been weighed once.
+            "thirsty_now": bool(
+                status["latest"] and status["thirsty"]
+                and status["latest"]["grams"] <= status["thirsty"]["grams"]
+            ),
         }
         if missing:
             return forecast
@@ -5224,7 +5392,17 @@ class ReadingStore:
                 # which costs more than everything else here together and
                 # changes nothing the card shows.
                 "daily_grams": self.water_use(row[0], with_air=False)["daily_grams"],
-                "water_in_days": self.watering_forecast(row[0], with_air=False)["days"],
+                # Both, because they are different facts. The days are a
+                # forecast; thirsty_now is the pot already at or past the
+                # weight this plant asks for water at, and a card that
+                # cannot tell them apart says "Water now" to a plant with a
+                # day in hand and to one that has been dry since Tuesday.
+                **(lambda f: {"water_in_days": f["days"],
+                              "thirsty_now": f["thirsty_now"]})(
+                    self.watering_forecast(row[0], with_air=False)),
+                # Having been told it is still too wet, the card stops
+                # saying otherwise until the pot has moved on.
+                "watering_deferred": self.watering_deferred_at(row[0]),
             }
             for row in rows
         ]
@@ -5655,15 +5833,26 @@ class ReadingStore:
                  acquired_at, purchase_price_cents, purchase_place, ppfd_umol_m2s,
                  light_hours_per_day, started_at, 1 if pot_is_weighed else 0, plant_id),
             )
-            # A sensor watching it shows the same name, profile and room, or
-            # its pages and the plant's disagree about the same plant.
+            # The sensor keeps the name it was given. Saving a plant used to
+            # rename whatever watched it, so the two pages would agree -- and
+            # that is right for a probe, which is in the pot and is that
+            # plant. It is wrong for anything measuring the room: a
+            # thermometer on a windowsill speaks for every pot on it, and
+            # naming it after one of the fifteen plants in the room is a
+            # worse disagreement than the one it was avoiding. A sensor
+            # called "living_thermometer" came back as "Dracaena Surculosa
+            # Gold Dust" every time that plant was saved.
+            #
+            # A name is edited where a sensor is edited, which is its own
+            # page, and nowhere else. The room still follows, because a pot
+            # carried to another room takes its probe with it.
             self._database.execute(
                 """
-                UPDATE sensors SET display_name = ?, room_id = ?,
+                UPDATE sensors SET room_id = ?,
                                    profile_id = COALESCE(?, profile_id)
                 WHERE plant_id = ?
                 """,
-                (display_name, room_id, profile_id, plant_id),
+                (room_id, profile_id, plant_id),
             )
         plant = self.plant(plant_id)
         assert plant is not None
@@ -5681,21 +5870,51 @@ class ReadingStore:
         assert plant is not None
         return plant
 
-    def delete_plant(self, plant_id: int) -> None:
+    def delete_plant(self, plant_id: int) -> List[Dict[str, str]]:
         """Forget a plant and everything recorded about it.
 
-        Only a plant with no sensor: one with a sensor is forgotten by letting
-        the sensor go, which has its own consequences for the device.
+        Whatever the plant was attached to is let go of first. A sensor is
+        a device in its own right and stays adopted, simply watching
+        nothing: the plant is gone, the probe is still on the shelf. Lights
+        keep their schedules; only this plant's claim on them goes. The
+        room is a column on the row and leaves with it.
+
+        It used to refuse a plant that had a sensor and say to forget the
+        sensor instead -- which threw away the device to be rid of the
+        plant, and left anyone who did it with neither. It also deleted
+        three tables of six, so a deleted plant left its weighings and its
+        photographs behind with nothing to reach them by.
+
+        Returns the photographs that were filed under it, so the caller
+        can take their files off disk. The rows go either way; the files
+        are not this object's to remove, and a digest may be shared with
+        a plant that is staying.
         """
         plant = self.plant(plant_id)
         if plant is None:
             raise ValueError("unknown plant")
-        if plant["sensor_id"] is not None:
-            raise ValueError("this plant has a sensor; forget the sensor instead")
         with self._condition, self._database:
-            self._database.execute("DELETE FROM care_events WHERE plant_id = ?", (plant_id,))
-            self._database.execute("DELETE FROM plant_journey WHERE plant_id = ?", (plant_id,))
+            photographs = [
+                {"digest": row[0], "content_type": row[1]}
+                for row in self._database.execute(
+                    "SELECT digest, content_type FROM plant_photos WHERE plant_id = ?",
+                    (plant_id,),
+                )
+            ]
+            # Let go, then delete. A sensor outlives the plant it watched.
+            self._database.execute(
+                "UPDATE sensors SET plant_id = NULL WHERE plant_id = ?", (plant_id,)
+            )
+            self._database.execute(
+                "DELETE FROM plant_lights WHERE plant_id = ?", (plant_id,)
+            )
+            for table in ("care_events", "plant_journey", "plant_weights",
+                          "plant_photos"):
+                self._database.execute(
+                    f"DELETE FROM {table} WHERE plant_id = ?", (plant_id,)
+                )
             self._database.execute("DELETE FROM plants WHERE plant_id = ?", (plant_id,))
+        return photographs
 
     def _validate_plant_name(self, display_name: str) -> str:
         display_name = (display_name or "").strip()

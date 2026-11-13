@@ -55,9 +55,16 @@
      of the page uses for "soon". */
   /* What is legible on a filled brand button, either way round. */
   --on-brand: #ffffff;
+  --on-alarm: #ffffff;
   /* Ink for labels sitting on the pot illustration, which keeps its
      own light palette after dark. */
   --on-vessel: #0d3b28;
+  /* Ink on the photograph viewer, whose backdrop is dark in both modes.
+     It used --n100, which is near-white by day and near-black after it:
+     the same dark overlay, with the date written on it in a colour that
+     had flipped underneath. Set once here and never flipped, because
+     the thing it sits on never changes. */
+  --on-overlay: #eef2ef;
 
   --fill-water: #2f85ba;
   --fill-low:   #d98324;
@@ -125,6 +132,7 @@
     --alarm:      #e58a6e;
     /* The button fill lightens after dark, so its text must darken. */
     --on-brand:   #08251a;
+    --on-alarm:   #2a0f08;
     --alarm-wash: #3b211a;
 
     --fill-water: #4aa3d4;
@@ -351,8 +359,20 @@ select:disabled { color: var(--faint); background-color: var(--n100); cursor: no
 .fleet-card small[data-state="rate"] { color: var(--info); background: var(--info-wash); text-transform: none; }
 /* Soon enough to act on reads warm; further off reads like any other fact. */
 .fleet-card small.fleet-card-due { text-transform: none; }
+/* Three states and so three colours, escalating: a plant with days in
+   hand is calm, one that wants water today is worth noticing, and one
+   already past the weight it asks at is the only one that is late.
+   Without a rule of its own "today" would fall to the catch-all above
+   and be painted as an alarm, which is the distinction being drawn. */
 .fleet-card small[data-state="later"] { color: var(--brand); background: var(--brand-wash); }
-.fleet-card small[data-state="now"] { color: var(--warn-ink); background: var(--warn-wash); }
+.fleet-card small[data-state="today"] { color: var(--warn-ink); background: var(--warn-wash); }
+.fleet-card small[data-state="now"] { color: var(--alarm); background: var(--alarm-wash); }
+/* Answering the card, on the card. Quiet, because it is a correction and
+   not an action: it should be findable the moment it is wanted and
+   invisible the rest of the time, which is most of the time -- it is
+   only on the card while the hub is actually asking. */
+.fleet-card-wet { padding: 3px 9px; border: 1px solid var(--n200); border-radius: var(--r-pill); color: var(--dim); background: var(--surface); font-size: var(--t-xs); font-weight: 600; line-height: 1.6; }
+.fleet-card-wet:hover { color: var(--text); border-color: var(--dim); }
 /* Having no sensor is a fact about a plant, not a fault with it. */
 .fleet-card small[data-state="manual"] { color: var(--dim); background: var(--n100); }
 /* A pot with water left reads as well as a sensor reporting in; one nearly
@@ -415,6 +435,15 @@ button { padding: 8px 12px; border: 1px solid var(--n200); border-radius: var(--
 dialog { width: min(620px, calc(100% - 24px)); border: 1px solid var(--n200); border-radius: var(--r-card); color: var(--text); padding: 0; box-shadow: 0 20px 80px rgba(18, 23, 20, .33); }
 dialog::backdrop { background: rgba(18, 23, 20, .53); }
 .danger { color: var(--alarm); }
+/* The control that destroys something, at the foot of the page it is about.
+   Filled rather than outlined: after a long form of ordinary buttons an
+   outlined one reads as another of them, and this is the one with no undo.
+   The width is the warning -- it is not reached by accident. */
+button.danger-wide { width: 100%; padding: 14px 18px; color: var(--on-alarm); background: var(--alarm); border-color: var(--alarm); font-weight: 700; }
+.plant-danger { border-top: 3px solid var(--alarm); }
+.plant-delete-confirm { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--alarm); border-radius: var(--r-card); }
+.plant-delete-confirm p { margin: 0; }
+.plant-delete-choices { display: grid; gap: 10px; grid-template-columns: 1fr 2fr; align-items: center; }
 .topbar { min-height: 120px; display: flex; align-items: center; justify-content: space-between; gap: 28px; }
 .eyebrow { margin: 0 0 5px; color: var(--brand); font-size: var(--t-xs); font-weight: 700; }
 h1, h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
@@ -1055,7 +1084,7 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 .ph-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); grid-auto-rows: 1fr; gap: 12px; margin: 0 0 16px; }
 .ph-figures div { display: flex; flex-direction: column; padding: 12px 14px; border-radius: var(--r-card); background: var(--n100); }
 .ph-figures dt { margin: 0 0 4px; color: var(--dim); font-size: var(--t-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.ph-figures dd { margin: 0; font-size: var(--t-xl); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: none; }
+.ph-figures dd { margin: 0; font-size: var(--t-lg); font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: break-word; hyphens: none; }
 /* A phrase in a figure is still a phrase: it wraps between its words
    and is set smaller, because "battery · end device" at twenty pixels
    is shouting a detail. Numbers keep the larger size. */
@@ -1083,7 +1112,7 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 
 /* The battery sits in a figure box on the sensor page, so it is sized to
    the figures around it rather than to a line of status text. */
-.ph-figures .battery { font-size: var(--t-xl); font-weight: 700; gap: 8px; }
+.ph-figures .battery { font-size: var(--t-lg); font-weight: 700; gap: 8px; }
 .ph-figures .battery-glyph { width: 30px; height: 15px; border-radius: var(--r-ctl); border-width: 2px; }
 .ph-figures .battery-glyph::after { right: -5px; width: 3px; height: 6px; }
 .sensor-plant-link { color: var(--brand); text-decoration: none; border-bottom: 2px solid transparent; }
@@ -1506,25 +1535,62 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
 /* Looking through a plant's photographs. Dark, because the pictures are
    the point and a pale frame around them competes; fixed, because the
    page behind keeps its scroll position for when the viewer closes. */
-.photo-viewer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(16, 22, 16, 0.92); }
+.photo-viewer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px 24px calc(34px + env(safe-area-inset-bottom)); background: rgba(16, 22, 16, 0.92); }
 .photo-viewer[hidden] { display: none; }
-.photo-viewer-frame { position: relative; max-width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; }
-.photo-viewer img { max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; border-radius: var(--r-ctl); background: #0b0f0b; }
+/* A width of its own, not the photograph's.
+   The frame was shrink-to-fit, so it took the width of whatever picture
+   was in it -- and the scrubber inside it took that width too. Dragging
+   from a tall photograph to a wide one moved the track from 478px to
+   1100px under the finger, and the date being pointed at moved with it.
+   A timeline has to mean the same thing from one photograph to the next. */
+.photo-viewer-frame { position: relative; width: min(1100px, 100%); height: 100%; display: flex; flex-direction: column; }
+/* The picture takes the room left over, and the controls under it keep
+   the floor. Sized by the frame rather than sizing it: the scrubber used
+   to sit directly under the photograph, so a short one lifted it and a
+   tall one dropped it, and the bar moved out from under the finger that
+   was dragging it. object-fit keeps the picture's shape inside the box
+   it is given, so filling that box costs the photograph nothing. */
+.photo-viewer-stage { position: relative; flex: 1; min-height: 0; }
+/* Filling the stage rather than sizing it, so the controls below keep
+   the floor whatever shape the photograph is. object-fit keeps the
+   picture's own shape inside the box it is given. */
+.photo-viewer img { width: 100%; height: 100%; object-fit: contain; border-radius: var(--r-ctl); }
 /* The date sits on the picture rather than under it: scrolling through a
    year, the eye stays in one place and only the date changes. */
-.photo-viewer-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 12px; color: var(--n100); }
-.photo-viewer-bar strong { font: 500 20px Georgia, "Times New Roman", serif; }
+.photo-viewer-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 12px; color: var(--on-overlay); }
+.photo-viewer-bar strong { font: 500 var(--t-lg) Georgia, "Times New Roman", serif; }
 .photo-viewer-bar span { color: #9fb09c; font-size: var(--t-sm); }
+/* The count keeps its place whatever the date and the gap come to;
+   the left of the bar gives way instead, because "4 of 16" is the one
+   part of this line that cannot be worked out from the photograph. */
+#photo-viewer-count { flex: none; white-space: nowrap; }
+.photo-viewer-bar > div { min-width: 0; }
 #photo-viewer-since { margin-left: 8px; }
-.photo-viewer-step, .photo-viewer-close { position: absolute; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid rgba(232, 239, 230, 0.25); border-radius: 50%; background: rgba(16, 22, 16, 0.6); color: var(--n100); font-size: var(--t-xl); cursor: pointer; }
-.photo-viewer-step:hover, .photo-viewer-close:hover { background: rgba(232, 239, 230, 0.16); }
-.photo-viewer-step:disabled { opacity: 0.25; cursor: default; }
-.photo-viewer-step[data-step="newer"] { top: 16px; left: 50%; transform: translateX(-50%); }
-.photo-viewer-step[data-step="older"] { bottom: 16px; left: 50%; transform: translateX(-50%); }
-.photo-viewer-close { top: 16px; right: 16px; }
+.photo-viewer-close { position: absolute; top: 16px; right: 16px; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid rgba(232, 239, 230, 0.25); border-radius: 50%; background: rgba(16, 22, 16, 0.6); color: var(--on-overlay); font-size: var(--t-xl); cursor: pointer; }
+.photo-viewer-close:hover { background: rgba(232, 239, 230, 0.16); }
+/* A side of the picture, not a button drawn on top of it. Wide enough
+   for a thumb and no wider: the middle stays free, because that is
+   where a double tap zooms. */
+.photo-viewer-reach { position: absolute; top: 0; bottom: 0; width: max(72px, 22%); padding: 0; border: 0; border-radius: 0; background: none; cursor: pointer; }
+.photo-viewer-reach[data-step="older"] { left: 0; }
+.photo-viewer-reach[data-step="newer"] { right: 0; }
+/* At the end of the roll there is nothing that way, and a side that does
+   nothing should not swallow the tap either.
+   The background is said again because `button:disabled` further down
+   paints every spent button pale -- right for a button with a face, and
+   this one has none: on the last photograph it drew a white panel the
+   height of the picture, beside it. */
+.photo-viewer-reach:disabled { background: none; cursor: default; pointer-events: none; }
+/* Said only where there is a pointer to say it to. A chevron that cannot
+   be hovered is a mark sitting on the photograph for no reason. */
+@media (hover: hover) {
+  .photo-viewer-reach::after { content: ""; position: absolute; top: 50%; width: 15px; height: 15px; margin-top: -8px; border-top: 2px solid var(--on-overlay); border-left: 2px solid var(--on-overlay); opacity: 0; transition: opacity 120ms ease-out; }
+  .photo-viewer-reach[data-step="older"]::after { left: 22px; transform: rotate(-45deg); }
+  .photo-viewer-reach[data-step="newer"]::after { right: 22px; transform: rotate(135deg); }
+  .photo-viewer-reach:hover::after, .photo-viewer-reach:focus-visible::after { opacity: 0.75; }
+}
 @media (max-width: 560px) {
-  .photo-viewer { padding: 12px; }
-  .photo-viewer img { max-height: calc(100vh - 170px); }
+  .photo-viewer { padding: 12px 12px calc(30px + env(safe-area-inset-bottom)); }
 }
 /* Zooming a photograph. No transition on the pan, which follows a finger
    and would lag behind it; the zoom itself is worth easing. */
@@ -1542,7 +1608,7 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
    the honest picture of having photographed a plant three times that
    afternoon. */
 .photo-track-tick { position: absolute; top: 9px; width: 2px; height: 16px; margin-left: -1px; background: rgba(232, 239, 230, 0.45); border-radius: 1px; }
-.photo-track-tick[data-current] { top: 3px; width: 3px; height: 28px; margin-left: -1.5px; background: var(--n100); }
+.photo-track-tick[data-current] { top: 3px; width: 3px; height: 28px; margin-left: -1.5px; background: var(--on-overlay); }
 .photo-track-ends { display: flex; justify-content: space-between; color: #7e8f7c; font-size: var(--t-xs); }
 /* A stretch of time with no photographs, drawn where the track was
    squeezed, so the compression is declared rather than hidden. */

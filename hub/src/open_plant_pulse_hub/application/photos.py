@@ -124,6 +124,32 @@ class PhotoLibrary:
                 path.unlink()
         return True
 
+    def prune(self, photographs: List[Dict[str, str]]) -> int:
+        """Take the files of already-deleted photographs off disk.
+
+        The rows have gone -- a deleted plant takes them with it -- so
+        what is left is files nothing points at. Same rule as deleting
+        one photograph: a digest two plants shared is one file, and it
+        stays while the other plant still wants it.
+
+        A file that is already missing is not a failure. The point is
+        that nothing of the plant is left, and a file that was never
+        written, or went last time, satisfies that as well as a delete.
+        """
+        removed = 0
+        for photograph in photographs:
+            digest = photograph["digest"]
+            if self._store.photo_digest_in_use(digest):
+                continue
+            try:
+                path = self.path(digest, photograph["content_type"])
+            except ValueError:
+                continue          # not a name this library ever wrote
+            if path.exists():
+                path.unlink()
+                removed += 1
+        return removed
+
     def path(self, digest: str, content_type: str) -> Path:
         if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise ValueError("photo digest must be 64 hexadecimal characters")

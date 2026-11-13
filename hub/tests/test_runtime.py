@@ -1150,3 +1150,129 @@ class EveryGatewaySaysTheSameThingTests(unittest.TestCase):
         gateway.released_value = True
         self.assertTrue(bool(getattr(gateway, "released", False)),
                         "a gateway that let go must read as released")
+
+
+class DeletingAPlantLetsGoBeforeItDeletesTests(unittest.TestCase):
+    """The one delete that takes a plant, and what it must not take with it.
+
+    It used to refuse a plant that had a sensor and say to forget the
+    sensor instead -- which threw a working device away to be rid of a
+    plant, and left whoever did it with neither. It also deleted three
+    of the six tables that hold a plant, so what it left behind was a
+    row of weighings and a shelf of photographs nothing could reach.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("white bird")["plant_id"]
+        self.other = self.store.create_plant("the one that stays")["plant_id"]
+        self.sensor = self.store.seen_zigbee_device(
+            "aabbccddeeff0011", "soil")["sensor_id"]
+        self.store.manage_sensor(
+            self.sensor, "probe", None, None, None, None, 600,
+            attach_to_plant_id=self.plant)
+
+    def _count(self, table: str, plant_id: int) -> int:
+        with self.store._condition:
+            return self.store._database.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE plant_id = ?", (plant_id,)
+            ).fetchone()[0]
+
+    def test_a_plant_with_a_sensor_can_be_deleted(self) -> None:
+        self.store.delete_plant(self.plant)
+        self.assertIsNone(self.store.plant(self.plant), "the plant is gone")
+
+    def test_the_sensor_is_let_go_of_and_not_deleted(self) -> None:
+        self.store.delete_plant(self.plant)
+        sensors = {s["sensor_id"]: s for s in self.store.sensors()}
+        self.assertIn(self.sensor, sensors,
+                      "the probe is a device of its own and stays adopted")
+        self.assertIsNone(sensors[self.sensor]["plant_id"],
+                          "it watches nothing now, rather than a plant that is gone")
+
+    def test_nothing_of_the_plant_is_left_behind(self) -> None:
+        self.store.record_plant_weight(self.plant, 1200.0)
+        self.store.delete_plant(self.plant)
+        for table in ("care_events", "plant_journey", "plant_weights",
+                      "plant_photos", "plant_lights"):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    self._count(table, self.plant), 0,
+                    f"{table} still holds rows for a plant that was deleted")
+
+    def test_the_other_plant_is_untouched(self) -> None:
+        self.store.record_plant_weight(self.other, 900.0)
+        self.store.delete_plant(self.plant)
+        self.assertIsNotNone(self.store.plant(self.other))
+        self.assertEqual(self._count("plant_weights", self.other), 1,
+                         "deleting one plant reached into another")
+
+    def test_an_unknown_plant_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.delete_plant(99999)
+
+
+class AirFromASensorThatReportsSeparatelyTests(unittest.TestCase):
+    """Temperature and humidity need not arrive in the same report.
+
+    The room's drying power was gathered with a query that wanted both
+    on one row. A thermometer that reports each attribute on its own --
+    which the two in this house do, every time -- never writes such a
+    row, so the join matched nothing: 356 intervals across 20 plants,
+    none with a drying figure, and no complaint anywhere, because an
+    empty result reads the same as "no sensor in that room".
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.room = self.store.create_room("living")["room_id"]
+
+    def _reading(self, sensor_id, at, *, temperature=None, humidity=None):
+        with self.store._condition, self.store._database:
+            self.store._database.execute(
+                """INSERT INTO sensor_readings
+                   (sensor_id, observed_at, received_at,
+                    air_temperature_c, air_humidity_percent)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (sensor_id, at, at, temperature, humidity))
+
+    def test_the_two_are_averaged_apart_and_joined_after(self) -> None:
+        from datetime import datetime, timezone
+        self.store.seen_zigbee_device("a4c1381ecb6cffff", "thermometer")
+        sensor_id = "zigbee-a4c1381ecb6cffff"
+        self.store.manage_sensor(sensor_id, "living_thermometer", None, None,
+                                 None, None, 1800, room_id=self.room)
+        # As the device actually reports: never both in one row.
+        for minute, temperature, humidity in ((5, 22.0, None), (20, None, 50.0),
+                                              (35, 22.4, None), (50, None, 52.0)):
+            self._reading(sensor_id, f"2026-11-12T04:{minute:02d}:00Z",
+                          temperature=temperature, humidity=humidity)
+
+        hours = self.store._room_drying_hours(
+            self.room,
+            datetime(2026, 11, 12, 4, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 12, 5, 0, tzinfo=timezone.utc))
+
+        self.assertEqual(
+            len(hours), 1,
+            "an hour holding both readings, in separate rows, yielded no "
+            "drying figure at all")
+        # 22.2 C at 51 % is about 1.3 kPa; the exact figure is the formula's.
+        self.assertGreater(list(hours.values())[0], 1.0)
+        self.assertLess(list(hours.values())[0], 1.6)
+
+    def test_an_hour_with_only_one_of_the_two_is_still_dropped(self) -> None:
+        from datetime import datetime, timezone
+        self.store.seen_zigbee_device("a4c1381ecb6cffff", "thermometer")
+        sensor_id = "zigbee-a4c1381ecb6cffff"
+        self.store.manage_sensor(sensor_id, "living_thermometer", None, None,
+                                 None, None, 1800, room_id=self.room)
+        self._reading(sensor_id, "2026-11-12T04:05:00Z", temperature=22.0)
+        self._reading(sensor_id, "2026-11-12T04:35:00Z", temperature=22.4)
+
+        hours = self.store._room_drying_hours(
+            self.room,
+            datetime(2026, 11, 12, 4, 0, tzinfo=timezone.utc),
+            datetime(2026, 11, 12, 5, 0, tzinfo=timezone.utc))
+
+        self.assertEqual(hours, {}, "a deficit needs both halves, not one")

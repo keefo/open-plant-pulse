@@ -120,13 +120,24 @@ class ManualPlantTests(unittest.TestCase):
         self.assertEqual(journey["started_at"], plant["created_at"])
         self.assertEqual(journey["monitored_days"], 1)
 
-    def test_a_plant_with_a_sensor_is_let_go_of_through_the_sensor(self) -> None:
+    def test_a_plant_with_a_sensor_is_deleted_and_the_sensor_let_go(self) -> None:
+        """This used to refuse, and send the user to delete the sensor.
+
+        That answered "I want this plant gone" by taking away a device
+        that had done nothing wrong, and anyone who followed it lost
+        both. The plant goes; the probe stays adopted, watching nothing
+        until it is put on another pot.
+        """
         observe(self.store)
         self.store.manage_sensor("sensor-one", "Fern", "Office", "strelitzia", None, None, 1800)
         plant_id = self.store.sensor("sensor-one")["plant_id"]
 
-        with self.assertRaisesRegex(ValueError, "forget the sensor instead"):
-            self.store.delete_plant(plant_id)
+        self.store.delete_plant(plant_id)
+
+        self.assertIsNone(self.store.plant(plant_id))
+        sensor = self.store.sensor("sensor-one")
+        self.assertIsNotNone(sensor, "the device itself is not the plant")
+        self.assertIsNone(sensor["plant_id"])
 
     def test_letting_a_manual_plant_go_takes_its_history_with_it(self) -> None:
         plant = self.store.create_plant("Fiddle fig")
@@ -137,15 +148,56 @@ class ManualPlantTests(unittest.TestCase):
         self.assertEqual(self.store.plants(), [])
         self.assertEqual(self.store.care_log(10, plant_id=plant["plant_id"]), [])
 
-    def test_renaming_a_plant_renames_what_watches_it(self) -> None:
+    def test_renaming_a_plant_leaves_the_sensor_its_own_name(self) -> None:
+        """This used to rename whatever watched the plant.
+
+        Right for a probe, which is in the pot and is that plant. Wrong
+        for anything measuring the room: a thermometer attached to one
+        plant was renamed after it on every save, so a sensor called
+        "living_thermometer" came back as the plant's name and the
+        household's air reading appeared to belong to one pot out of
+        fifteen. A name is edited on the sensor's own page, and nowhere
+        else.
+        """
         observe(self.store)
         self.store.manage_sensor("sensor-one", "Fern", "Office", "strelitzia", None, None, 1800)
         plant_id = self.store.sensor("sensor-one")["plant_id"]
 
         self.store.update_plant(plant_id, "Bird of paradise", self.room["room_id"], None)
 
-        # Two pages showing one plant must not disagree about its name.
-        self.assertEqual(self.store.sensor("sensor-one")["display_name"], "Bird of paradise")
+        self.assertEqual(self.store.sensor("sensor-one")["display_name"], "Fern")
+        # The room still follows: a pot carried elsewhere takes its probe.
+        self.assertEqual(self.store.sensor("sensor-one")["room_id"], self.room["room_id"])
+
+    def test_naming_a_sensor_leaves_the_plant_its_own_name(self) -> None:
+        """The same mistake in the other direction, and worse.
+
+        Renaming a sensor renamed whatever it was attached to. A
+        thermometer named after the room it measures therefore renamed a
+        dracaena to "living_thermometer". Each page edits the thing it is
+        about.
+        """
+        observe(self.store)
+        self.store.manage_sensor("sensor-one", "Fern", "Office", "strelitzia", None, None, 1800)
+        plant_id = self.store.sensor("sensor-one")["plant_id"]
+        before = self.store.plant(plant_id)["display_name"]
+
+        self.store.rename_sensor("sensor-one", "living_thermometer")
+
+        self.assertEqual(self.store.sensor("sensor-one")["display_name"],
+                         "living_thermometer")
+        self.assertEqual(self.store.plant(plant_id)["display_name"], before,
+                         "naming the sensor renamed the plant it watches")
+
+    def test_the_sensor_page_is_still_where_a_name_is_set(self) -> None:
+        observe(self.store)
+        self.store.manage_sensor("sensor-one", "Fern", "Office", "strelitzia", None, None, 1800)
+
+        self.store.manage_sensor("sensor-one", "living_thermometer", "Office",
+                                 "strelitzia", None, None, 1800)
+
+        self.assertEqual(self.store.sensor("sensor-one")["display_name"],
+                         "living_thermometer")
 
     def test_it_refuses_what_it_cannot_record(self) -> None:
         plant = self.store.create_plant("Fiddle fig")
@@ -1875,7 +1927,12 @@ class PlantApiTests(unittest.TestCase):
 
         # The same question the probe's chart answers, by another instrument.
         self.assertIn('id="plant-weight-chart"', page)
-        self.assertIn("Pot weight · last 30 days", page)
+        # The heading used to say "last 30 days" in the markup, whatever
+        # the chart drew. It is written from the window actually drawn,
+        # because the chart fits itself to the history there is.
+        self.assertIn('id="plant-weight-chart-title"', page)
+        self.assertNotIn("Pot weight · last 30 days", page)
+        self.assertIn("Pot weight · last ${describeSpan(endTime - startTime)}", script)
         self.assertIn("plantWeightTrendMs", script)
         # Full and dry are drawn as the band between them, with thirsty
         # marked where the comfortable green gives way to the reserve.
@@ -2798,3 +2855,164 @@ class SayingItWasNotAWateringTests(unittest.TestCase):
     def test_saying_it_was_a_watering_needs_no_detection(self) -> None:
         self.store.record_plant_weight(self.plant, 520, "watered", at=ago(1))
         self.assertEqual(self._kind_of(520), "watered")
+
+
+class ThirstyIsNotTheSameAsDueTodayTests(unittest.TestCase):
+    """A forecast and a fact had one word between them.
+
+    The card said "Water now" when the forecast was under a day, so a
+    pot twenty-one hours from its mark and a pot that had been past it
+    since Tuesday read identically. An alocasia at 59 % of its band --
+    comfortable, by its bar -- was told to water now, because its band
+    is narrow and it crosses the rest of it in under a day.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+
+    def test_the_list_says_both_things(self) -> None:
+        plant = self.store.create_plant("alocasia")["plant_id"]
+        listed = next(p for p in self.store.plants() if p["plant_id"] == plant)
+        self.assertIn("water_in_days", listed)
+        self.assertIn("thirsty_now", listed,
+                      "the card cannot tell a forecast from a fact without it")
+
+    def test_a_pot_past_its_mark_says_so(self) -> None:
+        plant = self.store.create_plant("alocasia")["plant_id"]
+        self.store.record_plant_weight(plant, 762, kind="full", observed=False)
+        self.store.record_plant_weight(plant, 669, kind="thirsty", observed=False)
+        self.store.record_plant_weight(plant, 650)
+
+        listed = next(p for p in self.store.plants() if p["plant_id"] == plant)
+
+        self.assertTrue(listed["thirsty_now"],
+                        "650 g is under the 669 g this plant asks for water at")
+
+    def test_a_pot_with_hours_in_hand_does_not(self) -> None:
+        plant = self.store.create_plant("alocasia")["plant_id"]
+        self.store.record_plant_weight(plant, 762, kind="full", observed=False)
+        self.store.record_plant_weight(plant, 669, kind="thirsty", observed=False)
+        self.store.record_plant_weight(plant, 699)
+
+        listed = next(p for p in self.store.plants() if p["plant_id"] == plant)
+
+        self.assertFalse(listed["thirsty_now"],
+                         "699 g is above the mark, however soon it will not be")
+
+    def test_the_card_has_a_word_for_each(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        script = (here / "app.js").read_text()
+        style = (here / "app.css").read_text()
+        self.assertIn('thirstyNow ? "Thirsty"', script)
+        self.assertIn('days < 1 ? "Today"', script)
+        # In code, not in the comments that explain why it went.
+        for form in ('? "Water now"', ': "Water now"'):
+            self.assertNotIn(form, script,
+                             "the one word for two situations is back")
+        # Without a rule of its own the new state falls to a catch-all
+        # that paints anything unrecognised as an alarm.
+        self.assertIn('small[data-state="today"]', style)
+
+
+class TheHubWritesDownThatItAskedTests(unittest.TestCase):
+    """`watering_due` was a kind nothing ever wrote.
+
+    It is read in four places and the missed-watering count is built
+    from it, so that count has always been zero. Nothing recorded what
+    the hub said, which is also why no correction from the person could
+    ever be matched to a question.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("alocasia")["plant_id"]
+        self.store.record_plant_weight(self.plant, 762, kind="full", observed=False)
+        self.store.record_plant_weight(self.plant, 669, kind="thirsty", observed=False)
+
+    def _windows(self):
+        return [e for e in self.store.care_log(50, plant_id=self.plant)
+                if e["kind"] == "watering_due"]
+
+    def test_crossing_the_mark_opens_a_window(self) -> None:
+        self.store.record_plant_weight(self.plant, 650)
+        self.assertEqual(len(self._windows()), 1)
+
+    def test_setting_an_anchor_opens_none(self) -> None:
+        """Calibration is not the hub noticing something."""
+        self.store.record_plant_weight(self.plant, 640, kind="thirsty")
+        self.assertEqual(self._windows(), [],
+                         "a window was filed for a number somebody just typed")
+
+    def test_a_pot_above_its_mark_opens_none(self) -> None:
+        self.store.record_plant_weight(self.plant, 699)
+        self.assertEqual(self._windows(), [])
+
+    def test_one_window_at_a_time(self) -> None:
+        """The scale reports every half minute; a question is asked once."""
+        for grams in (650, 648, 645, 640):
+            self.store.record_plant_weight(self.plant, grams)
+        self.assertEqual(len(self._windows()), 1)
+
+    def test_watering_closes_it_and_the_next_dry_down_opens_another(self) -> None:
+        self.store.record_plant_weight(self.plant, 650)
+        self.store.record_plant_care(self.plant, "watering")
+        self.store.record_plant_weight(self.plant, 640)
+        self.assertEqual(len(self._windows()), 2,
+                         "a new dry-down after a watering is a new question")
+
+
+class StillTooWetTests(unittest.TestCase):
+    """The one piece of evidence nothing else can supply.
+
+    A judgement, at a known weight, that this plant did not want water
+    there. Nothing is learned from it yet; it is recorded so that there
+    is something to learn from, and so the hub stops asking until the
+    question has changed.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("alocasia")["plant_id"]
+        for grams, kind in ((762, "full"), (669, "thirsty"), (607, "dry")):
+            self.store.record_plant_weight(self.plant, grams, kind=kind, observed=False)
+        self.store.record_plant_weight(self.plant, 660)
+
+    def test_it_is_kept_with_the_weight_it_was_said_at(self) -> None:
+        """Without the weight it is not evidence about anything."""
+        self.store.defer_watering(self.plant)
+        said = [e for e in self.store.care_log(20, plant_id=self.plant)
+                if e["kind"] == "watering_deferred"]
+        self.assertEqual(len(said), 1)
+        self.assertEqual(said[0]["changes"]["grams"], 660)
+
+    def test_the_hub_stops_asking(self) -> None:
+        self.assertIsNone(self.store.watering_deferred_at(self.plant))
+        self.store.defer_watering(self.plant)
+        self.assertIsNotNone(self.store.watering_deferred_at(self.plant))
+
+    def test_the_same_question_is_not_asked_twice(self) -> None:
+        """660 g and 650 g is one fact, and counting it twice narrows on nothing."""
+        self.store.defer_watering(self.plant)
+        self.store.record_plant_weight(self.plant, 650)
+        self.assertIsNotNone(self.store.watering_deferred_at(self.plant),
+                             "asked again for two grams of drying")
+
+    def test_a_pot_that_has_moved_on_is_a_new_question(self) -> None:
+        self.store.defer_watering(self.plant)
+        self.store.record_plant_weight(self.plant, 630)
+        self.assertIsNone(self.store.watering_deferred_at(self.plant),
+                          "the plant has moved and so has the evidence")
+
+    def test_watering_it_answers_the_question(self) -> None:
+        self.store.defer_watering(self.plant)
+        self.store.record_plant_care(self.plant, "watering")
+        self.assertIsNone(self.store.watering_deferred_at(self.plant))
+
+    def test_the_card_only_offers_it_while_the_hub_is_asking(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        script = (here / "app.js").read_text()
+        self.assertIn("const asking = days != null && (thirstyNow || days < 1);", script)
+        self.assertIn("!asking || plant?.watering_deferred != null", script)
+        # The card is a link to the plant; the press answers it rather
+        # than following it.
+        self.assertIn("event.preventDefault();", script)

@@ -1589,7 +1589,11 @@ class WateringDueColourTests(unittest.TestCase):
     def test_there_is_no_two_day_warning(self) -> None:
         self.assertNotIn('"soon"', self.app)
         self.assertNotIn('data-state="soon"', self.css)
-        self.assertIn('days < 1 ? "now" : "later"', self.app)
+        # The boundary is still a day, not two. There are three states
+        # now -- past the mark, wanted today, and later -- but the line
+        # between "worth noticing" and "fine" has not moved outwards.
+        self.assertIn('days < 1 ? "today" : "later"', self.app)
+        self.assertNotIn("days < 2", self.app)
 
     def test_now_is_the_state_that_is_coloured(self) -> None:
         self.assertIn('.fleet-card small[data-state="now"]', self.css)
@@ -1983,3 +1987,331 @@ class AnchorsStatedInTheSameSecondTests(unittest.TestCase):
     def test_the_row_id_is_carried_through(self) -> None:
         """Sorting on an id it never read would be a no-op."""
         self.assertIn("id: w.weight_id ?? 0", self.app)
+
+
+class AQuestionThePollDoesNotWithdrawTests(unittest.TestCase):
+    """A confirmation has to outlast the poll that redraws the page.
+
+    The delete button opened a two-button confirmation, and the render
+    that runs every second closed it again: the buttons appeared and
+    were gone before a hand could reach them. A question the page keeps
+    withdrawing cannot be answered, and the control was unusable.
+
+    The rule is the one already settled for fields: drawn once per
+    plant, not once a second.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.script = (here / "app.js").read_text()
+
+    def test_the_poll_does_not_close_the_confirmation(self) -> None:
+        body = self.script.split("function renderPlantDanger(")[1].split("\nfunction ")[0]
+        self.assertIn(
+            "plantDangerDrawnFor", body,
+            "renderPlantDanger runs on every poll, so it must remember which "
+            "plant it drew for; without that it shuts the confirmation a "
+            "moment after it is opened")
+        # The guard has to come before the close, or it does not guard it.
+        guard = body.index("plantDangerDrawnFor ===")
+        closes = body.index("keepPlant()")
+        self.assertLess(
+            guard, closes,
+            "keepPlant() is reached before the same-plant check, so every "
+            "poll still closes the confirmation")
+
+    def test_leaving_the_page_re_arms_it(self) -> None:
+        body = self.script.split("function renderPage(")[1].split("\nfunction ")[0]
+        self.assertIn(
+            'plantDangerDrawnFor = null', body,
+            "coming back to the page a confirmation was left open on would "
+            "find it open, and a stray press answers a question nobody asked")
+
+
+class TheChartSaysWhichWindowItDrewTests(unittest.TestCase):
+    """The heading has to describe the window actually on screen.
+
+    The chart has always fitted itself to the history there is -- a pot
+    weighed for a week is drawn over a week, not as a sliver at the
+    right edge of a month. The heading did not: it was fixed markup
+    reading "Pot weight - last 30 days". A plant added this morning was
+    drawn over one day under a title claiming thirty, so every gap in
+    the line read as days of not weighing rather than hours.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.script = (here / "app.js").read_text()
+        self.markup = (here / "index.html").read_text()
+
+    def test_the_markup_does_not_claim_a_window(self) -> None:
+        trend = self.markup.split('class="weight-trend"')[1].split("</div>")[0]
+        self.assertNotIn(
+            "30 days", trend,
+            "the heading states a window in fixed markup, and the window moves")
+        self.assertIn(
+            'id="plant-weight-chart-title"', trend,
+            "nothing for the renderer to write the real window into")
+
+    def test_the_renderer_writes_the_heading_from_the_window_it_drew(self) -> None:
+        body = self.script.split("function renderPlantWeightChart(")[1].split("\nfunction ")[0]
+        self.assertIn("plant-weight-chart-title", body,
+                      "the heading is never written from the drawn window")
+        self.assertIn("endTime - startTime", body,
+                      "the heading must be built from the same start and end "
+                      "the axis uses, or it can disagree with the chart")
+
+    def test_no_function_is_declared_twice(self) -> None:
+        """A second declaration of a name wins for everyone who called the first.
+
+        A `describeSpan(startTime, endTime)` was added beside the
+        `describeSpan(milliseconds)` that dates the photographs. Same
+        file, same scope: the later one takes every call, and the three
+        callers of the first would have passed one argument to a
+        function wanting two. Nothing would have thrown -- the dates
+        would simply have gone wrong.
+        """
+        import re
+        from collections import Counter
+
+        declared = Counter(re.findall(r"^function ([A-Za-z0-9_$]+)\s*\(",
+                                      self.script, re.M))
+        twice = {name: n for name, n in declared.items() if n > 1}
+        self.assertEqual(
+            twice, {},
+            "declared more than once at the top level of app.js, where the "
+            "last one silently takes every call: "
+            + ", ".join(f"{name} x{n}" for name, n in sorted(twice.items())))
+
+
+class AnchorNotRestatedSinceTheRepotTests(unittest.TestCase):
+    """One stale kind must not take the whole band away.
+
+    Reading a pot since its repotting drops anchors from the pot
+    before. The fallback for "nothing stated since" was written for the
+    set: if any kind had been restated, every kind that had not was
+    dropped. A begonia had Full and Thirsty restated after its repot
+    and Dry stated seven minutes before it -- one person setting all
+    three, with no repotting in between -- so Dry vanished, and two
+    anchors are not a band. The chart drew a bare line while the form
+    under it still read "Dry at 171 g".
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.script = (here / "app.js").read_text()
+
+    def test_the_fallback_is_made_for_each_kind(self) -> None:
+        body = self.script.split("function anchorSegments(")[1].split("\nfunction ")[0]
+        cut = body.split("const usable")[1].split(";")[0]
+        self.assertIn(
+            "kind", cut,
+            "the fallback for anchors not restated since the repotting is "
+            "applied to the set rather than to each kind, so one kind "
+            "restated hides every kind that was not")
+
+    def test_only_the_last_word_before_the_repot_is_kept(self) -> None:
+        """Its history would bring the old pot's steps back with it."""
+        body = self.script.split("function anchorSegments(")[1].split("\nfunction ")[0]
+        self.assertIn(
+            "slice(-1)", body,
+            "a kind with nothing stated since the repotting should keep only "
+            "the anchor still in force, not every anchor it ever had")
+
+
+class TheScrubberKeepsItsWidthTests(unittest.TestCase):
+    """Distance along the timeline has to mean the same thing throughout.
+
+    The viewer's frame was shrink-to-fit, so it took the width of the
+    picture in it, and the scrubber inside took that width too. A tall
+    photograph gave a 478px track and a wide one 1100px: dragging from
+    one to the next moved the track 622px under the finger, and the
+    date being pointed at moved with it.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.style = (here / "app.css").read_text()
+
+    def _rule(self, selector: str) -> str:
+        body = self.style.split(selector + " {")[1].split("}")[0]
+        return body
+
+    def test_the_frame_sets_a_width_of_its_own(self) -> None:
+        rule = self._rule(".photo-viewer-frame")
+        self.assertRegex(
+            rule, r"(^|;)\s*width\s*:",
+            "the frame declares only a maximum, so it shrinks to whatever "
+            "photograph is in it and the scrubber shrinks with it")
+
+    def test_the_photograph_keeps_its_shape_in_that_box(self) -> None:
+        """The box is the frame's now, so the picture must not be stretched to it."""
+        rule = self._rule(".photo-viewer img")
+        self.assertIn(
+            "object-fit: contain", rule,
+            "the image box is the full width and height the frame gives it, "
+            "so without this a portrait photograph is stretched across it")
+
+    def test_the_scrubber_keeps_the_floor(self) -> None:
+        """Its height must not come from the photograph either.
+
+        The frame was only as tall as its picture, so the scrubber sat
+        directly under it: a short photograph lifted the bar and a tall
+        one dropped it, and it moved out from under the finger dragging
+        it. The frame takes the full height and the picture takes what
+        is left, so the controls stay on the floor.
+        """
+        frame = self._rule(".photo-viewer-frame")
+        self.assertRegex(
+            frame, r"(^|;)\s*height\s*:\s*100%",
+            "the frame is only as tall as its contents, so the controls "
+            "under the picture move with the picture's height")
+        stage = self._rule(".photo-viewer-stage")
+        self.assertIn(
+            "flex: 1", stage,
+            "the stage must take the room left over, or a short photograph "
+            "leaves a gap and the controls rise into it")
+        self.assertIn(
+            "min-height: 0", stage,
+            "without this a flex item will not shrink below its content, "
+            "and a tall photograph pushes the controls off the bottom")
+
+    def test_stepping_is_by_the_sides_of_the_picture(self) -> None:
+        """Two arrow buttons stood on the photograph and cost it the room.
+
+        The lower one was anchored 16px off the bottom of the window --
+        which is where the scrubber went once it held the floor -- so
+        the down arrow sat on the bar being dragged. The sides of the
+        picture lie over it instead: no room taken, nothing to collide
+        with, and the edge is where a thumb already is.
+        """
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        markup = (here / "index.html").read_text()
+        self.assertNotIn(
+            "photo-viewer-step", markup,
+            "the arrow buttons are back, taking room from the photograph")
+        stage = markup.split('class="photo-viewer-stage"')[1].split("</div>")[0]
+        for step in ("photo-viewer-newer", "photo-viewer-older"):
+            with self.subTest(step=step):
+                self.assertIn(
+                    step, stage,
+                    "the side sits outside the stage, so it is placed "
+                    "against the window and can land on the controls")
+        self.assertIn(
+            "position: relative", self._rule(".photo-viewer-stage"),
+            "the sides inside it are absolutely positioned, and without "
+            "this they are placed against the window again")
+
+    def test_the_sides_run_the_way_the_scrubber_does(self) -> None:
+        """Older to the left and newer to the right, as the timeline reads."""
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        markup = (here / "index.html").read_text()
+        self.assertIn('id="photo-viewer-older" class="photo-viewer-reach" data-step="older"',
+                      " ".join(markup.split()).replace("  ", " "))
+        self.assertIn("left: 0", self._rule('.photo-viewer-reach[data-step="older"]'))
+        self.assertIn("right: 0", self._rule('.photo-viewer-reach[data-step="newer"]'))
+
+    def test_a_side_at_the_end_of_the_roll_does_not_eat_the_tap(self) -> None:
+        rule = self._rule(".photo-viewer-reach:disabled")
+        self.assertIn(
+            "pointer-events: none", rule,
+            "a side with nothing that way still covers a fifth of the "
+            "photograph, and a tap meant for the picture lands on it")
+
+    def test_a_side_is_never_painted_like_an_ordinary_button(self) -> None:
+        """It has no face: it is a region of the photograph.
+
+        `button` gives every button a background and a rounded corner,
+        and `button:disabled` paints a spent one pale. That rule is
+        (0,1,1) and beat the plain class, so on the last photograph the
+        spent side drew a white panel the height of the picture, beside
+        it.
+        """
+        live = self._rule(".photo-viewer-reach")
+        self.assertIn("background: none", live)
+        self.assertIn("border-radius: 0", live,
+                      "the global button rounds every corner, and this is "
+                      "a region of a photograph, not a control with a face")
+        spent = self._rule(".photo-viewer-reach:disabled")
+        self.assertIn(
+            "background: none", spent,
+            "button:disabled is more specific than the plain class, so "
+            "without saying it again a spent side is painted pale")
+
+    def test_one_gesture_steps_once(self) -> None:
+        """A swipe beginning on a side ends in a click on that side."""
+        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "static" / "app.js").read_text()
+        self.assertIn(
+            "photoSwipeSteppedAt", script,
+            "nothing tells the side that the swipe it just ended has "
+            "already stepped, so one gesture moves two photographs")
+
+    def test_the_controls_are_not_against_the_bottom_edge(self) -> None:
+        """A thumb does not want the last inch of a phone."""
+        rule = self._rule(".photo-viewer")
+        self.assertIn(
+            "env(safe-area-inset-bottom)", rule,
+            "the scrubber sits on the very bottom of the window, which on "
+            "a phone is where the home indicator is")
+
+    def test_no_height_cap_puts_the_gap_back(self) -> None:
+        """A max-height on the picture would lift the controls again."""
+        for rule in self.style.split(".photo-viewer img {")[1:]:
+            body = rule.split("}")[0]
+            self.assertNotIn(
+                "max-height", body,
+                "a capped picture leaves space under it in a full-height "
+                "frame, and the controls climb into that space: "
+                + " ".join(body.split()))
+
+
+class TheViewerIsDarkInBothModesTests(unittest.TestCase):
+    """A backdrop that never changes must not be written on in ink that does.
+
+    The photograph viewer lays rgba(16, 22, 16, 0.92) over the page in
+    both modes, and wrote the date in --n100: #eef2ef by day, #222825
+    after dark. On a phone in dark mode that is near-black text on a
+    near-black overlay, and the date under the photograph could not be
+    read at all.
+    """
+
+    def setUp(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        self.style = (here / "app.css").read_text()
+
+    def _flipped_tokens(self):
+        """Every custom property the dark block gives a new value."""
+        import re
+        dark = self.style.split("@media (prefers-color-scheme: dark)")[1]
+        dark = dark.split("\n}")[0]
+        return set(re.findall(r"(--[a-z0-9-]+)\s*:", dark))
+
+    def _viewer_rules(self):
+        """Every rule whose selector is part of the viewer or its scrubber."""
+        import re
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", self.style)
+        return [(sel.strip(), body) for sel, body in rules
+                if ".photo-viewer" in sel or ".photo-track" in sel]
+
+    def test_the_viewer_uses_no_ink_that_flips_after_dark(self) -> None:
+        flipped = self._flipped_tokens()
+        self.assertIn("--n100", flipped, "the ramp no longer flips; rewrite this test")
+        offenders = []
+        for selector, body in self._viewer_rules():
+            for token in flipped:
+                if f"var({token})" in body:
+                    offenders.append(f"{selector} uses var({token})")
+        self.assertEqual(
+            offenders, [],
+            "the viewer's backdrop is dark in both modes, so a token that "
+            "changes with the mode turns its text invisible after dark: "
+            + "; ".join(offenders))
+
+    def test_the_overlay_ink_is_set_once_and_not_flipped(self) -> None:
+        self.assertIn("--on-overlay:", self.style,
+                      "nothing names the ink for the viewer's fixed backdrop")
+        self.assertNotIn(
+            "--on-overlay", self._flipped_tokens(),
+            "--on-overlay is redefined after dark, which is the bug it "
+            "exists to prevent: the backdrop it sits on does not change")
