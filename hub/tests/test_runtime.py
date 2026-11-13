@@ -1276,3 +1276,81 @@ class AirFromASensorThatReportsSeparatelyTests(unittest.TestCase):
             datetime(2026, 11, 12, 5, 0, tzinfo=timezone.utc))
 
         self.assertEqual(hours, {}, "a deficit needs both halves, not one")
+
+
+class TheWeatherDividedOutTests(unittest.TestCase):
+    """A plant drinking hard in dry air is not a thirsty plant.
+
+    The forecast averaged grams a day across spans that happened in
+    different weather and called the mean a property of the plant.
+    Dividing by the vapour pressure deficit gives the plant's own part
+    of it, and multiplying that by what the air is doing now is a
+    better guess at tomorrow.
+
+    Measured walking forward over this household's history: below
+    eight spans the plain mean is steadier, because two numbers fitted
+    to a handful of points is a slope through noise.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.room = self.store.create_room("living")["room_id"]
+        self.plant = self.store.create_plant("fern", self.room)["plant_id"]
+        self.store.seen_zigbee_device("a4c1381ecb6cffff", "thermometer")
+        self.store.manage_sensor("zigbee-a4c1381ecb6cffff", "living_thermometer",
+                                 None, None, None, None, 1800, room_id=self.room)
+
+    def _air(self, day, hour, temperature, humidity):
+        at = f"2026-10-{day:02d}T{hour:02d}:30:00Z"
+        with self.store._condition, self.store._database:
+            for column, value in (("air_temperature_c", temperature),
+                                  ("air_humidity_percent", humidity)):
+                self.store._database.execute(
+                    f"""INSERT INTO sensor_readings
+                        (sensor_id, observed_at, received_at, {column})
+                        VALUES (?, ?, ?, ?)""",
+                    ("zigbee-a4c1381ecb6cffff", at, at, value))
+
+    def _history(self, spans):
+        """A weighing a day, with the room's air recorded through each."""
+        # A forecast needs somewhere to be going, or it stops before the
+        # rate is worked out at all.
+        self.store.record_plant_weight(self.plant, 2000, kind="full", observed=False)
+        self.store.record_plant_weight(self.plant, 1500, kind="thirsty", observed=False)
+        grams = 2000
+        for day in range(1, spans + 2):
+            for hour in range(0, 24, 2):
+                self._air(day, hour, 22.0, 50.0)
+            at = f"2026-10-{day:02d}T06:00:00Z"
+            self.store.record_plant_weight(self.plant, grams, at=at)
+            grams -= 20
+
+    def test_too_little_history_keeps_the_plain_mean(self) -> None:
+        self._history(5)
+        self.store._drying_cache.clear()
+        forecast = self.store.watering_forecast(self.plant, with_air=True)
+        self.assertNotIn("against the air", forecast["rate_from"] or "")
+
+    def test_enough_history_divides_the_air_out(self) -> None:
+        self._history(12)
+        self.store._drying_cache.clear()
+        forecast = self.store.watering_forecast(self.plant, with_air=True)
+        self.assertIn("against the air", forecast["rate_from"] or "",
+                      "twelve spans of air and the forecast still ignores it")
+
+    def test_the_rooms_air_is_worked_out_once_an_hour(self) -> None:
+        """Twenty plants in two rooms asked this twenty times."""
+        self._history(6)
+        self.store._drying_cache.clear()
+        calls = []
+        original = self.store._room_drying_hours_uncached
+
+        def counted(room_id, start, end):
+            calls.append(room_id)
+            return original(room_id, start, end)
+
+        self.store._room_drying_hours_uncached = counted
+        for _ in range(5):
+            self.store.water_use(self.plant, with_air=True)
+        self.assertEqual(len(calls), 1,
+                         "the same room and hour was asked more than once")
