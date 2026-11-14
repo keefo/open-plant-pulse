@@ -49,9 +49,8 @@ int remote_format_status(char *buf, size_t len);
 void remote_mark_firmware_good(void);
 
 #if CONFIG_SCALE_LINK_WIFI
-// Turns the Wi-Fi radio and web server off or on, and remembers the choice across reboots.
-void remote_set_wifi(bool on);
-bool remote_wifi_enabled(void);
+// Wi-Fi has an address, so the scale's own page can be reached.
+bool remote_wifi_connected(void);
 // The name this scale answers to, so a hub reached over another link can
 // offer a way back to the scale's own page.
 const char *remote_hostname(void);

@@ -403,16 +403,6 @@ static void handle_line(char *line)
         }
         zigbee_set_report_floor((uint32_t)secs);
 #endif
-#if CONFIG_SCALE_LINK_WIFI
-    } else if (line[0] == 'w') {
-        char *end;
-        long on = strtol(line + 1, &end, 10);
-        if (end == line + 1 || (on != 0 && on != 1)) {
-            remote_log("!!! Wi-Fi command is \"w 0\" to turn it off or \"w 1\" to turn it on");
-            return;
-        }
-        remote_set_wifi(on != 0);
-#endif
     } else if (isdigit((unsigned char)line[0])) {
         float grams = strtof(line, NULL);
         int32_t v;
@@ -427,7 +417,7 @@ static void handle_line(char *line)
             remote_log(">>> Calibrated: %.3f counts per gram (%.0f g -> %.0f counts)", s_factor, grams, delta);
         }
     } else {
-        remote_log("Unknown command \"%s\". Commands: t = tare, = <grams> = set what is on it now, <grams> = calibrate, r = reset calibration, i <seconds> = sampling interval, z <seconds> = Zigbee report floor, j = rejoin Zigbee, w 0/1 = Wi-Fi off/on", line);
+        remote_log("Unknown command \"%s\". Commands: t = tare, = <grams> = set what is on it now, <grams> = calibrate, r = reset calibration, i <seconds> = sampling interval, z <seconds> = Zigbee report floor, j = rejoin Zigbee, J = rejoin with Wi-Fi stood down", line);
     }
 }
 
@@ -571,6 +561,18 @@ void app_main(void)
     remote_log("=== HX711 scale, firmware %s (build %s) ===", app->version, build);
     esp_reset_reason_t why = esp_reset_reason();
     boot_log_record();
+    // A reset through the chip's own USB port -- flashing, or a serial
+    // monitor opening -- leaves Wi-Fi able to hear but not to be heard:
+    // beacons arrive, every probe and authentication goes unanswered, and
+    // the scale reports "network not found" beside a router at -40 dBm.
+    // Zigbee to a dongle inches away still works, so nothing else looks
+    // wrong. A software restart clears it every time, so take one now,
+    // before the radio starts. It cannot loop: the next reset is software.
+    // The boot log above has already kept the USB reset for the record.
+    if (why == ESP_RST_USB) {
+        remote_log("Reset through USB: restarting once so Wi-Fi comes up clean");
+        esp_restart();
+    }
     remote_log("%sLast reset: %s", why == ESP_RST_BROWNOUT || why == ESP_RST_PANIC ? "!!! " : "",
             why == ESP_RST_POWERON ? "power on" :
             why == ESP_RST_SW ? "restart (e.g. after an update)" :

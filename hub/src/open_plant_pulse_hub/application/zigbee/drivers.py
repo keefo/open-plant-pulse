@@ -170,10 +170,6 @@ class ScaleDriver:
         return b"t"
 
     @staticmethod
-    def set_wifi(on: bool) -> bytes:
-        return b"w 1" if on else b"w 0"
-
-    @staticmethod
     def set_interval(seconds: int) -> bytes:
         return f"i {int(seconds)}".encode()
 

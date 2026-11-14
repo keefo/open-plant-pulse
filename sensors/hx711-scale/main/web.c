@@ -89,6 +89,19 @@ static void load_name(void)
 }
 
 // ---------- Wi-Fi ----------
+// Zigbee waits for Wi-Fi to settle -- an address, or giving up for now --
+// so the two are not fighting over the radio while Wi-Fi associates. It
+// must not wait for an address alone: Wi-Fi is always on, and a router
+// that is down or a password that changed would then take Zigbee with it.
+// Starting twice is harmless; zigbee_start guards itself.
+static void start_zigbee_now(void)
+{
+#if CONFIG_SCALE_ZIGBEE
+    void zigbee_start(void);
+    zigbee_start();
+#endif
+}
+
 // The Wi-Fi driver keeps the home network's name and password in NVS itself.
 static void sta_connect_saved(void)
 {
@@ -99,11 +112,41 @@ static void sta_connect_saved(void)
     if (!s_sta_ssid[0]) {
         s_sta_state = "off";
         set_ap(true);
+        start_zigbee_now();   // no home network: no address is coming
         return;
     }
     s_retries = 0;
     s_sta_state = "connecting";
     esp_wifi_connect();
+}
+
+// Set when a failed join asks for a scan, so a scan the driver runs for
+// its own reasons is not reported as ours.
+static bool s_scan_wanted;
+
+// What the radio heard, strongest first, and whether the home network
+// was among it: "heard on channel 1 at -48 dBm" and "not heard among 9
+// networks" are different faults with different fixes.
+static void log_scan(void)
+{
+    uint16_t total = 0;
+    esp_wifi_scan_get_ap_num(&total);
+    wifi_ap_record_t recs[8];
+    uint16_t got = sizeof recs / sizeof recs[0];
+    if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) got = 0;  // frees the driver's list
+
+    const wifi_ap_record_t *home = NULL;
+    for (uint16_t i = 0; i < got; i++)
+        if (!strcmp((const char *)recs[i].ssid, s_sta_ssid)) home = &recs[i];
+    if (home) {
+        remote_log("Wi-Fi scan: \"%s\" heard on channel %u at %d dBm (auth %d), among %u networks",
+                   s_sta_ssid, home->primary, home->rssi, (int)home->authmode, total);
+    } else {
+        remote_log("Wi-Fi scan: \"%s\" not heard among %u networks%s", s_sta_ssid, total,
+                   total > got ? " (only the strongest are listed)" : "");
+    }
+    for (uint16_t i = 0; i < got; i++)
+        remote_log("  ch %2u %4d dBm  %s", recs[i].primary, recs[i].rssi, (const char *)recs[i].ssid);
 }
 
 static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -120,6 +163,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
         } else {
             s_sta_state = "failed";
             set_ap(true);
+            start_zigbee_now();   // Wi-Fi has given up for now; Zigbee must not wait on it
             // Try again later, so a router restart or a brief dropout doesn't need a reboot.
             esp_timer_start_once(s_retry_timer, STA_RETRY_AFTER_S * 1000000LL);
             if (s_fail_logged) return;
@@ -132,6 +176,14 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
                 reason == WIFI_REASON_AUTH_FAIL ? "wrong password?" : "see reason code";
             remote_log("!!! Could not join Wi-Fi \"%s\": %s (reason %d). Trying again every %d s.",
                        s_sta_ssid, why, reason, STA_RETRY_AFTER_S);
+            // "Not found" is a guess about the cause; what the radio can
+            // actually hear is a fact. One scan per outage says which.
+            s_scan_wanted = esp_wifi_scan_start(NULL, false) == ESP_OK;
+        }
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+        if (s_scan_wanted) {
+            s_scan_wanted = false;
+            log_scan();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = data;
@@ -140,13 +192,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_fail_logged = false;
         s_sta_state = "connected";
         set_ap(false);
-#if CONFIG_SCALE_ZIGBEE
-        // Only now: Wi-Fi has an address, so the way back in is open
-        // before the Zigbee stack starts competing for the radio.
-        // Starting twice is harmless; zigbee_start guards itself.
-        void zigbee_start(void);
-        zigbee_start();
-#endif
+        start_zigbee_now();
         remote_log(">>> Joined Wi-Fi \"%s\": open http://%s or http://%s.local", s_sta_ssid, s_sta_ip, s_host);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         remote_log("A device joined the " AP_SSID " network");
@@ -187,8 +233,10 @@ static void wifi_start(void)
     esp_wifi_get_config(WIFI_IF_STA, &sta);
     if (!sta.sta.ssid[0]) set_ap(true);  // no home Wi-Fi saved: the scale's own network is the only way in
     ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_set_max_tx_power(52);  // 13 dBm instead of 20: smaller current spikes, still fine indoors
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // radio sleeps between router beacons (only while the scale's own network is off)
+    // Awake and at full power. Both used to be turned down to spare a
+    // battery; the scale runs from USB now, and a radio that sleeps between
+    // beacons only adds a way for frames to the scale to arrive late.
+    esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
 // ---------- web server ----------
@@ -458,33 +506,13 @@ static esp_err_t post_ota(httpd_req_t *req)
     return ESP_OK;
 }
 
-// ---------- the Wi-Fi switch ----------
-// Off means the radio and the web server are stopped, not that the driver is
-// torn down: stopping is one call to undo, and unwinding netifs and event
-// handlers to reclaim a little heap is where this sort of thing goes wrong.
-static bool s_wifi_on = true;
-static bool s_wifi_inited;
+// ---------- Wi-Fi, always on ----------
+// The scale runs from USB, so the battery that made Wi-Fi something to
+// switch off is gone, and with it the switch: Wi-Fi and the web page are
+// up whenever the scale is. The one exception is "J", which stands Wi-Fi
+// down for a few minutes so Zigbee can hear itself join, and puts it back
+// on a timer whatever happens.
 static httpd_handle_t s_srv;
-
-static bool wifi_pref_load(void)
-{
-    nvs_handle_t h;
-    uint8_t on = 1;
-    if (nvs_open("scale", NVS_READONLY, &h) == ESP_OK) {
-        nvs_get_u8(h, "wifi", &on);
-        nvs_close(h);
-    }
-    return on != 0;
-}
-
-static void wifi_pref_save(bool on)
-{
-    nvs_handle_t h;
-    if (nvs_open("scale", NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h, "wifi", on ? 1 : 0);
-    nvs_commit(h);
-    nvs_close(h);
-}
 
 static void web_server_start(void)
 {
@@ -516,9 +544,9 @@ static void web_server_stop(void)
     s_srv = NULL;
 }
 
-bool remote_wifi_enabled(void)
+bool remote_wifi_connected(void)
 {
-    return s_wifi_on;
+    return s_sta_ip[0] != 0;
 }
 
 const char *remote_sta_ip(void)
@@ -541,15 +569,12 @@ static esp_timer_handle_t s_wifi_back_timer;
 //
 // On a timer nothing cancels, because the one way this must not end
 // is with both ways in shut. The board may be somewhere a hand cannot
-// reach, and "send w 1 over Zigbee" is no help when Zigbee is the
-// thing being repaired.
+// reach, and Zigbee is the thing being repaired.
 static void wifi_back(void *arg)
 {
     (void)arg;
-    if (!s_wifi_on) return;          // somebody turned it off meaning it
     if (esp_wifi_start() != ESP_OK) {
-        // Out of options in software. A restart comes up on the saved
-        // preference, which is Wi-Fi on.
+        // Out of options in software. A restart comes up with Wi-Fi on.
         remote_log("!!! Wi-Fi would not restart; rebooting to get it back");
         esp_restart();
     }
@@ -567,18 +592,14 @@ static void wifi_back(void *arg)
 // that is off between exchanges misses the half that comes back --
 // which is how a scale reports for days and still cannot rejoin.
 //
-// Nothing here is saved. The stored preference stays "on", so a crash
-// or a power cut comes back on Wi-Fi, and the timer above brings it
-// back even when the join fails. The window is the whole of the risk,
-// and it is minutes long and closes itself.
+// Nothing here is saved, so a crash or a power cut comes back on
+// Wi-Fi, and the timer above brings it back even when the join fails.
+// The window is the whole of the risk, and it is minutes long and
+// closes itself.
 void remote_wifi_quiet_for_join(uint32_t seconds)
 {
     if (seconds < 30) seconds = 30;
     if (seconds > 600) seconds = 600;
-    if (!s_wifi_on) {
-        remote_log(">>> Wi-Fi is already off; nothing to stand down");
-        return;
-    }
     if (!s_wifi_back_timer) {
         const esp_timer_create_args_t args = {.callback = wifi_back,
                                               .name = "wifi_back"};
@@ -605,41 +626,9 @@ void remote_wifi_quiet_for_join(uint32_t seconds)
 #endif
 }
 
-void remote_set_wifi(bool on)
-{
-    if (on == s_wifi_on) {
-        remote_log(">>> Wi-Fi is already %s", on ? "on" : "off");
-        return;
-    }
-    s_wifi_on = on;
-    wifi_pref_save(on);
-#if CONFIG_SCALE_ZIGBEE
-    zigbee_share_radio_with_wifi(on);
-#endif
-    if (on) {
-        if (!s_wifi_inited) {
-            wifi_start();
-            s_wifi_inited = true;
-        } else if (esp_wifi_start() != ESP_OK) {
-            remote_log("!!! Wi-Fi would not start");
-            return;
-        }
-        web_server_start();
-        remote_log(">>> Wi-Fi on");
-    } else {
-        web_server_stop();
-        esp_wifi_stop();
-        s_sta_state = "off";
-        s_sta_ip[0] = 0;
-        remote_log(">>> Wi-Fi off. Running on Zigbee alone, which is how it should sit; send \"w 1\" when you need it back.");
-    }
-}
-
 void remote_start(void)
 {
     load_name();
-    s_wifi_on = wifi_pref_load();
-
     // Let the processor slow down and sleep whenever nothing is running. Wi-Fi wakes it for router beacons.
     // Light sleep is left off when Zigbee is on: a Zigbee end device that is not a sleepy one has to keep
     // its receiver listening, and sleeping underneath it loses frames and upsets the stack.
@@ -647,30 +636,20 @@ void remote_start(void)
                            .light_sleep_enable = !CONFIG_SCALE_ZIGBEE };
     if (esp_pm_configure(&pm) != ESP_OK) remote_log("!!! Power saving could not be turned on");
 
-    if (s_wifi_on) {
-        wifi_start();
-        s_wifi_inited = true;
-        if (mdns_init() == ESP_OK) {
-            mdns_hostname_set(s_host);
-            mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-        }
-        web_server_start();
-    } else {
-        remote_log(">>> Wi-Fi off by saved preference, which is the normal way to run. Send \"w 1\" over Zigbee for updates or debugging.");
+    wifi_start();
+    if (mdns_init() == ESP_OK) {
+        mdns_hostname_set(s_host);
+        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     }
+    web_server_start();
 
-    // The firmware counts as good once a link to it is up, so it can be replaced
-    // remotely. With Wi-Fi off that link is Zigbee, so this cannot wait for the
-    // web server the way it used to.
+    // The firmware counts as good once it is running with its links started,
+    // so it can be replaced remotely. Not held for a Wi-Fi address: a router
+    // that is down must not turn a good image into a rolled-back one.
     remote_mark_firmware_good();
 
-#if CONFIG_SCALE_ZIGBEE
-    // With Wi-Fi on, the Zigbee side waits for an address so the two are not
-    // fighting over the radio during association. With Wi-Fi off, no address is
-    // coming, so it starts here.
-    if (!s_wifi_on) {
-        void zigbee_start(void);
-        zigbee_start();
-    }
-#endif
+
+    // Zigbee is started from on_wifi, once Wi-Fi either has an address or has
+    // given up for now, so the two are not fighting over the radio while Wi-Fi
+    // associates.
 }

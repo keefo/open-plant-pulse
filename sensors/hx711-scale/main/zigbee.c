@@ -31,7 +31,7 @@
 #define FLAG_OK        (1u << 0)
 #define FLAG_STABLE    (1u << 1)
 #define FLAG_SATURATED (1u << 2)
-#define FLAG_WIFI      (1u << 3)  /* Wi-Fi and the web server are running */
+#define FLAG_WIFI      (1u << 3)  /* Wi-Fi has an address: the own page is reachable */
 
 typedef struct __attribute__((packed)) {
     uint32_t seq;
@@ -136,16 +136,15 @@ static int64_t s_host_sent_us;
 #define UNACKED_BEFORE_REJOIN 6
 // How long a report may go unanswered before it counts as lost.
 #define CONFIRM_WAIT_SECONDS 30
-// How long a device that has a network saved gets to rejoin it before that
-// saved network is written off. Rejoining is the cheap, unattended path and
-// starting over is the expensive one that needs somebody at the hub, so the
-// cheap one is given plenty of room.
-#define REJOIN_GRACE_SECONDS 120
-// How long the stack gets to put the link back together on its own before
-// the credentials are thrown away. Generous on purpose: a secured rejoin
-// costs nothing and may be waiting on a coordinator that is being flashed,
-// while a factory reset needs a person.
-#define GIVE_UP_AFTER_SECONDS (30 * 60)
+// How long the stack gets to put a half-there link back together on its
+// own before the scale restarts. A restart keeps the network key and
+// rejoins with it; nothing in this file throws the key away by itself.
+// That was tried twice -- after a slow rejoin and after a long silence --
+// and each time one bad moment (a browning-out battery, a coordinator
+// being flashed) became a scale that stayed off the network until
+// somebody opened the join window. Only "j" starts over, because only a
+// person knows the network itself has changed.
+#define RESTART_AFTER_SECONDS (30 * 60)
 static int64_t  s_last_report_us;
 static int64_t  s_joined_at_us;
 static int64_t  s_trouble_since_us;
@@ -153,7 +152,6 @@ static int64_t  s_trouble_since_us;
 static volatile bool s_awaiting_confirm;
 static uint8_t  s_confirms_logged;
 static int64_t  s_sent_at_us;
-static int64_t  s_rejoin_deadline_us;
 static char     s_last_trouble[64];
 
 static void steering_task(void *arg);
@@ -226,18 +224,15 @@ static void note_unacked(void)
     }
     if (s_unacked < UNACKED_BEFORE_REJOIN) return;
 
-    // Last resort, and only after a long time with nothing getting through.
-    // By this point rejoining has had many minutes to work and has not, so
-    // the stored credentials are worth less than a fresh start -- and a
-    // fresh start at least recovers by itself once somebody scans.
+    // Last resort, and only after a long time with nothing getting through:
+    // restart, which rejoins from the saved network on the way up. It used
+    // to be a factory reset here, which recovers only while the join
+    // window happens to be open and otherwise never.
     if (esp_timer_get_time() - s_trouble_since_us
-        < (int64_t)GIVE_UP_AFTER_SECONDS * 1000000) return;
-    remote_log("!!! Zigbee: nothing acknowledged for %d minutes; starting over",
-               GIVE_UP_AFTER_SECONDS / 60);
-    s_unacked = 0;
-    s_joined = false;
-    s_trouble_since_us = esp_timer_get_time();
-    ezb_bdb_reset_via_local_action();
+        < (int64_t)RESTART_AFTER_SECONDS * 1000000) return;
+    remote_log("!!! Zigbee: nothing acknowledged for %d minutes; restarting "
+               "to rejoin with the saved network", RESTART_AFTER_SECONDS / 60);
+    esp_restart();
 }
 static const char *bdb_status_name(uint8_t s);
 static uint32_t channel_mask(void);
@@ -246,14 +241,29 @@ static void save_channel(uint8_t channel);
 
 // Which radio has priority, and whether the Zigbee receiver stays on.
 //
-// Called at startup and whenever Wi-Fi is switched. The capability is
+// Called at startup and around a "J" join. The capability is
 // announced when the device joins, so a change made later tells the
 // local stack but not the coordinator -- which is the right way round:
 // turning Wi-Fi on takes the radio away, and the web page is then the
 // way in instead of Zigbee commands.
+//
+// The receiver setting does not survive a join: the stack sets it back
+// to on for a non-sleepy end device every time it joins or rejoins, so
+// it is applied again from both join paths below. Left on, an idle
+// Zigbee receiver outranks Wi-Fi's own listening on the shared radio,
+// and every frame addressed to the scale is lost -- associated, with an
+// address, answering ARP, and 100% ping loss with the page never loading.
+static bool s_wifi_has_radio;
+
+static void apply_receiver(void)
+{
+    ezb_nwk_set_rx_on_when_idle(!s_wifi_has_radio);
+}
+
 void zigbee_share_radio_with_wifi(bool wifi_on)
 {
-    ezb_nwk_set_rx_on_when_idle(!wifi_on);
+    s_wifi_has_radio = wifi_on;
+    apply_receiver();
     esp_coex_preference_set(wifi_on ? ESP_COEX_PREFER_WIFI : ESP_COEX_PREFER_BALANCE);
     remote_log("Zigbee: receiver %s (Wi-Fi %s)",
                wifi_on ? "off between exchanges" : "on", wifi_on ? "on" : "off");
@@ -287,11 +297,11 @@ static void send_reading(const scale_reading_t *r, uint32_t seq)
         .fw_major = s_fw[0], .fw_minor = s_fw[1], .fw_patch = s_fw[2],
         .reset_reason = (uint8_t)esp_reset_reason(),
         .uptime_s = (uint32_t)(esp_timer_get_time() / 1000000),
-        // The Wi-Fi bit lets the coordinator toggle it without having to
-        // guess which way round it currently is.
+        // The Wi-Fi bit says whether the scale's own page can be reached,
+        // so the hub offers a link only when it leads somewhere.
         .flags = (uint8_t)((r->ok ? FLAG_OK : 0) | (r->stable ? FLAG_STABLE : 0) |
                            (r->saturated ? FLAG_SATURATED : 0) |
-                           (remote_wifi_enabled() ? FLAG_WIFI : 0)),
+                           (remote_wifi_connected() ? FLAG_WIFI : 0)),
         .interval_s = remote_interval_seconds(),
     };
     ezb_apsde_data_req_t req = {
@@ -362,9 +372,9 @@ static bool on_signal(const ezb_app_signal_t *signal)
         if (s_joined) {
             s_joins++;
             s_joined_at_us = esp_timer_get_time();
-            s_rejoin_deadline_us = 0;
             s_announce_host = true;
             save_channel((uint8_t)ezb_nwk_get_current_channel());
+            apply_receiver();   // the join turned it back on
             remote_log("Zigbee: joined pan 0x%04x on channel %u",
                        (unsigned)ezb_nwk_get_panid(), (unsigned)ezb_nwk_get_current_channel());
             return false;
@@ -382,9 +392,9 @@ static bool on_signal(const ezb_app_signal_t *signal)
         if (s_joined) {
             s_joins++;
             s_joined_at_us = esp_timer_get_time();
-            s_rejoin_deadline_us = 0;
             s_announce_host = true;
             save_channel((uint8_t)ezb_nwk_get_current_channel());
+            apply_receiver();   // the join turned it back on
             remote_log("Zigbee: rejoined pan 0x%04x on channel %u",
                        (unsigned)ezb_nwk_get_panid(), (unsigned)ezb_nwk_get_current_channel());
         } else {
@@ -403,15 +413,14 @@ static bool on_signal(const ezb_app_signal_t *signal)
             //
             // Not being joined at this instant is not failure, either. The
             // rejoin is asynchronous and this signal arrives before it has
-            // had a chance; the right response is to wait for it.
+            // had a chance. If it does fail, the steering task asks for it
+            // again with the same saved network, for as long as it takes.
             bool fresh = ezb_bdb_is_factory_new();
             remote_log("Zigbee: ready, factory new = %s", fresh ? "yes" : "no");
             if (fresh) {
                 start_steering("after initialisation");
             } else {
-                remote_log("Zigbee: has a network saved; waiting for it to rejoin");
-                s_rejoin_deadline_us = esp_timer_get_time()
-                    + (int64_t)REJOIN_GRACE_SECONDS * 1000000;
+                remote_log("Zigbee: has a network saved; rejoining it");
             }
         }
         return false;
@@ -433,6 +442,16 @@ static bool on_signal(const ezb_app_signal_t *signal)
 // first, then slower, settling at the old minute.
 #define STEERING_FIRST_RETRY_SECONDS 2
 #define STEERING_RETRY_SECONDS 60
+
+static unsigned s_preferred_next;   /* which preferred channel to try next */
+
+/* The channel a single-channel mask names, for saying so in the log. */
+static int channel_of(uint32_t mask)
+{
+    for (int n = 11; n <= 26; n++)
+        if (mask == (1u << n)) return n;
+    return 0;                      /* a wider set: no one channel to name */
+}
 
 
 
@@ -462,23 +481,53 @@ static void save_channel(uint8_t channel)
     nvs_close(h);
 }
 
+/* Where every other Zigbee device looks: the four channels Base Device
+ * Behaviour marks preferred, spread across the band to miss the common
+ * Wi-Fi ones. A coordinator that formed its network unprompted is on one
+ * of these, so this is what an Aqara sensor or a plug finds it with, and
+ * it is the set this scale had no business second-guessing.
+ *
+ * It was one hardcoded channel until a factory reset proved the cost: a
+ * guess of 15 against a network on 20, searching the wrong channel for
+ * ever while the saved channel -- which had quietly covered for it for
+ * months -- was gone. Four channels is a short enough scan not to hold
+ * the shared radio off Wi-Fi, which is what the single channel was for. */
+#define PREFERRED_CHANNELS 0x02108800u   /* 11, 15, 20, 25 */
+
 static uint32_t channel_mask(void)
 {
-    // Channel 0 means "look everywhere": slower, but it does not depend on
-    // the coordinator having stayed where we last saw it.
-    return CONFIG_SCALE_ZIGBEE_CHANNEL ? (1u << CONFIG_SCALE_ZIGBEE_CHANNEL)
-                                       : ALL_CHANNELS;
+    return PREFERRED_CHANNELS;
+}
+
+/* One preferred channel per attempt, taken in turn.
+ *
+ * The whole set in one mask is what a device with a radio to itself
+ * does, and this radio is shared with Wi-Fi: a scan wide enough to
+ * cover four channels holds the receiver away from the beacons it is
+ * listening for, and every such search answered "no network found"
+ * while a single channel search had joined this same coordinator
+ * seventy-two times the same morning.
+ *
+ * So the coverage is the standard's and the scan is this board's: the
+ * four preferred channels, one at a time, cycling until one answers. */
+static uint32_t next_preferred_channel(void)
+{
+    static const uint8_t preferred[] = { 11, 15, 20, 25 };
+    uint8_t channel = preferred[s_preferred_next % (sizeof preferred)];
+    s_preferred_next++;
+    return 1u << channel;
 }
 
 /* Where to look first. BDB scans the primary set before the secondary one,
  * and setting both to every channel -- which is what this did -- threw that
- * away and made every search a sixteen channel sweep. One channel is the
- * common case and is far quicker; everywhere else is still the fallback. */
+ * away and made every search a sixteen channel sweep. The channel we last
+ * joined on is the common case and is far quicker; the preferred set, then
+ * everywhere else, is the fallback. */
 static uint32_t primary_mask(void)
 {
     uint8_t channel = saved_channel();
     if (channel) return 1u << channel;
-    return channel_mask();
+    return next_preferred_channel();
 }
 
 static const char *bdb_status_name(uint8_t s)
@@ -502,12 +551,14 @@ static void start_steering(const char *why)
 {
     // The channel set is reapplied here because a BDB reset puts it back to
     // its default, and steering would then search somewhere else entirely.
-    ezb_bdb_set_primary_channel_set(primary_mask());
-    ezb_bdb_set_secondary_channel_set(channel_mask());
+    uint32_t primary = primary_mask();
+    ezb_bdb_set_primary_channel_set(primary);
+    ezb_bdb_set_secondary_channel_set(ALL_CHANNELS);
     s_searches++;
     ezb_err_t e = ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
     if (e == 0) {
-        remote_log("Zigbee: looking for a coordinator (%s)", why);
+        remote_log("Zigbee: looking for a coordinator on channel %d (%s)",
+                   channel_of(primary), why);
     } else if (e == 9 /* EZB_ERR_BUSY */) {
         remote_log("Zigbee: still busy commissioning (%s); will try again", why);
     } else {
@@ -564,14 +615,28 @@ static void steering_task(void *arg)
 
         // A saved network that has not come back. Steering cannot help --
         // the stack answers "no network found" while it still holds old
-        // credentials -- so this is the one place a reset is the right
-        // move, and only once waiting has genuinely failed.
+        // credentials -- but initialisation can: on a device that is not
+        // factory new it is a rejoin with the key already held, which needs
+        // nobody's permission. So ask again, on the same backoff, for as
+        // long as it takes. Coordinator unplugged for a day, Mac asleep, a
+        // supply that browns out at every boot: each of these ends with the
+        // scale back on its own.
+        //
+        // This used to give it 120 s and then factory-reset. The scale that
+        // prompted this fix browned out 134 times in a day, one boot ran
+        // past the 120 s, and the key went with it.
         if (!ezb_bdb_is_factory_new()) {
-            if (s_rejoin_deadline_us == 0
-                || esp_timer_get_time() < s_rejoin_deadline_us) continue;
-            remote_log("!!! Zigbee: did not rejoin within %d s; starting over",
-                       REJOIN_GRACE_SECONDS);
-            esp_zigbee_factory_reset();  // does not return
+            if (!esp_zigbee_lock_acquire(pdMS_TO_TICKS(1000))) {
+                remote_log("!!! Zigbee: could not take the stack lock");
+                continue;
+            }
+            // Still at the last one: let it finish rather than cut across it.
+            if (ezb_bdb_get_commissioning_status() != EZB_BDB_STATUS_IN_PROGRESS) {
+                ezb_err_t e = ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
+                remote_log("Zigbee: rejoining the saved network -> %d", (int)e);
+            }
+            esp_zigbee_lock_release();
+            continue;
         }
         if (esp_zigbee_lock_acquire(pdMS_TO_TICKS(1000))) {
             start_steering("retry");
@@ -712,22 +777,23 @@ static void zigbee_task(void *arg)
     // rate menu sprang back and the Wi-Fi button did nothing, with the radio
     // reporting each command as delivered.
     //
-    // Wi-Fi is off nearly all the time on a scale under a plant, and with
-    // nothing to protect there is no reason to be deaf. On when Wi-Fi is
-    // off, off when it is on, decided here at boot and again whenever Wi-Fi
-    // is switched, so whichever radio is in use has what it needs.
-    zigbee_share_radio_with_wifi(remote_wifi_enabled());
-    // Look on one channel, not all sixteen. A full sweep keeps the shared radio
-    // busy for seconds at a time, which is enough to stop Wi-Fi associating.
-    // Channel 0 means "look everywhere": slower, but it does not depend on
-    // the coordinator having stayed where we last saw it.
+    // Wi-Fi is always on, so the receiver is off between exchanges and
+    // commands from the hub wait for the scale's next report. It is on
+    // only while "J" stands Wi-Fi down so Zigbee can hear itself join.
+    zigbee_share_radio_with_wifi(true);
+    // One channel per attempt, not all sixteen and not even the preferred
+    // four at once: a sweep keeps the shared radio busy for seconds at a
+    // time, which is enough both to stop Wi-Fi associating and to miss the
+    // beacons the scan is for.
     // The coordinator is a centralised trust centre. Without this the device
     // looks for a distributed-security network instead and discards every
     // beacon it hears, which is reported as simply finding no network.
     ezb_aps_secur_enable_distributed_security(false);
-    ezb_err_t ch = ezb_bdb_set_primary_channel_set(primary_mask());
-    ezb_bdb_set_secondary_channel_set(channel_mask());
-    remote_log("Zigbee: channel mask 0x%08x -> %d", (unsigned)channel_mask(), (int)ch);
+    uint32_t primary = primary_mask();
+    ezb_err_t ch = ezb_bdb_set_primary_channel_set(primary);
+    ezb_bdb_set_secondary_channel_set(ALL_CHANNELS);
+    remote_log("Zigbee: first look on channel %d, then 0x%08x -> %d",
+               channel_of(primary), (unsigned)ALL_CHANNELS, (int)ch);
     register_endpoint();
     if ((err = esp_zigbee_start(false)) != ESP_OK) {
         remote_log("!!! Zigbee could not start: %s. Wi-Fi is unaffected.", esp_err_to_name(err));
@@ -747,10 +813,10 @@ void zigbee_rejoin(void)
     // A device can be joined, sending happily, and still unreachable: the
     // reports go up while every command times out with no acknowledgement,
     // because the parent-child relationship is only half there. Nothing
-    // short of starting over fixes that, and until now there was no way to
-    // ask for it except by waiting half an hour for the unacked-report
-    // path to give up -- which needs the coordinator's join window open at
-    // exactly the right moment.
+    // short of starting over fixes that. It is the only thing in this file
+    // that throws the network key away, and it is only ever asked for by a
+    // person: open the coordinator's join window first, or the scale has
+    // nowhere to go.
     remote_log(">>> Zigbee: leaving the network and looking again");
     if (esp_zigbee_lock_acquire(pdMS_TO_TICKS(1000))) {
         s_joined = false;

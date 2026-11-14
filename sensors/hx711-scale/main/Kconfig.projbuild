@@ -35,16 +35,6 @@ menu "HX711 scale"
             ten times a second for a live display: relaying all of that keeps
             the shared radio busy enough to push Wi-Fi off the air.
 
-    config SCALE_ZIGBEE_CHANNEL
-        int "Zigbee channel to look for the coordinator on"
-        depends on SCALE_ZIGBEE
-        range 0 26
-        default 15
-        help
-            Must match the channel the coordinator formed its network on.
-            Searching every channel instead keeps the shared radio busy long
-            enough to stop Wi-Fi associating.
-
     config SCALE_HOME_WIFI_SSID
         string "Home Wi-Fi name to join on a first boot"
         default ""
