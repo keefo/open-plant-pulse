@@ -3702,6 +3702,8 @@ class ReadingStore:
         kind: str,
         at: Optional[str] = None,
         note: Optional[str] = None,
+        source: str = "manual",
+        summary: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Record care somebody gave a plant, as told by them.
 
@@ -3730,9 +3732,17 @@ class ReadingStore:
                     kind=kind,
                     detected_at=detected_at,
                     title=MANUAL_CARE_KINDS[kind],
-                    summary=note or "Recorded by hand.",
+                    # Where it came from, said rather than assumed.
+                    # Everything that became a watering went through here
+                    # and was stamped "Recorded by hand", including the
+                    # ones the scale worked out for itself -- so a pot
+                    # re-tared from -77 g to 13.9 kg filed a watering
+                    # nobody had done, over the name of the person who
+                    # had not done it. Afterwards there was no telling
+                    # which waterings in the log were really theirs.
+                    summary=summary or note or "Recorded by hand.",
                     confidence="recorded",
-                    changes={"source": "manual"},
+                    changes={"source": source},
                 ),
                 plant_id=plant_id,
             )
@@ -3858,6 +3868,19 @@ class ReadingStore:
                      self.REFILL_CEILING_GRAMS)
         return grams - before >= wanted
 
+    def _last_observed_grams(self, plant_id: int, before: str) -> Optional[int]:
+        """What the pot weighed before this, so a gain can be named."""
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT grams FROM plant_weights
+                WHERE plant_id = ? AND observed = 1 AND at < ?
+                ORDER BY at DESC, weight_id DESC LIMIT 1
+                """,
+                (plant_id, before),
+            ).fetchone()
+        return None if row is None else int(row[0])
+
     def record_plant_weight(
         self,
         plant_id: int,
@@ -3918,10 +3941,13 @@ class ReadingStore:
         # against the recent high answers that directly, and leaving
         # them out meant the one plant that weighs itself was the one
         # whose waterings the hub never noticed.
+        noticed = False
+        weighed_before = self._last_observed_grams(plant_id, at)
         if (detect_refill and kind == "reading" and observed
                 and source in ("manual", "scale")
                 and self._is_a_refill(plant_id, grams, at)):
             kind = "watered"
+            noticed = True
         with self._condition, self._database:
             self._database.execute(
                 """
@@ -3935,7 +3961,14 @@ class ReadingStore:
                 ),
             )
         if kind == "watered" and observed:
-            self.record_plant_care(plant_id, "watering", at)
+            self.record_plant_care(
+                plant_id, "watering", at,
+                source="weighing" if noticed else source,
+                summary=(
+                    f"The pot gained {grams - weighed_before} g, which the hub "
+                    "read as a watering."
+                    if noticed and weighed_before is not None else None),
+            )
         if observed and self._is_current_weighing(plant_id, at):
             # A new weighing is the only thing that can change what the water
             # use says, so it is the moment to look. A weighing written down

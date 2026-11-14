@@ -3120,3 +3120,49 @@ class TheForecastSaysWhatItHasBeenToldTests(unittest.TestCase):
     def test_it_says_plainly_that_nothing_has_changed(self) -> None:
         self.store.defer_watering(self.plant)
         self.assertIn("Nothing has been changed by it yet", self._caution()["how"])
+
+
+class AWateringSaysWhoSaidSoTests(unittest.TestCase):
+    """Everything that became a watering was stamped "Recorded by hand".
+
+    Including the ones the scale worked out for itself. A pot re-tared
+    from -77 g to 13.9 kg filed a watering nobody had done, over the
+    name of the person who had not done it -- and afterwards there was
+    no telling which waterings in the log were really theirs.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("white bird")["plant_id"]
+
+    def _watering(self):
+        return next(e for e in self.store.care_log(10, plant_id=self.plant)
+                    if e["kind"] == "watering")
+
+    def test_the_scale_noticing_a_gain_says_so(self) -> None:
+        self.store.record_plant_weight(self.plant, 13029,
+                                       at="2026-11-12T17:13:00Z", source="scale")
+        self.store.record_plant_weight(self.plant, 13909,
+                                       at="2026-11-13T07:26:00Z", source="scale")
+        event = self._watering()
+        self.assertEqual(event["changes"]["source"], "weighing")
+        self.assertNotIn("by hand", event["summary"],
+                         "the scale's own inference is filed under the person")
+
+    def test_it_says_how_much_the_pot_gained(self) -> None:
+        """So a re-tare can be told from a watering afterwards."""
+        self.store.record_plant_weight(self.plant, 13029,
+                                       at="2026-11-12T17:13:00Z", source="scale")
+        self.store.record_plant_weight(self.plant, 13909,
+                                       at="2026-11-13T07:26:00Z", source="scale")
+        self.assertIn("880 g", self._watering()["summary"])
+
+    def test_a_watering_somebody_recorded_still_says_by_hand(self) -> None:
+        self.store.record_plant_care(self.plant, "watering")
+        event = self._watering()
+        self.assertEqual(event["changes"]["source"], "manual")
+        self.assertEqual(event["summary"], "Recorded by hand.")
+
+    def test_a_note_typed_with_it_is_still_kept(self) -> None:
+        self.store.record_plant_care(self.plant, "watering", note="half a litre")
+        self.assertEqual(self._watering()["summary"], "half a litre")
