@@ -1408,3 +1408,67 @@ class ABandThatSaysHowSureItIsTests(unittest.TestCase):
         a ceiling, because at 1.0 the slow end divides by zero."""
         self.assertGreater(self.store.RATE_ERROR_FLOOR, 0)
         self.assertLess(self.store.RATE_ERROR_CEILING, 1.0)
+
+
+class AStepThatHeldInterruptsTheScheduleTests(unittest.TestCase):
+    """An hourly schedule is the wrong grain for catching an event.
+
+    It is right for a drying curve: a pot weighed every five minutes
+    for a season is a season of noise. But the reading that would have
+    shown a watering is dropped with the rest, and the watering is
+    noticed up to an hour later, against a pot that has already been
+    evaporating since.
+
+    A big reading therefore interrupts the schedule -- but not on its
+    own. A pot leant on, lifted or brushed past moves the scale too,
+    and those go back. Water stays in a pot and a hand does not.
+    """
+
+    def setUp(self) -> None:
+        from open_plant_pulse_hub.application.weights import WeightKeeper
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("white bird")["plant_id"]
+        self.keeper = WeightKeeper(self.store)
+        self.store.record_plant_weight(self.plant, 13139,
+                                       at="2026-11-14T01:30:00Z", source="scale")
+
+    def _feed(self, readings):
+        start = datetime(2026, 11, 14, 2, 0, tzinfo=timezone.utc)
+        kept = []
+        for index, grams in enumerate(readings):
+            when = start + timedelta(minutes=5 * index)
+            if self.keeper.keep(self.plant, grams, "scale",
+                                every_seconds=3600, taken=when) is not None:
+                kept.append(grams)
+        return kept
+
+    def test_a_watering_is_kept_without_waiting_for_the_hour(self) -> None:
+        kept = self._feed([13139, 13899, 13895, 13890])
+        self.assertEqual(len(kept), 1,
+                         "the watering waited for the next hourly reading")
+
+    def test_a_hand_on_the_pot_is_not(self) -> None:
+        self.assertEqual(
+            self._feed([13139, 13850, 13141, 13138]), [],
+            "a weight that went straight back was written down as real")
+
+    def test_drying_still_waits_its_turn(self) -> None:
+        self.assertEqual(
+            self._feed([13139, 13136, 13134, 13131]), [],
+            "ordinary drying interrupted the schedule it exists to keep")
+
+    def test_the_second_reading_is_what_keeps_it(self) -> None:
+        """One big reading is held, not kept: it could be a hand."""
+        self.assertEqual(self._feed([13139, 13899]), [],
+                         "a single big reading was believed on its own")
+
+    def test_a_step_still_moving_is_waited_out(self) -> None:
+        """Water poured in over a minute reads differently each time."""
+        kept = self._feed([13139, 13600, 13899, 13895])
+        self.assertEqual(len(kept), 1)
+
+    def test_what_counts_as_a_step_is_what_counts_as_a_watering(self) -> None:
+        """Two figures for "a lot" would be two things to get wrong."""
+        source = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                  / "application" / "weights.py").read_text()
+        self.assertIn("self._store.refill_threshold(previous)", source)

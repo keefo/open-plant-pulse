@@ -28,6 +28,12 @@ LOG = logging.getLogger(__name__)
 POT_REMOVED_FRACTION = 0.5
 # Above double it, something else is.
 IMPLAUSIBLE_RISE_FRACTION = 2.0
+# How close two readings must be for the second to confirm the first.
+#
+# A pot this house weighs moves by a median of fifteen grams between
+# readings, so forty is comfortably outside the noise and well inside
+# any change worth interrupting the schedule for.
+SETTLED_GRAMS = 40
 
 
 def _parse(value: Any) -> datetime:
@@ -83,6 +89,8 @@ class WeightKeeper:
         # The last weight kept per plant, so a reading is judged against what
         # the plant actually weighed rather than against the previous poll.
         self._last_kept: Dict[int, Any] = {}
+        # A big reading waiting to be confirmed by the next one.
+        self._pending: Dict[int, int] = {}
 
     def _zone(self) -> Optional[tzinfo]:
         """The hub's chosen zone, where the store is one that keeps settings.
@@ -102,6 +110,7 @@ class WeightKeeper:
 
     def forget(self, plant_id: int) -> None:
         self._last_kept.pop(plant_id, None)
+        self._pending.pop(plant_id, None)
 
     def keep(self, plant_id: int, grams: int, source_name: str,
              every_seconds: Optional[int] = None, at_hour: Optional[int] = None,
@@ -133,9 +142,11 @@ class WeightKeeper:
                 return None
             # The zone the hub has been set to, so an hour of the day means
             # the same thing here as it does on the settings page.
-            if not asked_for and not due(_parse(last["at"]), now,
-                                         every_seconds, at_hour,
-                                         zone=self._zone()):
+            if (not asked_for
+                    and not self._a_change_that_held(plant_id, grams, previous)
+                    and not due(_parse(last["at"]), now,
+                                every_seconds, at_hour,
+                                zone=self._zone())):
                 return None
 
         # Signed, so a weight nobody remembers taking is accounted for.
@@ -148,6 +159,35 @@ class WeightKeeper:
         )
         self._last_kept[plant_id] = {"grams": grams, "at": now.isoformat()}
         return grams
+
+    def _a_change_that_held(self, plant_id: int, grams: int,
+                            previous: int) -> bool:
+        """A step big enough to be an event, confirmed by the next reading.
+
+        An hourly schedule is right for a drying curve and wrong for
+        catching the moment somebody waters: the reading that would have
+        shown it is dropped, and the watering is noticed up to an hour
+        later against a pot that has already been evaporating.
+
+        So a reading far from the last kept one interrupts the schedule
+        -- but not on its own. A pot leant on, lifted, or brushed past
+        moves the scale too, and those go back. The first big reading is
+        only held; the next one keeps it, and only if it is still far
+        from the last kept weight and close to what was held. Water
+        stays in a pot and a hand does not.
+
+        The step is the same figure the hub uses to call a gain a
+        watering, so the two cannot disagree about what counts as a lot.
+        """
+        notable = self._store.refill_threshold(previous)
+        held = self._pending.pop(plant_id, None)
+        if abs(grams - previous) < notable:
+            return False
+        if held is None or abs(grams - held) > SETTLED_GRAMS:
+            # First sight of it, or it is still moving. Wait and see.
+            self._pending[plant_id] = grams
+            return False
+        return True
 
     def _latest_weight(self, plant_id: int) -> Optional[Dict[str, Any]]:
         status = self._store.plant_weight_status(plant_id)

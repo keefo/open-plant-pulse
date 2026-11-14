@@ -3881,7 +3881,7 @@ class ReadingStore:
                 if row is None:
                     return False
                 before = row[0]
-        return grams - before >= self._refill_threshold(before)
+        return grams - before >= self.refill_threshold(before)
 
     def _probe_agrees_it_was_watered(
         self, plant_id: int, at: str
@@ -3929,7 +3929,7 @@ class ReadingStore:
             return None
         return (peak - quiet) >= self.REFILL_PROBE_RISE
 
-    def _refill_threshold(self, before: float) -> int:
+    def refill_threshold(self, before: float) -> int:
         """The gain that counts as a watering on a pot this size.
 
         Its own method so the event can quote the figure it was judged
@@ -4041,12 +4041,12 @@ class ReadingStore:
                 source="weighing" if noticed else source,
                 summary=(
                     f"The pot gained {grams - weighed_before} g, past the "
-                    f"{self._refill_threshold(weighed_before)} g that counts "
+                    f"{self.refill_threshold(weighed_before)} g that counts "
                     "as a watering on a pot this size."
                     if noticed and weighed_before is not None else None),
                 changes=(
                     {"gained_grams": grams - weighed_before,
-                     "counted_from_grams": self._refill_threshold(weighed_before),
+                     "counted_from_grams": self.refill_threshold(weighed_before),
                      "weighed_before_grams": weighed_before}
                     if noticed and weighed_before is not None else None),
             )
