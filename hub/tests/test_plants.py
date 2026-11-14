@@ -3264,3 +3264,91 @@ class APotWithAProbeIsAskedTwiceTests(unittest.TestCase):
         store, plant = self._plant()
         self.assertEqual(len(self._jump(store, plant)), 1,
                          "a quiet probe blocked a watering it never saw")
+
+
+class WhatWentInAndWhatStayedTests(unittest.TestCase):
+    """A watering has two halves and the log was keeping one.
+
+    "The pot gained 462 g" is the scale's half. The soil is the other,
+    and it is the half that says the water went into the pot rather
+    than onto the scale. And the weight a minute after pouring is
+    water on its way through, not water the plant has: the figure
+    worth keeping is where it came to rest.
+    """
+
+    def _plant(self, moistures=((2, 24.0), (3, 24.0), (8, 72.0), (9, 70.0))):
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("white bird")["plant_id"]
+        if moistures:
+            store.seen_zigbee_device("a4c138aee9841e5c", "soil")
+            store.manage_sensor("zigbee-a4c138aee9841e5c", "probe", None, None,
+                                None, None, 1800, attach_to_plant_id=plant)
+            with store._condition, store._database:
+                for hour, value in moistures:
+                    at = f"2026-11-13T{hour:02d}:00:00Z"
+                    store._database.execute(
+                        """INSERT INTO sensor_readings
+                           (sensor_id, observed_at, received_at, moisture_percent)
+                           VALUES (?, ?, ?, ?)""",
+                        ("zigbee-a4c138aee9841e5c", at, at, value))
+        store.record_plant_weight(plant, 13195, at="2026-11-13T06:00:00Z",
+                                  source="scale")
+        return store, plant
+
+    def _pour(self, store, plant, readings):
+        for minute, grams in readings:
+            store.record_plant_weight(store and plant, grams,
+                                      at=f"2026-11-13T07:{minute:02d}:00Z",
+                                      source="scale")
+
+    def _of_kind(self, store, plant, kind):
+        return [e for e in store.care_log(10, plant_id=plant) if e["kind"] == kind]
+
+    def test_the_watering_says_what_the_soil_did(self) -> None:
+        store, plant = self._plant()
+        self._pour(store, plant, [(0, 13657)])
+        event = self._of_kind(store, plant, "watering")[0]
+        self.assertIn("24.0% to 72.0%", event["summary"])
+        self.assertEqual(event["changes"]["moisture_from_percent"], 24.0)
+        self.assertEqual(event["changes"]["moisture_to_percent"], 72.0)
+
+    def test_a_pot_with_no_probe_says_only_what_it_weighed(self) -> None:
+        store, plant = self._plant(moistures=())
+        self._pour(store, plant, [(0, 13657)])
+        summary = self._of_kind(store, plant, "watering")[0]["summary"]
+        self.assertIn("462 g", summary)
+        self.assertNotIn("soil", summary)
+
+    def test_a_pot_that_came_to_rest_is_noted(self) -> None:
+        store, plant = self._plant()
+        self._pour(store, plant,
+                   [(0, 13657), (5, 13640), (25, 13510), (45, 13505), (55, 13503)])
+        settled = self._of_kind(store, plant, "drainage_assessment")
+        self.assertEqual(len(settled), 1)
+        # At the 45 minute reading, which is where it stopped moving --
+        # not the last one. A pot that has settled has settled.
+        self.assertEqual(settled[0]["changes"]["settled_grams"], 13505)
+        self.assertEqual(settled[0]["changes"]["peak_grams"], 13657)
+        self.assertEqual(settled[0]["changes"]["settled_moisture_percent"], 72.0)
+
+    def test_a_pot_still_draining_is_not(self) -> None:
+        store, plant = self._plant()
+        self._pour(store, plant,
+                   [(0, 13657), (5, 13640), (25, 13510), (45, 13380), (55, 13200)])
+        self.assertEqual(self._of_kind(store, plant, "drainage_assessment"), [],
+                         "water still running through was called settled")
+
+    def test_it_is_noted_once(self) -> None:
+        store, plant = self._plant()
+        self._pour(store, plant,
+                   [(0, 13657), (5, 13640), (25, 13510), (45, 13505), (55, 13503)])
+        store.record_plant_weight(plant, 13501, at="2026-11-13T08:05:00Z",
+                                  source="scale")
+        self.assertEqual(len(self._of_kind(store, plant, "drainage_assessment")), 1,
+                         "every later weighing filed another settling")
+
+    def test_it_waits_for_the_pot_to_have_had_time(self) -> None:
+        """Three readings in five minutes is not a pot that has settled."""
+        store, plant = self._plant()
+        self._pour(store, plant, [(0, 13657), (2, 13650), (4, 13648)])
+        self.assertEqual(self._of_kind(store, plant, "drainage_assessment"), [])

@@ -3885,14 +3885,18 @@ class ReadingStore:
 
     def _probe_agrees_it_was_watered(
         self, plant_id: int, at: str
-    ) -> Optional[bool]:
-        """Did a probe in this pot get wetter around the weight jump?
+    ) -> Optional[Dict[str, Any]]:
+        """What a probe in this pot saw around the weight jump.
 
-        True, False, or None where there is nothing to ask -- no probe,
-        or one that was not reporting. None is not a no: a plant with no
-        probe is judged on its weight as before, because the alternative
-        is a hub that stops noticing waterings the moment a probe goes
-        flat.
+        {"rose": bool, "from": %, "to": %}, or None where there is
+        nothing to ask -- no probe, or one that was not reporting. None
+        is not a no: a plant with no probe is judged on its weight as
+        before, because the alternative is a hub that stops noticing
+        waterings the moment a probe goes flat.
+
+        The two figures come back as well as the verdict so the event
+        can say what convinced it. "The pot gained 462 g" is the scale's
+        half of the story and the soil is the other.
         """
         try:
             moment = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -3927,7 +3931,8 @@ class ReadingStore:
         quiet, peak = (row or (None, None))
         if quiet is None or peak is None:
             return None
-        return (peak - quiet) >= self.REFILL_PROBE_RISE
+        return {"rose": (peak - quiet) >= self.REFILL_PROBE_RISE,
+                "from": round(quiet, 1), "to": round(peak, 1)}
 
     def refill_threshold(self, before: float) -> int:
         """The gain that counts as a watering on a pot this size.
@@ -4017,10 +4022,12 @@ class ReadingStore:
         # whose waterings the hub never noticed.
         noticed = False
         weighed_before = self._last_observed_grams(plant_id, at)
+        probe_saw = (self._probe_agrees_it_was_watered(plant_id, at)
+                     if detect_refill and kind == "reading" and observed else None)
         if (detect_refill and kind == "reading" and observed
                 and source in ("manual", "scale")
                 and self._is_a_refill(plant_id, grams, at)
-                and self._probe_agrees_it_was_watered(plant_id, at) is not False):
+                and (probe_saw is None or probe_saw["rose"])):
             kind = "watered"
             noticed = True
         with self._condition, self._database:
@@ -4043,11 +4050,16 @@ class ReadingStore:
                     f"The pot gained {grams - weighed_before} g, past the "
                     f"{self.refill_threshold(weighed_before)} g that counts "
                     "as a watering on a pot this size."
+                    + (f" The soil went from {probe_saw['from']}% to "
+                       f"{probe_saw['to']}%." if probe_saw else "")
                     if noticed and weighed_before is not None else None),
                 changes=(
                     {"gained_grams": grams - weighed_before,
                      "counted_from_grams": self.refill_threshold(weighed_before),
-                     "weighed_before_grams": weighed_before}
+                     "weighed_before_grams": weighed_before,
+                     **({"moisture_from_percent": probe_saw["from"],
+                         "moisture_to_percent": probe_saw["to"]}
+                        if probe_saw else {})}
                     if noticed and weighed_before is not None else None),
             )
         if observed and self._is_current_weighing(plant_id, at):
@@ -4063,6 +4075,7 @@ class ReadingStore:
         # window every time a number was corrected.
         if kind == "reading" and observed:
             self._open_watering_window(plant_id)
+            self._settle_after_watering(plant_id)
         return self.plant_weight_status(plant_id)
 
     # How much of the headroom a pot must lose before the same question is
@@ -4172,6 +4185,98 @@ class ReadingStore:
             said.append({"grams": changes.get("grams"),
                          "thirsty_grams": changes.get("thirsty_grams")})
         return said
+
+    # A pot is still draining for a while after it is watered, and the
+    # weight it settles at is the one worth keeping: the figure taken a
+    # minute after pouring is water on its way through, not water the
+    # plant has. Twenty minutes is the window the probe side already
+    # waits, so the two halves of settling agree about what it means.
+    SETTLE_AFTER_MINUTES = 20
+    # Within this of each other, two weighings are the same weighing.
+    SETTLE_STABLE_FRACTION = 0.004
+    SETTLE_STABLE_FLOOR_GRAMS = 20
+
+    def _settle_after_watering(self, plant_id: int) -> bool:
+        """Note where the pot came to rest once it had finished draining.
+
+        The watering event says what went in. This says what stayed:
+        the weight after the run-through, and the moisture the soil
+        held once it had spread. Without it the full weight on record
+        is whatever the scale happened to read mid-pour.
+
+        Filed as a drainage assessment, which is what the probe side
+        has always called this -- one name for one thing, even though
+        two instruments can now notice it.
+        """
+        with self._condition:
+            watered = self._database.execute(
+                """
+                SELECT MAX(detected_at) FROM care_events
+                WHERE plant_id = ? AND kind = 'watering'
+                """,
+                (plant_id,),
+            ).fetchone()
+            watered_at = watered[0] if watered else None
+            if not watered_at:
+                return False
+            already = self._database.execute(
+                """
+                SELECT 1 FROM care_events
+                WHERE plant_id = ? AND kind = 'drainage_assessment'
+                  AND detected_at > ? LIMIT 1
+                """,
+                (plant_id, watered_at),
+            ).fetchone()
+            if already:
+                return False
+            rows = self._database.execute(
+                """
+                SELECT at, grams FROM plant_weights
+                WHERE plant_id = ? AND observed = 1 AND at >= ?
+                ORDER BY at
+                """,
+                (plant_id, watered_at),
+            ).fetchall()
+        if len(rows) < 3:
+            return False
+        poured_at = self._observation_datetime(rows[0][0], datetime.now(timezone.utc))
+        last_at = self._observation_datetime(rows[-1][0], datetime.now(timezone.utc))
+        minutes = (last_at - poured_at).total_seconds() / 60
+        if minutes < self.SETTLE_AFTER_MINUTES:
+            return False
+        settled, before_that = rows[-1][1], rows[-2][1]
+        allowed = max(self.SETTLE_STABLE_FLOOR_GRAMS,
+                      settled * self.SETTLE_STABLE_FRACTION)
+        if abs(settled - before_that) > allowed:
+            return False          # still draining
+        peak = max(row[1] for row in rows)
+        moisture = self._probe_agrees_it_was_watered(plant_id, rows[0][0])
+        wet = (f" The soil held {moisture['to']}%." if moisture else "")
+        with self._condition:
+            self._save_event(
+                CareEvent(
+                    event_id=f"settled-{plant_id}-{uuid4().hex}",
+                    sensor_id="",
+                    kind="drainage_assessment",
+                    detected_at=_timestamp(datetime.now(timezone.utc)),
+                    title="Settled after watering",
+                    summary=(f"It came to rest at {settled} g, {peak - settled} g "
+                             f"below the {peak} g it reached, after "
+                             f"{round(minutes)} minutes." + wet),
+                    confidence="measured",
+                    changes={
+                        "source": "weighing",
+                        "settled_grams": settled,
+                        "peak_grams": peak,
+                        "drained_grams": peak - settled,
+                        "settle_minutes": round(minutes),
+                        **({"settled_moisture_percent": moisture["to"]}
+                           if moisture else {}),
+                    },
+                ),
+                plant_id=plant_id,
+            )
+        return True
 
     def _open_watering_window(self, plant_id: int) -> bool:
         """Write down that this plant has asked for water.
