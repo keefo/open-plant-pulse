@@ -3704,6 +3704,7 @@ class ReadingStore:
         note: Optional[str] = None,
         source: str = "manual",
         summary: Optional[str] = None,
+        changes: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Record care somebody gave a plant, as told by them.
 
@@ -3742,7 +3743,7 @@ class ReadingStore:
                     # which waterings in the log were really theirs.
                     summary=summary or note or "Recorded by hand.",
                     confidence="recorded",
-                    changes={"source": source},
+                    changes={"source": source, **(changes or {})},
                 ),
                 plant_id=plant_id,
             )
@@ -3863,10 +3864,20 @@ class ReadingStore:
                 if row is None:
                     return False
                 before = row[0]
-        wanted = min(max(self.REFILL_FLOOR_GRAMS,
-                         before * self.REFILL_FRACTION),
-                     self.REFILL_CEILING_GRAMS)
-        return grams - before >= wanted
+        return grams - before >= self._refill_threshold(before)
+
+    def _refill_threshold(self, before: float) -> int:
+        """The gain that counts as a watering on a pot this size.
+
+        Its own method so the event can quote the figure it was judged
+        against. "The pot gained 880 g" says what happened; it does not
+        say whether the hub was right to call it a watering, and on a
+        13 kg pot the answer turns on a ceiling of 300 g that nothing
+        was telling anybody about.
+        """
+        return round(min(max(self.REFILL_FLOOR_GRAMS,
+                             before * self.REFILL_FRACTION),
+                         self.REFILL_CEILING_GRAMS))
 
     def _last_observed_grams(self, plant_id: int, before: str) -> Optional[int]:
         """What the pot weighed before this, so a gain can be named."""
@@ -3965,8 +3976,14 @@ class ReadingStore:
                 plant_id, "watering", at,
                 source="weighing" if noticed else source,
                 summary=(
-                    f"The pot gained {grams - weighed_before} g, which the hub "
-                    "read as a watering."
+                    f"The pot gained {grams - weighed_before} g, past the "
+                    f"{self._refill_threshold(weighed_before)} g that counts "
+                    "as a watering on a pot this size."
+                    if noticed and weighed_before is not None else None),
+                changes=(
+                    {"gained_grams": grams - weighed_before,
+                     "counted_from_grams": self._refill_threshold(weighed_before),
+                     "weighed_before_grams": weighed_before}
                     if noticed and weighed_before is not None else None),
             )
         if observed and self._is_current_weighing(plant_id, at):

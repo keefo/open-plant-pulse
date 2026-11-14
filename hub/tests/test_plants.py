@@ -3157,6 +3157,33 @@ class AWateringSaysWhoSaidSoTests(unittest.TestCase):
                                        at="2026-11-13T07:26:00Z", source="scale")
         self.assertIn("880 g", self._watering()["summary"])
 
+    def test_it_says_what_the_gain_had_to_beat(self) -> None:
+        """The gain alone does not say whether the hub was right to call it.
+
+        On a 13 kg pot that turns on a ceiling of 300 g, and nothing was
+        telling anybody what the figure was.
+        """
+        self.store.record_plant_weight(self.plant, 13029,
+                                       at="2026-11-12T17:13:00Z", source="scale")
+        self.store.record_plant_weight(self.plant, 13909,
+                                       at="2026-11-13T07:26:00Z", source="scale")
+        event = self._watering()
+        self.assertIn("300 g", event["summary"])
+        self.assertEqual(event["changes"]["gained_grams"], 880)
+        self.assertEqual(event["changes"]["counted_from_grams"], 300)
+        self.assertEqual(event["changes"]["weighed_before_grams"], 13029)
+
+    def test_the_figure_quoted_is_the_one_that_was_used(self) -> None:
+        """A small pot is judged on the floor, not the ceiling."""
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("orchid")["plant_id"]
+        store.record_plant_weight(plant, 500, at="2026-11-12T17:13:00Z", source="scale")
+        store.record_plant_weight(plant, 560, at="2026-11-13T07:26:00Z", source="scale")
+        event = next(e for e in store.care_log(10, plant_id=plant)
+                     if e["kind"] == "watering")
+        self.assertEqual(event["changes"]["counted_from_grams"],
+                         store.REFILL_FLOOR_GRAMS)
+
     def test_a_watering_somebody_recorded_still_says_by_hand(self) -> None:
         self.store.record_plant_care(self.plant, "watering")
         event = self._watering()
