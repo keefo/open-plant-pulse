@@ -3806,6 +3806,23 @@ class ReadingStore:
     # no pot in this house wanders that far: between readings they
     # move by a median of 15 g, and the smallest real watering seen
     # was 179 g.
+    # What a probe must see before a weight jump is believed, where there
+    # is a probe to ask.
+    #
+    # A pot leant on, lifted, or brushed past puts weight on the scale
+    # that never reached the soil. A probe in the same pot answers that
+    # directly: a watering soaks it and a hand does not. Measured on the
+    # white bird, whose jumps are both in the record -- a real watering
+    # took the probe from 13 % to 57 %, and a re-tare that the scale read
+    # as an 880 g gain moved it 25 % to 27 %. Five points is well clear
+    # of the second and nowhere near the first.
+    REFILL_PROBE_RISE = 5.0
+    # Water reaches a probe before or after the pot is weighed, so the
+    # peak is looked for either side; the quiet reading it is measured
+    # against is taken from before any of it started.
+    REFILL_PROBE_BEFORE_HOURS = 6
+    REFILL_PROBE_QUIET_HOURS = 1
+    REFILL_PROBE_AFTER_HOURS = 3
     REFILL_FRACTION = 0.08
     REFILL_FLOOR_GRAMS = 40
     REFILL_CEILING_GRAMS = 300
@@ -3865,6 +3882,52 @@ class ReadingStore:
                     return False
                 before = row[0]
         return grams - before >= self._refill_threshold(before)
+
+    def _probe_agrees_it_was_watered(
+        self, plant_id: int, at: str
+    ) -> Optional[bool]:
+        """Did a probe in this pot get wetter around the weight jump?
+
+        True, False, or None where there is nothing to ask -- no probe,
+        or one that was not reporting. None is not a no: a plant with no
+        probe is judged on its weight as before, because the alternative
+        is a hub that stops noticing waterings the moment a probe goes
+        flat.
+        """
+        try:
+            moment = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        quiet_from = _timestamp(
+            moment - timedelta(hours=self.REFILL_PROBE_BEFORE_HOURS))
+        quiet_to = _timestamp(
+            moment - timedelta(hours=self.REFILL_PROBE_QUIET_HOURS))
+        peak_from = _timestamp(moment - timedelta(hours=2))
+        peak_to = _timestamp(
+            moment + timedelta(hours=self.REFILL_PROBE_AFTER_HOURS))
+        with self._condition:
+            row = self._database.execute(
+                """
+                SELECT
+                  (SELECT MIN(moisture_percent) FROM sensor_readings
+                   WHERE sensor_id IN (SELECT sensor_id FROM sensors
+                                       WHERE plant_id = ?)
+                     AND moisture_percent IS NOT NULL
+                     AND observed_at BETWEEN ? AND ?),
+                  (SELECT MAX(moisture_percent) FROM sensor_readings
+                   WHERE sensor_id IN (SELECT sensor_id FROM sensors
+                                       WHERE plant_id = ?)
+                     AND moisture_percent IS NOT NULL
+                     AND observed_at BETWEEN ? AND ?)
+                """,
+                (plant_id, quiet_from, quiet_to,
+                 plant_id, peak_from, peak_to),
+            ).fetchone()
+        quiet, peak = (row or (None, None))
+        if quiet is None or peak is None:
+            return None
+        return (peak - quiet) >= self.REFILL_PROBE_RISE
 
     def _refill_threshold(self, before: float) -> int:
         """The gain that counts as a watering on a pot this size.
@@ -3956,7 +4019,8 @@ class ReadingStore:
         weighed_before = self._last_observed_grams(plant_id, at)
         if (detect_refill and kind == "reading" and observed
                 and source in ("manual", "scale")
-                and self._is_a_refill(plant_id, grams, at)):
+                and self._is_a_refill(plant_id, grams, at)
+                and self._probe_agrees_it_was_watered(plant_id, at) is not False):
             kind = "watered"
             noticed = True
         with self._condition, self._database:

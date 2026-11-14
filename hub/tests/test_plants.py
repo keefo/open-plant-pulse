@@ -3193,3 +3193,74 @@ class AWateringSaysWhoSaidSoTests(unittest.TestCase):
     def test_a_note_typed_with_it_is_still_kept(self) -> None:
         self.store.record_plant_care(self.plant, "watering", note="half a litre")
         self.assertEqual(self._watering()["summary"], "half a litre")
+
+
+class APotWithAProbeIsAskedTwiceTests(unittest.TestCase):
+    """Weight alone cannot tell water from a hand on the pot.
+
+    A pot leant on, lifted or brushed past puts weight on the scale
+    that never reached the soil. A probe in the same pot answers that
+    directly: a watering soaks it and a hand does not.
+
+    Measured on the white bird, whose jumps are both in the record. A
+    real watering took its probe from 13 % to 57 %; a re-tare that the
+    scale read as an 880 g gain moved it from 25 % to 27 %.
+    """
+
+    def _plant(self, with_probe=True):
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("white bird")["plant_id"]
+        if with_probe:
+            store.seen_zigbee_device("a4c138aee9841e5c", "soil")
+            store.manage_sensor("zigbee-a4c138aee9841e5c", "probe", None, None,
+                                None, None, 1800, attach_to_plant_id=plant)
+        return store, plant
+
+    def _moisture(self, store, hour, value):
+        at = f"2026-11-13T{hour:02d}:00:00Z"
+        with store._condition, store._database:
+            store._database.execute(
+                """INSERT INTO sensor_readings
+                   (sensor_id, observed_at, received_at, moisture_percent)
+                   VALUES (?, ?, ?, ?)""",
+                ("zigbee-a4c138aee9841e5c", at, at, value))
+
+    def _jump(self, store, plant):
+        store.record_plant_weight(plant, 13029, at="2026-11-13T06:00:00Z",
+                                  source="scale")
+        store.record_plant_weight(plant, 13909, at="2026-11-13T07:26:00Z",
+                                  source="scale")
+        return [e for e in store.care_log(5, plant_id=plant)
+                if e["kind"] == "watering"]
+
+    def test_a_soaked_probe_confirms_it(self) -> None:
+        store, plant = self._plant()
+        for hour in (2, 3):
+            self._moisture(store, hour, 13)
+        for hour in (8, 9):
+            self._moisture(store, hour, 57)
+        self.assertEqual(len(self._jump(store, plant)), 1)
+
+    def test_a_probe_that_saw_nothing_vetoes_it(self) -> None:
+        store, plant = self._plant()
+        for hour in (2, 3):
+            self._moisture(store, hour, 25)
+        for hour in (8, 9):
+            self._moisture(store, hour, 27)
+        self.assertEqual(
+            self._jump(store, plant), [],
+            "880 g arrived on the scale and none of it reached the soil")
+
+    def test_a_plant_with_no_probe_is_judged_on_weight_as_before(self) -> None:
+        """Silence is not a no.
+
+        A hub that stops noticing waterings the moment a probe goes
+        flat is worse than one that occasionally believes a hand.
+        """
+        store, plant = self._plant(with_probe=False)
+        self.assertEqual(len(self._jump(store, plant)), 1)
+
+    def test_a_probe_that_was_not_reporting_does_not_veto(self) -> None:
+        store, plant = self._plant()
+        self.assertEqual(len(self._jump(store, plant)), 1,
+                         "a quiet probe blocked a watering it never saw")
