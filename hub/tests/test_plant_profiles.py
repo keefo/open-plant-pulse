@@ -14,6 +14,7 @@ class PlantProfileLoaderTests(unittest.TestCase):
             set(catalog["profiles"]),
             {
                 "alocasia",
+                "anthurium",
                 "begonia",
                 "dracaena",
                 "generic_foliage",

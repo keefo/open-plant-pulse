@@ -1,0 +1,159 @@
+{
+  "$schema": "./_profile.schema.json",
+  "schema_version": 1,
+  "id": "anthurium",
+  "name": "Anthurium",
+  "scientific_name": "Anthurium spp.",
+  "varieties": [
+    {
+      "id": "vittariifolium",
+      "name": "Strap-leaf (A. vittariifolium)",
+      "note": "Ribbon leaves a metre and more long, hanging straight down from a short stem. An epiphyte from the wet forests of Colombia and Ecuador: in the wild its roots sit in leaf litter on a branch, not in soil, so the pot wants bark and the roots want air. Grown for the leaves; the flowers are small and the berries, which take months, are the show. It is a climber by habit and will do better given something to hang from than a shelf that bends its leaves."
+    },
+    {
+      "id": "andraeanum",
+      "name": "Flamingo flower (A. andraeanum)",
+      "note": "The florist's anthurium, with the lacquered red or white spathe. The toughest of this group indoors and the one that tolerates an ordinary pot and ordinary air; it stops flowering in a dim corner long before it looks unhappy."
+    },
+    {
+      "id": "clarinervium",
+      "name": "Clarinervium",
+      "note": "Thick velvet heart with bone-white veins. A rock-dweller rather than a tree-dweller, so it takes a slightly heavier mix than the strap-leaf kinds, and it marks if water sits on the leaf."
+    },
+    {
+      "id": "crystallinum",
+      "name": "Crystallinum",
+      "note": "Like the clarinervium but thinner and faster, with a crystalline sheen along the veins. Wants the humidity kept up; the new leaves crisp at the edge while opening if the air is dry."
+    },
+    {
+      "id": "warocqueanum",
+      "name": "Queen anthurium (A. warocqueanum)",
+      "note": "Long velvet pendant leaves, the hardest of these to keep. Wants high humidity, moving air and a mix that is nearly all bark; it is the first to rot and the first to complain about a dry room."
+    },
+    {
+      "id": "veitchii",
+      "name": "King anthurium (A. veitchii)",
+      "note": "Pleated, corrugated pendant leaves. Epiphytic like the strap-leaf, and like it does better hung than stood."
+    }
+  ],
+  "root_zone": {
+    "moisture_percent": {
+      "label": "Soil moisture",
+      "unit": "%",
+      "scale": [0, 100]
+    },
+    "soil_temperature_c": {
+      "label": "Soil temperature",
+      "unit": "°C",
+      "ideal": [18, 27],
+      "scale": [10, 35]
+    },
+    "conductivity_us_cm": {
+      "label": "Pore-water EC",
+      "unit": "µS/cm",
+      "ideal": [300, 900],
+      "scale": [0, 3000]
+    }
+  },
+  "watering": {
+    "strategy": "partial_dry_back",
+    "label": "Water through and let the top of the bark dry, no further. These are epiphytes: the roots want air as much as water, and they rot sooner than they wilt",
+    "refill_below": 38,
+    "post_water_target": [60, 78],
+    "comfortable_cycle": [38, 78],
+    "concern_below": 25,
+    "concern_above": 88
+  },
+  "drainage": {
+    "label": "Chunky bark with perlite and charcoal, barely any soil. Water should run straight through and the pot must never stand in what came out",
+    "preferred_response": "fast",
+    "acceptable_responses": ["fast"],
+    "maximum_settle_minutes": 10
+  },
+  "climate": {
+    "air_temperature_c": {
+      "label": "Air temperature",
+      "unit": "°C",
+      "ideal": [18, 28],
+      "scale": [10, 35]
+    },
+    "air_humidity_percent": {
+      "label": "Air humidity",
+      "unit": "%",
+      "ideal": [60, 80],
+      "scale": [20, 95]
+    }
+  },
+  "light": {
+    "dli_mol_m2_day": {
+      "label": "Daily light",
+      "unit": "mol/m²/day",
+      "ideal": [4, 10],
+      "scale": [0, 20],
+      "bands": [
+        {
+          "upto": 2,
+          "name": "too little",
+          "effects": {
+            "young": [
+              "Too dark for a young plant. A rooted cutting has nothing in reserve and simply stops.",
+              "Dim. The first leaves come up short and never reach their length.",
+              "A little short for a young plant. It holds what it has and adds nothing."
+            ],
+            "established": [
+              "Too dark. New leaves come up smaller each round, which is how this genus fades out.",
+              "Dim. It keeps its leaves and stops making them; the flowering kinds stop flowering first.",
+              "A little short. It holds, but it will not put out a new leaf."
+            ]
+          }
+        },
+        {"upto": 4, "name": "getting by"},
+        {"upto": 10, "name": "healthy"},
+        {"upto": 14, "name": "bright"},
+        {
+          "upto": null,
+          "name": "scorching",
+          "effects": {
+            "young": [
+              "Too much for a young plant. The newest leaf pales and its edge goes thin.",
+              "Well past what a young plant takes. New leaves crisp as they unfurl.",
+              "Far too much for a young plant. A soft new leaf burns through in an afternoon."
+            ],
+            "established": [
+              "Too much. The leaf yellows overall and loses its depth of colour.",
+              "Burning. Dry tan patches spread where the sun falls and do not heal.",
+              "Far too much. These grow under a canopy; a bare window scorches them through."
+            ]
+          }
+        }
+      ],
+      "established_after_months": 18
+    }
+  },
+  "chemistry": {
+    "soil_ph": {
+      "label": "pH",
+      "unit": "",
+      "ideal": [5.5, 6.5],
+      "scale": [4.0, 9.0]
+    },
+    "nitrogen_mg_kg": {
+      "label": "Nitrogen",
+      "unit": "mg/kg",
+      "ideal": [30, 80],
+      "scale": [0, 200]
+    },
+    "phosphorus_mg_kg": {
+      "label": "Phosphorus",
+      "unit": "mg/kg",
+      "ideal": [15, 40],
+      "scale": [0, 140]
+    },
+    "potassium_mg_kg": {
+      "label": "Potassium",
+      "unit": "mg/kg",
+      "ideal": [50, 130],
+      "scale": [0, 240]
+    }
+  }
+}
