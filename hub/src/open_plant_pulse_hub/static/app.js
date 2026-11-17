@@ -8941,7 +8941,16 @@ async function askAboutWeighing(grams) {
   const dialog = document.getElementById("weighing-question");
   const title = document.getElementById("weighing-question-title");
   const detail = document.getElementById("weighing-question-detail");
-  const heavier = change >= Math.max(40, previous * 0.08);
+  /* What counts as a gain is the hub's to say, not the page's.
+     This worked it out again from its own copy of the rule -- forty
+     grams or eight per cent, whichever was more -- and the two drifted
+     the moment the hub stopped holding a typed weight to a scale's
+     noise floor. A 99 g begonia watered to 131 g was above the hub's
+     figure and below this one, so the watering was filed and the
+     question never asked. */
+  const mustGain = selectedPlant?.weight?.watering_gain_grams
+    ?? Math.max(40, previous * 0.08);
+  const heavier = change >= mustGain;
   const lighter = change <= -Math.max(40, previous * 0.3);
   if (!heavier && !lighter) return { kind: "reading" };
   if (!dialog || typeof dialog.showModal !== "function") {

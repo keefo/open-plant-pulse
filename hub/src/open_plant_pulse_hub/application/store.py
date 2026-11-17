@@ -4735,6 +4735,14 @@ class ReadingStore:
             "held_grams": None,
             "daily_grams": None,
             "days_left": None,
+            # What a typed weighing has to gain before it is a watering.
+            #
+            # Sent because the page was working it out as well, from its
+            # own copy of the rule, and the two drifted: a 99 g begonia
+            # that the hub recorded as watered was below the figure the
+            # page had, so it filed the watering and never asked. One
+            # method decides; everybody else is told.
+            "watering_gain_grams": None,
         }
         if not rows:
             return status
@@ -4855,6 +4863,9 @@ class ReadingStore:
             newest = cycle[0]
             if thirsty and newest[1] > thirsty[1]:
                 status["days_left"] = round((newest[1] - thirsty[1]) / daily, 1)
+        if status["latest"]:
+            status["watering_gain_grams"] = self.refill_threshold(
+                status["latest"]["grams"], "manual")
         return status
 
     def _drying_rate(self, weighings: List[Tuple[Any, float]],

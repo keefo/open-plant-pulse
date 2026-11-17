@@ -3406,3 +3406,57 @@ class ATypedWeightHasNoNoiseFloorTests(unittest.TestCase):
         self.assertEqual(store.refill_threshold(99, "scale"), 40)
         self.assertLess(store.REFILL_TYPED_FLOOR_GRAMS,
                         store.REFILL_FLOOR_GRAMS)
+
+
+class OneRuleForWhatCountsAsAGainTests(unittest.TestCase):
+    """The page worked it out again, from its own copy.
+
+    Forty grams or eight per cent, whichever was more -- written once
+    in Python and once in JavaScript. They agreed until the hub
+    stopped holding a typed weight to a scale's noise floor, and then
+    a 99 g begonia watered to 131 g was above the hub's figure and
+    below the page's: the watering was filed and the question never
+    asked.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("begonia")["plant_id"]
+
+    def test_the_status_says_what_a_gain_must_beat(self) -> None:
+        self.store.record_plant_weight(self.plant, 99)
+        status = self.store.plant_weight_status(self.plant)
+        self.assertEqual(status["watering_gain_grams"], 8)
+
+    def test_it_follows_the_pot(self) -> None:
+        self.store.record_plant_weight(self.plant, 13000)
+        self.assertEqual(
+            self.store.plant_weight_status(self.plant)["watering_gain_grams"], 300)
+
+    def test_a_pot_never_weighed_has_no_figure_rather_than_a_wrong_one(self) -> None:
+        self.assertIsNone(
+            self.store.plant_weight_status(self.plant)["watering_gain_grams"])
+
+    def test_the_page_asks_rather_than_works_it_out(self) -> None:
+        here = Path(__file__).parents[1] / "src" / "open_plant_pulse_hub" / "static"
+        script = (here / "app.js").read_text()
+        self.assertIn("weight?.watering_gain_grams", script,
+                      "the page is deciding for itself what counts as a gain")
+        # The fallback is allowed -- an old payload has no figure -- but
+        # it must not be the first answer.
+        self.assertLess(script.index("weight?.watering_gain_grams"),
+                        script.index("Math.max(40, previous * 0.08)"))
+
+    def test_it_agrees_with_what_the_hub_then_does(self) -> None:
+        """The two figures are the same figure, asked of one method."""
+        # Distinct moments: the lookup for "what it weighed before" is
+        # strictly earlier, so two weighings in one second have nothing
+        # to compare against.
+        self.store.record_plant_weight(self.plant, 99, at="2026-11-16T04:00:00Z")
+        must_gain = self.store.plant_weight_status(self.plant)["watering_gain_grams"]
+        self.store.record_plant_weight(self.plant, 99 + must_gain,
+                                       at="2026-11-16T05:00:00Z")
+        self.assertTrue(
+            [e for e in self.store.care_log(5, plant_id=self.plant)
+             if e["kind"] == "watering"],
+            "a gain the page would have asked about was not read as a watering")
