@@ -3519,3 +3519,88 @@ class OneRuleForWhatCountsAsAGainTests(unittest.TestCase):
             [e for e in self.store.care_log(5, plant_id=self.plant)
              if e["kind"] == "watering"],
             "a gain the page would have asked about was not read as a watering")
+
+
+class TheCardReadsAsOneSentenceTests(unittest.TestCase):
+    """A mini orchid read "7 ml/d" and "Water in 1d" with 28 g to go.
+
+    Twenty-eight over seven is four days. Both numbers were true --
+    one the mean over the window, the other the rate the forecast had
+    used -- and together they could not be read as one sentence, which
+    is worse than either being wrong.
+
+    The rate was wrong as well: its only span since the watering began
+    at the watering, so what it measured was water running through the
+    bark rather than a plant drinking.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("orchid mini")["plant_id"]
+        for grams, kind in ((143, "full"), (120, "thirsty"), (110, "dry")):
+            self.store.record_plant_weight(self.plant, grams, kind=kind,
+                                           observed=False)
+        # A week of real drinking, three to five grams a day. Dated well
+        # in the past: a pot cannot be weighed in the future.
+        for day, grams in ((5, 136), (6, 131), (7, 127), (8, 124), (9, 119)):
+            self.store.record_plant_weight(self.plant, grams,
+                                           at=f"2026-11-{day:02d}T18:00:00Z")
+
+    def _water_then_weigh(self):
+        """Weighed while still draining, as a pot is when it is watered."""
+        self.store.record_plant_weight(self.plant, 159, kind="watered",
+                                       at="2026-11-10T19:01:00Z")
+        self.store.record_plant_weight(self.plant, 148,
+                                       at="2026-11-11T05:06:00Z")
+
+    def test_the_drainage_span_is_not_a_drinking_rate(self) -> None:
+        self._water_then_weigh()
+        forecast = self.store.watering_forecast(self.plant)
+        self.assertLess(
+            forecast["grams_per_day"], 15,
+            "the hours after a watering were read as the plant drinking")
+
+    def test_the_week_answers_instead(self) -> None:
+        self._water_then_weigh()
+        self.assertNotIn("this cycle",
+                         self.store.watering_forecast(self.plant)["rate_from"])
+
+    def test_the_cycle_is_used_once_it_has_a_span_of_its_own(self) -> None:
+        self._water_then_weigh()
+        self.store.record_plant_weight(self.plant, 144,
+                                       at="2026-11-12T05:00:00Z")
+        self.assertIn("this cycle",
+                      self.store.watering_forecast(self.plant)["rate_from"])
+
+    def test_a_long_first_span_is_kept(self) -> None:
+        """Length is what tells drainage from drinking.
+
+        Draining takes an hour or two whatever the span is: most of a
+        ten hour one, a rounding error of a four day one. Dropping
+        every first span would throw away four days of real drinking
+        to avoid two hours of drainage.
+        """
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("fiddle fig")["plant_id"]
+        store.record_plant_weight(plant, 2000, kind="thirsty", observed=False)
+        store.record_plant_weight(plant, 3000, kind="watered",
+                                  at="2026-11-05T06:00:00Z")
+        store.record_plant_weight(plant, 2700, at="2026-11-09T06:00:00Z")
+        store.record_plant_weight(plant, 2500, at="2026-11-13T06:00:00Z")
+
+        forecast = store.watering_forecast(plant)
+
+        self.assertEqual(forecast["rate_from"], "this cycle")
+        self.assertEqual(forecast["spans_used"], 2,
+                         "a four day span was mistaken for drainage")
+
+    def test_the_card_quotes_the_rate_its_days_came_from(self) -> None:
+        self._water_then_weigh()
+        listed = next(p for p in self.store.plants()
+                      if p["plant_id"] == self.plant)
+        forecast = self.store.watering_forecast(self.plant)
+        self.assertEqual(listed["daily_grams"], forecast["grams_per_day"])
+        # And the two read as one sentence.
+        self.assertAlmostEqual(
+            forecast["grams_to_go"] / listed["daily_grams"],
+            forecast["days"], delta=0.2)

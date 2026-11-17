@@ -5543,8 +5543,29 @@ class ReadingStore:
 
         # Spans since the last watering: the same plant in the same pot in
         # the same weather, which is a better guide than a quarter's average.
+        #
+        # But not a short span that begins at the watering itself. A pot
+        # is weighed the moment it is watered, and for the next hours
+        # what it loses is water running through rather than a plant
+        # drinking: a mini orchid in bark weighed at 159 g and 148 g ten
+        # hours later read as 26 g a day, against the 3 to 5 it had shown
+        # all week, and was told to expect water tomorrow rather than in
+        # five days.
+        #
+        # Short, because length is what tells the two apart. Draining
+        # takes an hour or two whatever the span is: most of a ten hour
+        # one and a rounding error of a four day one. Dropping every
+        # first span would throw away four days of real drinking to
+        # avoid two hours of drainage.
+        #
+        # Where that leaves the cycle empty the window answers instead --
+        # a week of real spans is better than one span of drainage.
         watered_at = status["watered"]["at"] if status["watered"] else None
-        cycle = [i for i in use["intervals"] if watered_at is None or i["from"] >= watered_at]
+        cycle = [i for i in use["intervals"]
+                 if watered_at is None or i["from"] >= watered_at]
+        cycle = [i for i in cycle
+                 if not (i["from"] == watered_at
+                         and i["days"] < self.DRAINAGE_SPANS_UNDER_DAYS)]
         spans = cycle if cycle else use["intervals"]
         if not spans:
             missing.append({
@@ -5753,6 +5774,9 @@ class ReadingStore:
             return 0.0
         return round(to_dry / rate, 1)
 
+    # Under a day, a span that starts at a watering is mostly drainage.
+    DRAINAGE_SPANS_UNDER_DAYS = 1.0
+
     # The widest a band is allowed to be, and the narrowest.
     #
     # A floor because a plant with three weighings has not earned a narrow
@@ -5827,15 +5851,20 @@ class ReadingStore:
             {
                 **self._plant_payload(row),
                 "weight": self.plant_weight_status(row[0]),
-                # The mean rate over the same window the plant's own page
-                # uses, so the two cannot disagree -- and with the air now,
-                # because the forecast divides it out and a card showing a
-                # different number from the page it links to is worse than
-                # either being slow. It stopped costing anything when the
-                # room's drying power became one answer per room per hour
-                # rather than one per plant: 307 ms for the household, down
-                # to 68.
-                "daily_grams": self.water_use(row[0], with_air=True)["daily_grams"],
+                # The rate the forecast beside it used, not the window's
+                # mean.
+                #
+                # Those are different figures and the card was showing one
+                # against the other's days: a mini orchid read "7 ml/d"
+                # and "Water in 1d" with 28 g to go, and 28 over 7 is four
+                # days. Two true numbers that cannot be read as one
+                # sentence, which is worse than either being wrong -- so
+                # the card quotes the rate its own forecast divided by.
+                # The plant's page still shows the window's mean, under
+                # water use, where it is about the plant's habit rather
+                # than about when to fetch a can.
+                "daily_grams": self.watering_forecast(
+                    row[0], with_air=True)["grams_per_day"],
                 # Both, because they are different facts. The days are a
                 # forecast; thirsty_now is the pot already at or past the
                 # weight this plant asks for water at, and a card that
