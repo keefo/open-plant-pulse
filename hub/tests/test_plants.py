@@ -3572,13 +3572,16 @@ class TheCardReadsAsOneSentenceTests(unittest.TestCase):
         self.assertIn("this cycle",
                       self.store.watering_forecast(self.plant)["rate_from"])
 
-    def test_a_long_first_span_is_kept(self) -> None:
-        """Length is what tells drainage from drinking.
+    def test_a_first_span_at_its_usual_rate_is_kept(self) -> None:
+        """A plant is its own control.
 
-        Draining takes an hour or two whatever the span is: most of a
-        ten hour one, a rounding error of a four day one. Dropping
-        every first span would throw away four days of real drinking
-        to avoid two hours of drainage.
+        Length looked like the test and was not. Across this house the
+        two orchids ran at five and nearly seven times their own median
+        after a watering -- both in bark, which drains fast and holds
+        little -- while five plants with short first spans ran at 1.1
+        to 1.6 times theirs, which is a wet pot and a drinking plant.
+        One orchid's drainage span was 1.4 days, so a day's length
+        would have kept it.
         """
         store = ReadingStore(database_path=":memory:")
         plant = store.create_plant("fiddle fig")["plant_id"]
@@ -3593,6 +3596,36 @@ class TheCardReadsAsOneSentenceTests(unittest.TestCase):
         self.assertEqual(forecast["rate_from"], "this cycle")
         self.assertEqual(forecast["spans_used"], 2,
                          "a four day span was mistaken for drainage")
+
+    def test_a_long_drainage_span_is_still_dropped(self) -> None:
+        """The orchid the length rule kept: 1.4 days at seven times usual."""
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("orchid")["plant_id"]
+        store.record_plant_weight(plant, 400, kind="thirsty", observed=False)
+        for day, grams in ((1, 520), (2, 513), (3, 506), (4, 499)):
+            store.record_plant_weight(plant, grams,
+                                      at=f"2026-11-0{day}T06:00:00Z")
+        store.record_plant_weight(plant, 600, kind="watered",
+                                  at="2026-11-06T06:00:00Z")
+        store.record_plant_weight(plant, 534, at="2026-11-07T15:30:00Z")
+
+        forecast = store.watering_forecast(plant)
+
+        self.assertNotIn("this cycle", forecast["rate_from"],
+                         "a day and a half of draining was read as drinking")
+
+    def test_with_too_little_history_length_decides(self) -> None:
+        """No usual to compare against, so the short span goes."""
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("orchid")["plant_id"]
+        store.record_plant_weight(plant, 400, kind="thirsty", observed=False)
+        store.record_plant_weight(plant, 520, at="2026-11-01T06:00:00Z")
+        store.record_plant_weight(plant, 600, kind="watered",
+                                  at="2026-11-06T06:00:00Z")
+        store.record_plant_weight(plant, 574, at="2026-11-06T16:00:00Z")
+
+        self.assertNotIn("this cycle",
+                         store.watering_forecast(plant)["rate_from"])
 
     def test_the_card_quotes_the_rate_its_days_came_from(self) -> None:
         self._water_then_weigh()

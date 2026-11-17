@@ -5552,11 +5552,11 @@ class ReadingStore:
         # all week, and was told to expect water tomorrow rather than in
         # five days.
         #
-        # Short, because length is what tells the two apart. Draining
-        # takes an hour or two whatever the span is: most of a ten hour
-        # one and a rounding error of a four day one. Dropping every
-        # first span would throw away four days of real drinking to
-        # avoid two hours of drainage.
+        # Judged against the plant's own usual rate rather than by its
+        # length, because length turned out not to be the test: an
+        # orchid draining over 1.4 days ran at nearly seven times its
+        # median, while an alocasia's short first span ran at 1.1 times
+        # its own and was ordinary drinking.
         #
         # Where that leaves the cycle empty the window answers instead --
         # a week of real spans is better than one span of drainage.
@@ -5564,8 +5564,7 @@ class ReadingStore:
         cycle = [i for i in use["intervals"]
                  if watered_at is None or i["from"] >= watered_at]
         cycle = [i for i in cycle
-                 if not (i["from"] == watered_at
-                         and i["days"] < self.DRAINAGE_SPANS_UNDER_DAYS)]
+                 if not self._is_drainage(i, watered_at, use["intervals"])]
         spans = cycle if cycle else use["intervals"]
         if not spans:
             missing.append({
@@ -5774,8 +5773,38 @@ class ReadingStore:
             return 0.0
         return round(to_dry / rate, 1)
 
-    # Under a day, a span that starts at a watering is mostly drainage.
+    # How far above its own usual rate a span has to be before it is
+    # water leaving rather than a plant drinking.
+    #
+    # Length looked like the test and is not. Checked across this house:
+    # the two orchids ran at five and nearly seven times their own
+    # median in the hours after a watering -- both in bark, which drains
+    # fast and holds little -- while five other plants whose first spans
+    # were short ran at 1.1 to 1.6 times theirs, which is a wet pot
+    # evaporating and a plant drinking, not drainage. One of the orchids
+    # had a span of 1.4 days, so a day's length would have kept it.
+    #
+    # A plant is its own control. Soil holds the comparison that a
+    # constant cannot.
+    DRAINAGE_ABOVE_USUAL = 2.0
+    # Below this many other spans there is no usual to compare against,
+    # and a short first span is dropped on its length alone.
+    DRAINAGE_NEEDS_SPANS = 3
     DRAINAGE_SPANS_UNDER_DAYS = 1.0
+
+    def _is_drainage(self, span: Dict[str, Any], watered_at: Optional[str],
+                     every_span: List[Dict[str, Any]]) -> bool:
+        """Is this span water running out rather than a plant drinking?"""
+        if watered_at is None or span["from"] != watered_at:
+            return False
+        others = sorted(i["grams_per_day"] for i in every_span
+                        if i["from"] != watered_at and i["grams_per_day"] > 0)
+        if len(others) < self.DRAINAGE_NEEDS_SPANS:
+            return span["days"] < self.DRAINAGE_SPANS_UNDER_DAYS
+        usual = others[len(others) // 2]
+        if usual <= 0:
+            return False
+        return span["grams_per_day"] / usual >= self.DRAINAGE_ABOVE_USUAL
 
     # The widest a band is allowed to be, and the narrowest.
     #
