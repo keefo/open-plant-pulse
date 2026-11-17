@@ -3353,6 +3353,24 @@ class WhatWentInAndWhatStayedTests(unittest.TestCase):
         self._pour(store, plant, [(0, 13657), (2, 13650), (4, 13648)])
         self.assertEqual(self._of_kind(store, plant, "drainage_assessment"), [])
 
+    def test_a_pot_weighed_by_hand_is_never_asked(self) -> None:
+        """Settling is over in minutes; a hand weighs once a day.
+
+        Asked of a hand-weighed pot the question can only be answered
+        wrongly, which it was, on ten plants.
+        """
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("begonia")["plant_id"]
+        store.record_plant_weight(plant, 99, at="2026-11-14T20:18:00Z")
+        for at, grams in (("2026-11-14T20:22:00Z", 138),
+                          ("2026-11-14T20:50:00Z", 112),
+                          ("2026-11-14T21:10:00Z", 108)):
+            store.record_plant_weight(plant, grams, at=at)
+        self.assertEqual(
+            [e for e in store.care_log(10, plant_id=plant)
+             if e["kind"] == "drainage_assessment"], [],
+            "a pot nobody could have watched settle was said to have settled")
+
     def test_a_settling_nobody_watched_is_not_claimed(self) -> None:
         """Draining takes minutes; two days of loss is the plant living.
 
@@ -3363,24 +3381,32 @@ class WhatWentInAndWhatStayedTests(unittest.TestCase):
         """
         store = ReadingStore(database_path=":memory:")
         plant = store.create_plant("begonia")["plant_id"]
-        store.record_plant_weight(plant, 99, at="2026-11-14T20:18:00Z")
-        for at, grams in (("2026-11-14T20:22:00Z", 138),
-                          ("2026-11-16T19:11:00Z", 107),
-                          ("2026-11-16T21:01:00Z", 102)):
-            store.record_plant_weight(plant, grams, at=at)
+        store.record_plant_weight(plant, 13195, at="2026-11-14T20:18:00Z",
+                                  source="scale")
+        for at, grams in (("2026-11-14T20:22:00Z", 13657),
+                          ("2026-11-16T19:11:00Z", 13300),
+                          ("2026-11-16T21:01:00Z", 13290)):
+            store.record_plant_weight(plant, grams, at=at, source="scale")
         settled = [e for e in store.care_log(10, plant_id=plant)
                    if e["kind"] == "drainage_assessment"]
         self.assertEqual(settled, [],
                          "two days of drinking was recorded as drainage")
 
     def test_a_settling_that_was_watched_still_is(self) -> None:
+        """A pot on a scale, which is the only kind that is asked.
+
+        Weighed in grams the scale actually sees: a 99 g pot would
+        never be on this instrument, and would not clear its noise
+        floor if it were.
+        """
         store = ReadingStore(database_path=":memory:")
-        plant = store.create_plant("begonia")["plant_id"]
-        store.record_plant_weight(plant, 99, at="2026-11-14T20:18:00Z")
-        for at, grams in (("2026-11-14T20:22:00Z", 138),
-                          ("2026-11-14T20:50:00Z", 112),
-                          ("2026-11-14T21:10:00Z", 108)):
-            store.record_plant_weight(plant, grams, at=at)
+        plant = store.create_plant("white bird")["plant_id"]
+        store.record_plant_weight(plant, 13195, at="2026-11-14T20:18:00Z",
+                                  source="scale")
+        for at, grams in (("2026-11-14T20:22:00Z", 13657),
+                          ("2026-11-14T20:50:00Z", 13520),
+                          ("2026-11-14T21:10:00Z", 13505)):
+            store.record_plant_weight(plant, grams, at=at, source="scale")
         settled = [e for e in store.care_log(10, plant_id=plant)
                    if e["kind"] == "drainage_assessment"]
         self.assertEqual(len(settled), 1)

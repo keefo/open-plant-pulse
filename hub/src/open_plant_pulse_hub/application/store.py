@@ -4088,7 +4088,13 @@ class ReadingStore:
         # window every time a number was corrected.
         if kind == "reading" and observed:
             self._open_watering_window(plant_id)
-            self._settle_after_watering(plant_id)
+            # Only a pot that weighs itself. Settling is minutes long, so
+            # seeing it takes readings minutes apart, and a pot weighed by
+            # hand is weighed once a day at best. Asked of those, the
+            # question can only ever be answered wrongly -- which it was,
+            # on ten plants, before this said so.
+            if source == "scale":
+                self._settle_after_watering(plant_id)
         return self.plant_weight_status(plant_id)
 
     # How much of the headroom a pot must lose before the same question is
@@ -4230,6 +4236,10 @@ class ReadingStore:
         Filed as a drainage assessment, which is what the probe side
         has always called this -- one name for one thing, even though
         two instruments can now notice it.
+
+        Only for a pot on a scale. The caller checks that, because a
+        pot weighed by hand is weighed once a day and settling is over
+        in minutes: there is nothing there to watch.
         """
         with self._condition:
             watered = self._database.execute(
