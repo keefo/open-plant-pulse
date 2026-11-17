@@ -3825,6 +3825,10 @@ class ReadingStore:
     REFILL_PROBE_AFTER_HOURS = 3
     REFILL_FRACTION = 0.08
     REFILL_FLOOR_GRAMS = 40
+    # What a typed weight has to beat instead. Not zero: somebody puts a
+    # label or a stake in the pot, or fumbles a digit. But a person does
+    # not have a noise floor, so there is nothing here to be deaf for.
+    REFILL_TYPED_FLOOR_GRAMS = 5
     REFILL_CEILING_GRAMS = 300
     # How long a pot coming back onto the scale takes to settle. Within
     # this, the highest reading is the pot's real weight and the low
@@ -3832,7 +3836,8 @@ class ReadingStore:
     # is the pot drying.
     REFILL_SETTLE_MINUTES = 15
 
-    def _is_a_refill(self, plant_id: int, grams: int, at: str) -> bool:
+    def _is_a_refill(self, plant_id: int, grams: int, at: str,
+                     source: str = "scale") -> bool:
         """Whether this weighing is heavier than the last by enough to be water.
 
         A plant only ever loses weight between weighings; it cannot
@@ -3881,7 +3886,7 @@ class ReadingStore:
                 if row is None:
                     return False
                 before = row[0]
-        return grams - before >= self.refill_threshold(before)
+        return grams - before >= self.refill_threshold(before, source)
 
     def _probe_agrees_it_was_watered(
         self, plant_id: int, at: str
@@ -3934,8 +3939,15 @@ class ReadingStore:
         return {"rose": (peak - quiet) >= self.REFILL_PROBE_RISE,
                 "from": round(quiet, 1), "to": round(peak, 1)}
 
-    def refill_threshold(self, before: float) -> int:
+    def refill_threshold(self, before: float, source: str = "scale") -> int:
         """The gain that counts as a watering on a pot this size.
+
+        The floor is for an instrument, not for a person. It is there so
+        a scale's wander is not read as a watering -- and a number
+        somebody typed does not wander. A 99 g begonia watered to 131 g
+        was ignored, because forty grams on a pot that size is a demand
+        for a forty per cent gain; eight per cent of it is eight grams,
+        which is what a typed reading should be judged on.
 
         Its own method so the event can quote the figure it was judged
         against. "The pot gained 880 g" says what happened; it does not
@@ -3943,8 +3955,9 @@ class ReadingStore:
         13 kg pot the answer turns on a ceiling of 300 g that nothing
         was telling anybody about.
         """
-        return round(min(max(self.REFILL_FLOOR_GRAMS,
-                             before * self.REFILL_FRACTION),
+        floor = (self.REFILL_FLOOR_GRAMS if source != "manual"
+                 else self.REFILL_TYPED_FLOOR_GRAMS)
+        return round(min(max(floor, before * self.REFILL_FRACTION),
                          self.REFILL_CEILING_GRAMS))
 
     def _last_observed_grams(self, plant_id: int, before: str) -> Optional[int]:
@@ -4026,7 +4039,7 @@ class ReadingStore:
                      if detect_refill and kind == "reading" and observed else None)
         if (detect_refill and kind == "reading" and observed
                 and source in ("manual", "scale")
-                and self._is_a_refill(plant_id, grams, at)
+                and self._is_a_refill(plant_id, grams, at, source)
                 and (probe_saw is None or probe_saw["rose"])):
             kind = "watered"
             noticed = True
@@ -4048,14 +4061,14 @@ class ReadingStore:
                 source="weighing" if noticed else source,
                 summary=(
                     f"The pot gained {grams - weighed_before} g, past the "
-                    f"{self.refill_threshold(weighed_before)} g that counts "
+                    f"{self.refill_threshold(weighed_before, source)} g that counts "
                     "as a watering on a pot this size."
                     + (f" The soil went from {probe_saw['from']}% to "
                        f"{probe_saw['to']}%." if probe_saw else "")
                     if noticed and weighed_before is not None else None),
                 changes=(
                     {"gained_grams": grams - weighed_before,
-                     "counted_from_grams": self.refill_threshold(weighed_before),
+                     "counted_from_grams": self.refill_threshold(weighed_before, source),
                      "weighed_before_grams": weighed_before,
                      **({"moisture_from_percent": probe_saw["from"],
                          "moisture_to_percent": probe_saw["to"]}

@@ -1471,4 +1471,6 @@ class AStepThatHeldInterruptsTheScheduleTests(unittest.TestCase):
         """Two figures for "a lot" would be two things to get wrong."""
         source = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
                   / "application" / "weights.py").read_text()
-        self.assertIn("self._store.refill_threshold(previous)", source)
+        # The keeper only ever sees a scale's own readings, and says so
+        # rather than leaning on the default.
+        self.assertIn('self._store.refill_threshold(previous, "scale")', source)

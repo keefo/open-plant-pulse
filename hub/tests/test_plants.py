@@ -3352,3 +3352,57 @@ class WhatWentInAndWhatStayedTests(unittest.TestCase):
         store, plant = self._plant()
         self._pour(store, plant, [(0, 13657), (2, 13650), (4, 13648)])
         self.assertEqual(self._of_kind(store, plant, "drainage_assessment"), [])
+
+
+class ATypedWeightHasNoNoiseFloorTests(unittest.TestCase):
+    """A 99 g begonia watered to 131 g was not noticed.
+
+    The threshold is eight per cent of the pot, with a floor of forty
+    grams so a scale's wander is not read as a watering. On a pot this
+    small the floor wins, and forty grams of a ninety-nine gram pot is
+    a demand for a forty per cent gain.
+
+    But wander is an instrument drifting, and these readings were
+    typed. A person has no noise floor.
+    """
+
+    def _watering(self, readings, source):
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("black swan begonia small")["plant_id"]
+        for minute, grams in readings:
+            store.record_plant_weight(plant, grams,
+                                      at=f"2026-11-16T0{minute}:00:00Z",
+                                      source=source)
+        return [e for e in store.care_log(5, plant_id=plant)
+                if e["kind"] == "watering"]
+
+    def test_the_begonia_is_noticed_now(self) -> None:
+        got = self._watering([(1, 99), (2, 131)], "manual")
+        self.assertEqual(len(got), 1, "32 g on a 99 g pot is a watering")
+        self.assertIn("past the 8 g", got[0]["summary"])
+
+    def test_a_typed_pot_drifting_a_little_is_not(self) -> None:
+        """Eight per cent still has to be beaten; this is not nothing."""
+        self.assertEqual(self._watering([(1, 99), (2, 104)], "manual"), [])
+
+    def test_a_scale_keeps_its_floor(self) -> None:
+        """Its wander is about the instrument, not the pot's size.
+
+        The load cell's noise is much the same under a small pot as a
+        large one, so forty grams stays the right guard for it.
+        """
+        self.assertEqual(self._watering([(1, 99), (2, 131)], "scale"), [])
+
+    def test_a_big_pot_is_unchanged_either_way(self) -> None:
+        for source in ("manual", "scale"):
+            with self.subTest(source=source):
+                got = self._watering([(1, 13195), (2, 13657)], source)
+                self.assertEqual(len(got), 1)
+                self.assertIn("past the 300 g", got[0]["summary"])
+
+    def test_the_two_floors_are_named_not_buried(self) -> None:
+        store = ReadingStore(database_path=":memory:")
+        self.assertEqual(store.refill_threshold(99, "manual"), 8)
+        self.assertEqual(store.refill_threshold(99, "scale"), 40)
+        self.assertLess(store.REFILL_TYPED_FLOOR_GRAMS,
+                        store.REFILL_FLOOR_GRAMS)

@@ -179,7 +179,7 @@ class WeightKeeper:
         The step is the same figure the hub uses to call a gain a
         watering, so the two cannot disagree about what counts as a lot.
         """
-        notable = self._store.refill_threshold(previous)
+        notable = self._store.refill_threshold(previous, "scale")
         held = self._pending.pop(plant_id, None)
         if abs(grams - previous) < notable:
             return False
