@@ -30,9 +30,21 @@ LOG = logging.getLogger(__name__)
 # that blocks for longer than that is a schedule nobody is watching.
 CONFIRM_SECONDS = 2.5
 CONFIRM_POLL_SECONDS = 0.15
-# A plug that has not been heard from in this long is not vouched for.
-# It reports when asked, and the service asks on every tick, so silence
-# past a few minutes means the mesh and not a quiet device.
+# How long before what the plug last said is worth a caveat.
+#
+# Not before calling it unreachable, which is what this used to do. The
+# comment said the service asks on every tick and silence therefore
+# means the mesh -- and nothing asks. The driver reads a cache of what
+# the plug volunteered, and a mains plug with no reporting interval
+# volunteers only when it switches: this house's SONOFF goes quiet for
+# six and nine hours between switches, so the lights page called it
+# dead nearly all the time while its own device page toggled it
+# happily.
+#
+# Staleness is not absence. The device page had this right -- it says
+# how old the answer is and lets somebody press the switch, and if the
+# plug has really gone the press says so, which is a fact at the moment
+# it matters rather than a guess an hour earlier.
 STALE_SECONDS = 600.0
 
 
@@ -73,6 +85,20 @@ def available_plugs() -> List[Dict[str, str]]:
         plugs.append({"value": device["eui"],
                       "label": device.get("name") or made or device["eui"]})
     return sorted(plugs, key=lambda plug: plug["label"].lower())
+
+
+def _how_long(seconds: float) -> str:
+    """The age of an answer, in the words the device page uses."""
+    seconds = int(seconds)
+    if seconds < 90:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    if minutes < 90:
+        return f"{minutes} min"
+    hours = minutes / 60
+    if hours < 36:
+        return f"{round(hours)} h"
+    return f"{round(hours / 24)} d"
 
 
 class ZigbeePlugLight(LightDriver):
@@ -123,19 +149,25 @@ class ZigbeePlugLight(LightDriver):
 
         A plug that has not answered is reported as online with no power
         rather than as off: "off" is a fact about a relay and this is the
-        absence of one.
+        absence of one. A plug that answered a while ago is reported as
+        what it said, with how long ago it said it -- for the same
+        reason, in the other direction.
         """
         if self._radio is None:
             return LightState(False, None, "the hub has no Zigbee radio")
         reported = self._reported()
         if not reported.get("present"):
             return LightState(False, None, "the plug is not on the Zigbee network")
-        quiet = reported.get("quiet_for_s")
-        if quiet is not None and quiet > STALE_SECONDS:
-            return LightState(False, None, "the plug has stopped answering")
         power = reported.get("values", {}).get("on")
         if not isinstance(power, bool):
             return LightState(True, None, "the plug has not said whether it is on")
+        quiet = reported.get("quiet_for_s")
+        if quiet is not None and quiet > STALE_SECONDS:
+            # Online, and said so a while ago. The power is what it last
+            # reported, because that is what is known; the caveat says
+            # how old it is rather than throwing the answer away.
+            return LightState(True, power, f"last answered {_how_long(quiet)} ago, "
+                                           "so this may be out of date")
         return LightState(True, power)
 
     def set_power(self, on: bool) -> PowerResult:

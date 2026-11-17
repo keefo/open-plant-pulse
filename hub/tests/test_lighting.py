@@ -873,12 +873,22 @@ class ZigbeePlugLightTests(unittest.TestCase):
         self.reported["present"] = False
         self.assertFalse(self.light.state().online)
 
-    def test_a_plug_that_stopped_answering_is_not_vouched_for(self) -> None:
+    def test_a_plug_that_has_been_quiet_is_still_vouched_for(self) -> None:
+        """This used to call a quiet plug unreachable and drop its reading.
+
+        It rested on a comment that was not true -- that the service
+        asks the plug on every tick, so silence means the mesh. Nothing
+        asks. A mains plug with no reporting interval speaks when it
+        switches and is quiet for hours in between, so the lights page
+        called it dead nearly all the time while its own device page
+        toggled it happily.
+        """
         self.reported["values"] = {"on": True}
         self.reported["quiet_for_s"] = 9999.0
         state = self.light.state()
-        self.assertFalse(state.online)
-        self.assertIsNone(state.power)
+        self.assertTrue(state.online, "quiet was read as absent")
+        self.assertIs(state.power, True, "the only thing known was thrown away")
+        self.assertIn("out of date", state.detail)
 
     def test_the_address_is_checked_not_trusted(self) -> None:
         """The form offers a list; the API takes whatever it is given."""
@@ -911,3 +921,64 @@ class ScheduleOutranksAnOldManualFlipTests(unittest.TestCase):
         self.service.update_light(light_id, "Bench", {},
                                   {"enabled": True, "on": "08:00", "off": "20:00"})
         self.assertEqual(self.service.light(light_id)["override_seconds_left"], 0)
+
+
+class AQuietPlugIsNotAMissingPlugTests(unittest.TestCase):
+    """The lights page called a plug dead that its own device page toggled.
+
+    Both read the same cache of what the plug last volunteered. The
+    device page said "last answered 26 min ago, so this may be out of
+    date" and offered the switch; the lights page said "Unreachable -
+    the plug has stopped answering" and refused to vouch for it.
+
+    The lights page was reasoning from a comment that was not true --
+    that the service asks the plug on every tick, so silence means the
+    mesh. Nothing asks. A mains plug with no reporting interval speaks
+    when it switches, and this house's goes quiet for six and nine
+    hours in between.
+    """
+
+    class Radio:
+        def __init__(self, quiet, on=True, present=True):
+            self._reported = {
+                "present": present,
+                "values": {} if on is None else {"on": on},
+                "quiet_for_s": quiet,
+            }
+
+        def reported(self, eui):
+            return self._reported
+
+    def _state(self, **kwargs):
+        from open_plant_pulse_hub.lighting.zigbee_plug import ZigbeePlugLight
+        return ZigbeePlugLight({"eui": "a4c1381f1312ffff"},
+                               zigbee=self.Radio(**kwargs)).state()
+
+    def test_a_quiet_plug_is_still_online(self) -> None:
+        state = self._state(quiet=23000, on=True)
+        self.assertTrue(state.online,
+                        "six hours of having nothing to say was read as absence")
+
+    def test_what_it_last_said_is_kept(self) -> None:
+        """Throwing the reading away loses the only thing known."""
+        self.assertIs(self._state(quiet=23000, on=True).power, True)
+        self.assertIs(self._state(quiet=23000, on=False).power, False)
+
+    def test_the_age_is_said_rather_than_guessed_at(self) -> None:
+        detail = self._state(quiet=1591, on=True).detail
+        self.assertIn("26 min", detail)
+        self.assertIn("out of date", detail)
+        self.assertNotIn("stopped answering", detail)
+
+    def test_a_fresh_answer_needs_no_caveat(self) -> None:
+        self.assertIsNone(self._state(quiet=5, on=True).detail)
+
+    def test_a_plug_off_the_mesh_is_still_offline(self) -> None:
+        """The one thing that really is absence."""
+        state = self._state(quiet=5, on=True, present=False)
+        self.assertFalse(state.online)
+
+    def test_a_plug_that_never_said_is_not_guessed_at(self) -> None:
+        state = self._state(quiet=5, on=None)
+        self.assertTrue(state.online)
+        self.assertIsNone(state.power)
