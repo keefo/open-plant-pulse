@@ -6300,10 +6300,16 @@ function renderPlantPage() {
   careLogPaging.set("plant-care-log", `plant_id=${selectedPlant.plant_id}`);
   renderCareLog(selectedPlant.care_log || [], "plant-care-log");
 
-  // Watering is recorded by weighing the full pot, so the log keeps only the
-  // buttons for what no weighing can tell: feeding, and whatever was noticed.
+  /* Each of these happens at most once in a day, so each says when it
+     has. Watering was left out of this when the only way to record one
+     was to weigh the pot -- the button came back and this did not, so
+     "Watered today" stayed pressable all day beside a "Fertilized
+     today ✓" that had greyed out, as though the hub had ignored it.
+     The hub had not: a second watering on one day folds into the first,
+     the same as a second feeding. */
   const today = new Date().toDateString();
   for (const [kind, id, label] of [
+    ["watering", "plant-watered", "Watered today"],
     ["fertilizing", "plant-fertilized", "Fertilized today"],
     ["repotting", "plant-repotted", "Repotted"],
   ]) {
