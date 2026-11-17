@@ -3353,6 +3353,39 @@ class WhatWentInAndWhatStayedTests(unittest.TestCase):
         self._pour(store, plant, [(0, 13657), (2, 13650), (4, 13648)])
         self.assertEqual(self._of_kind(store, plant, "drainage_assessment"), [])
 
+    def test_a_settling_nobody_watched_is_not_claimed(self) -> None:
+        """Draining takes minutes; two days of loss is the plant living.
+
+        A begonia weighed on the Saturday and again on the Monday was
+        told it came to rest "after 2918 minutes", 36 g under its peak
+        -- when it had drained in the first few and spent the weekend
+        being a plant.
+        """
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("begonia")["plant_id"]
+        store.record_plant_weight(plant, 99, at="2026-11-14T20:18:00Z")
+        for at, grams in (("2026-11-14T20:22:00Z", 138),
+                          ("2026-11-16T19:11:00Z", 107),
+                          ("2026-11-16T21:01:00Z", 102)):
+            store.record_plant_weight(plant, grams, at=at)
+        settled = [e for e in store.care_log(10, plant_id=plant)
+                   if e["kind"] == "drainage_assessment"]
+        self.assertEqual(settled, [],
+                         "two days of drinking was recorded as drainage")
+
+    def test_a_settling_that_was_watched_still_is(self) -> None:
+        store = ReadingStore(database_path=":memory:")
+        plant = store.create_plant("begonia")["plant_id"]
+        store.record_plant_weight(plant, 99, at="2026-11-14T20:18:00Z")
+        for at, grams in (("2026-11-14T20:22:00Z", 138),
+                          ("2026-11-14T20:50:00Z", 112),
+                          ("2026-11-14T21:10:00Z", 108)):
+            store.record_plant_weight(plant, grams, at=at)
+        settled = [e for e in store.care_log(10, plant_id=plant)
+                   if e["kind"] == "drainage_assessment"]
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["changes"]["settle_minutes"], 48)
+
 
 class ATypedWeightHasNoNoiseFloorTests(unittest.TestCase):
     """A 99 g begonia watered to 131 g was not noticed.

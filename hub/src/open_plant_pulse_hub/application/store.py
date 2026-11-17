@@ -4205,6 +4205,16 @@ class ReadingStore:
     # plant has. Twenty minutes is the window the probe side already
     # waits, so the two halves of settling agree about what it means.
     SETTLE_AFTER_MINUTES = 20
+    # And no use beyond a few hours.
+    #
+    # Draining takes minutes. What a pot loses over two days is drinking
+    # and evaporation, and calling that settling attributes the week to
+    # the watering: a begonia weighed on Saturday and again on Monday
+    # was told it came to rest "after 2918 minutes", 36 g below its
+    # peak, when it had drained in the first few and spent the rest of
+    # the weekend being a plant. Where the readings are too far apart to
+    # tell one from the other, there is nothing to report.
+    SETTLE_WITHIN_HOURS = 6
     # Within this of each other, two weighings are the same weighing.
     SETTLE_STABLE_FRACTION = 0.004
     SETTLE_STABLE_FLOOR_GRAMS = 20
@@ -4257,6 +4267,8 @@ class ReadingStore:
         minutes = (last_at - poured_at).total_seconds() / 60
         if minutes < self.SETTLE_AFTER_MINUTES:
             return False
+        if minutes > self.SETTLE_WITHIN_HOURS * 60:
+            return False          # too far apart to see settling at all
         settled, before_that = rows[-1][1], rows[-2][1]
         allowed = max(self.SETTLE_STABLE_FLOOR_GRAMS,
                       settled * self.SETTLE_STABLE_FRACTION)
