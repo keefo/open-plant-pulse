@@ -32,6 +32,7 @@ import urllib.request
 
 from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.application.photos import PhotoLibrary
+from open_plant_pulse_hub.lighting.service import LightService, SIMULATED_DRIVERS
 from fake_sensors import place_sensors
 from open_plant_pulse_hub.web import create_server, server_address
 
@@ -129,6 +130,16 @@ class BrowserSmokeTests(unittest.TestCase):
         self.store.record_plant_weight(self.plant_id, 2_100)
         self.store.record_plant_weight(self.plant_id, 1_800, "thirsty", observed=False)
         self.store.record_plant_care(self.plant_id, "note", note="Looking well")
+        # Two lamps: one over the plant, which the hub runs, and one over
+        # nothing, whose hours are saved and left alone. The day bar and
+        # the sentence beside it both have to tell those apart.
+        self.store.create_light("light-bench", "Bench panel", "fake", {})
+        self.store.create_light("light-spare", "Spare lamp", "fake", {})
+        self.store.set_light_schedule("light-bench",
+                                      {"enabled": True, "on": "08:30", "off": "21:30"})
+        self.store.set_light_schedule("light-spare",
+                                      {"enabled": True, "on": "21:00", "off": "06:00"})
+        self.store.set_plant_lighting_of(self.plant_id, ["light-bench"])
         library.add(self.plant_id, PNG, taken_at="2019-07-14T17:32:05Z")
         # A sensor on the plant, because the sensor panel lives on the
         # plant's configuration page and a plant without one never draws it.
@@ -145,7 +156,16 @@ class BrowserSmokeTests(unittest.TestCase):
         )
         self.store.set_hub_wifi_network("Household")
 
-        self.server = create_server(self.store, "127.0.0.1", 0, photos=library)
+        self.lights = LightService(self.store, SIMULATED_DRIVERS, threaded=False)
+        self.lights.start()
+        self.addCleanup(self.lights.stop)
+        # One lamp switched on and one left as it was found, so a test
+        # about telling those apart has both to look at. A fake light
+        # starts knowing nothing about itself, which is the same place a
+        # real plug starts after the hub restarts.
+        self.lights.set_power("light-bench", True)
+        self.server = create_server(self.store, "127.0.0.1", 0, photos=library,
+                                    lights=self.lights)
         self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01},
                              daemon=True)
         self.thread.start()
@@ -377,6 +397,80 @@ class BrowserSmokeTests(unittest.TestCase):
         self.assertEqual(tools.complaints, [])
 
 
+
+    def test_the_day_bar_lights_the_hours_the_scheduler_would(self) -> None:
+        """The picture and the rule have to be the same rule.
+
+        A bar is read at a glance and believed, so one that disagreed
+        with the scheduler by even a minute would be worse than no bar:
+        it would be a confident wrong answer about when a lamp comes on.
+
+        So the page's own litSpans is run against the hub's in_window
+        for every minute of the day, including the window that wraps
+        midnight and the one where on and off are the same time, which
+        lights nothing at all.
+        """
+        from open_plant_pulse_hub.lighting.schedule import in_window
+
+        windows = [("08:30", "21:30"), ("21:00", "06:00"), ("00:00", "23:59"),
+                   ("12:00", "12:00"), ("23:59", "00:01"), ("06:00", "06:01")]
+        tools = self.devtools()
+        self.open_page(tools, f"{self.base_url}/settings/lights")
+        drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                      expression=f"""
+            JSON.stringify({json.dumps(windows)}.map(([on, off]) => litSpans(on, off)))
+            """)["result"]["value"])
+
+        for (on, off), spans in zip(windows, drawn):
+            for minute in range(1440):
+                drawn_lit = any(start <= minute < end for start, end in spans)
+                hub_lit = in_window(on, off, datetime(2026, 1, 1,
+                                                      minute // 60, minute % 60))
+                self.assertEqual(
+                    drawn_lit, hub_lit,
+                    f"{on}-{off} at {minute // 60:02d}:{minute % 60:02d}: "
+                    f"the bar says {drawn_lit} and the scheduler says {hub_lit}")
+        self.assertEqual(tools.complaints, [])
+
+    def test_the_switch_is_not_told_twice(self) -> None:
+        """"On" in words beside a switch already showing on.
+
+        The state keeps its line only when it says something a switch
+        cannot: unreachable, or a plug that has not said. Those grey the
+        switch out, and a grey switch is "something is wrong" without
+        saying which.
+        """
+        tools = self.devtools()
+        self.open_page(tools, f"{self.base_url}/settings/lights")
+        drawn = json.loads(tools.call("Runtime.evaluate", returnByValue=True,
+                                      awaitPromise=True, expression="""
+            fetch("/api/lights").then((r) => r.json()).then((data) => {
+              const state = Object.fromEntries(
+                data.items.map((light) => [light.display_name, light.state]));
+              return JSON.stringify(
+                [...document.querySelectorAll(".light-card")].map((card) => ({
+                  name: card.querySelector("strong").textContent,
+                  state: state[card.querySelector("strong").textContent],
+                  line: card.querySelector(".light-state")?.textContent || null,
+                })));
+            })""")["result"]["value"])
+
+        self.assertTrue(drawn, "no light cards were drawn")
+        for card in drawn:
+            state = card["state"]
+            plainly = state["online"] and isinstance(state["power"], bool)
+            if plainly:
+                self.assertIsNone(
+                    card["line"],
+                    f"{card['name']}: the switch and the words said the same thing")
+            else:
+                self.assertTrue(
+                    card["line"],
+                    f"{card['name']}: a switch that cannot show this must say it")
+        # Both cases have to be present or this proves only one of them.
+        self.assertTrue(any(c["line"] for c in drawn),
+                        "no light exercised the unknown case")
+        self.assertEqual(tools.complaints, [])
 
     def test_a_date_being_chosen_survives_the_poll(self) -> None:
         """A phone's date sheet does not focus the field it belongs to.

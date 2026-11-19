@@ -59,6 +59,7 @@ async function refreshLights() {
   if (!response.ok) return;
   lightItems = (await response.json()).items;
   renderLights();
+  placeDayBarNow();
 }
 
 function describeLightState(light) {
@@ -120,6 +121,96 @@ function describeLightEvent(event) {
   return `${when} · ${what} ${event.wanted ? "on" : "off"} · ${outcome}`;
 }
 
+/* The day as a bar, so a window can be seen rather than worked out.
+ *
+ * "on 08:30, off 21:30" is exact and tells you nothing at a glance:
+ * whether two lamps overlap, whether one runs through the night, how
+ * much of the day is dark. The hours stay in words above it, because
+ * the bar is a picture of them and a picture cannot be read aloud.
+ *
+ * Midnight is where the scheduler wraps, so it is where the bar wraps:
+ * a window from 21:00 to 06:00 is drawn as the two pieces it really
+ * is, rather than as a single block running backwards.
+ */
+function minutesOfDay(clock) {
+  const [hours, minutes] = String(clock || "").split(":").map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+/* The lit pieces of one day, as [startMinute, endMinute] pairs.
+ *
+ * The same rule the scheduler uses -- on <= now < off, wrapping when on
+ * is later than off -- so the bar cannot show a lamp lit at an hour the
+ * hub would have it dark. Equal times light nothing, which is what
+ * `start <= now < start` works out to, and drawing a full day there
+ * would be the one case where the picture lies. */
+function litSpans(on, off) {
+  const start = minutesOfDay(on);
+  const end = minutesOfDay(off);
+  if (start === null || end === null) return [];
+  if (start === end) return [];
+  if (start < end) return [[start, end]];
+  return [[start, 1440], [0, end]];
+}
+
+function lightDayBar(light) {
+  const schedule = light.schedule;
+  if (!schedule || !schedule.enabled) return null;
+  const spans = litSpans(schedule.on, schedule.off);
+
+  const wrap = document.createElement("div");
+  wrap.className = "light-day";
+  /* The hours are the reading; the bar is a picture of them. A screen
+     reader gets the sentence rather than a row of coloured boxes. */
+  setAttr(wrap, "role", "img");
+  setAttr(wrap, "aria-label", spans.length
+    ? `Lit from ${schedule.on} to ${schedule.off}`
+    : `No lit hours: on and off are both ${schedule.on}`);
+
+  const track = document.createElement("div");
+  track.className = "light-day-track";
+  /* Hours saved under a lamp no plant uses are still the hours; they
+     are drawn faintly because nothing is acting on them, which is the
+     same thing the sentence above says in words. */
+  setData(track, "state", light.scheduled ? "running" : "idle");
+  for (const [from, to] of spans) {
+    const lit = document.createElement("span");
+    lit.className = "light-day-lit";
+    lit.style.left = `${(from / 1440) * 100}%`;
+    lit.style.width = `${((to - from) / 1440) * 100}%`;
+    track.append(lit);
+  }
+  const now = document.createElement("span");
+  now.className = "light-day-now";
+  track.append(now);
+  wrap.append(track);
+
+  const ticks = document.createElement("div");
+  ticks.className = "light-day-ticks";
+  for (const hour of [0, 6, 12, 18, 24]) {
+    const tick = document.createElement("span");
+    setText(tick, hour === 24 ? "24" : String(hour).padStart(2, "0"));
+    ticks.append(tick);
+  }
+  wrap.append(ticks);
+  return wrap;
+}
+
+/* Where "now" sits, moved without rebuilding the cards.
+ *
+ * Putting the minute into the render key would redraw every card once
+ * a minute, which throws away whatever somebody was in the middle of
+ * pressing. Only the marker moves, and only when it has somewhere new
+ * to be. */
+function placeDayBarNow() {
+  const at = new Date();
+  const left = `${((at.getHours() * 60 + at.getMinutes()) / 1440) * 100}%`;
+  document.querySelectorAll(".light-day-now").forEach((marker) => {
+    if (marker.style.left !== left) marker.style.left = left;
+  });
+}
+
 function renderLights() {
   const list = document.getElementById("light-list");
   const renderKey = JSON.stringify(lightItems.map((light) => [
@@ -151,14 +242,34 @@ function renderLights() {
     setText(kind, light.driver_label);
     heading.append(name, kind);
 
-    const state = document.createElement("span");
-    state.className = "light-state";
-    setData(state, "level", lightStateLevel(light));
-    setText(state, describeLightState(light));
+    body.append(heading);
+
+    /* "On" in words, beside a switch that is already showing on, said
+       the same thing twice. The switch is the state and the control at
+       once, which is why it replaced the two buttons in the first
+       place.
+
+       Only for on and off, though. "Unreachable" and "State unknown"
+       are not states a switch can show: it greys out for both, and a
+       greyed switch is "something is wrong" without saying which.
+       Those keep their line. The condition is the same one
+       describeLightState reads, so the line appears exactly when that
+       function would say something the switch cannot. */
+    const plainlyOnOrOff = light.state.online
+      && (light.state.power === true || light.state.power === false);
+    if (!plainlyOnOrOff) {
+      const state = document.createElement("span");
+      state.className = "light-state";
+      setData(state, "level", lightStateLevel(light));
+      setText(state, describeLightState(light));
+      body.append(state);
+    }
 
     const plant = document.createElement("code");
     setText(plant, describeLightPlant(light));
-    body.append(heading, state, plant);
+    body.append(plant);
+    const day = lightDayBar(light);
+    if (day) body.append(day);
 
     if (light.alert) {
       const alert = document.createElement("span");

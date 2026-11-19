@@ -971,6 +971,28 @@ main > * { min-width: 0; }
 .light-state[data-level="off"] { color: var(--text); }
 .light-state[data-level="unknown"] { color: var(--dim); }
 .light-state[data-level="alert"] { color: var(--alarm); }
+/* The day as a bar: midnight to midnight, always the full width, so
+   two lamps on the same page can be compared by looking rather than by
+   reading two pairs of times. The axis is fixed for that reason -- a
+   bar scaled to its own window would make every schedule look alike. */
+.light-day { margin: 2px 0 2px; }
+.light-day-track { position: relative; height: 12px; border-radius: 999px;
+  background: var(--n200); overflow: hidden; }
+.light-day-lit { position: absolute; top: 0; bottom: 0; background: var(--brand); }
+/* Hours nothing is acting on: saved under a lamp no plant uses. Drawn
+   faintly rather than left out, because they are still the hours and
+   leaving them out is what made the list and the light's own page
+   disagree. */
+.light-day-track[data-state="idle"] .light-day-lit { background: var(--n400);
+  opacity: .55; }
+/* Where now is. Over the fill rather than under it, or it disappears
+   for the thirteen hours that matter most. */
+.light-day-now { position: absolute; top: -2px; bottom: -2px; width: 2px;
+  background: var(--text); opacity: .75; }
+.light-day-ticks { display: flex; justify-content: space-between;
+  color: var(--dim); font-size: var(--t-xs); font-variant-numeric: tabular-nums;
+  margin-top: 2px; }
+
 .light-alert { padding: 8px 10px; border-left: 4px solid var(--alarm); color: var(--alarm); background: var(--alarm-wash); font-size: var(--t-sm); }
 .light-card small { color: var(--dim); }
 .light-actions { flex-wrap: wrap; justify-content: flex-end; }
