@@ -17,6 +17,11 @@ POWER_CLUSTER = 0x0001
 ON_OFF_CLUSTER = 0x0006
 TEMPERATURE_CLUSTER = 0x0402
 HUMIDITY_CLUSTER = 0x0405
+# The two a metering plug answers. They are not two ways to say the same
+# thing: Electrical Measurement is what is flowing now, Metering is what
+# has flowed since the plug was made.
+ELECTRICAL_CLUSTER = 0x0B04
+METERING_CLUSTER = 0x0702
 
 # ZCL sequence numbers, which only have to keep changing.
 _SEQUENCE = count(1)
@@ -197,6 +202,13 @@ _ZCL_TYPES: Dict[int, tuple] = {
     0x29: (2, True),    # int16
     0x23: (4, False),   # uint32
     0x2B: (4, True),    # int32
+    # What a meter counts with. A plug's energy total is a 48-bit count
+    # and its multiplier and divisor are 24-bit, and without these the
+    # parse stopped at the first one and the whole answer came back
+    # empty -- a plug that had just said 0.103 kWh read as silent.
+    0x22: (3, False),   # uint24
+    0x25: (6, False),   # uint48
+    0x30: (1, False),   # enum8
 }
 
 
@@ -307,6 +319,40 @@ class PlugDriver:
     _FRAME_CONTROL = 0x01
     COMMANDS = {"off": 0x00, "on": 0x01, "toggle": 0x02}
 
+    # What a metering plug is asked for, by cluster. Each word is one
+    # Read Attributes frame: asking for several attributes at once is
+    # one question and one answer, which is what a mesh wants.
+    #
+    # The scales come with the readings and are not assumed. A plug that
+    # reports power in deciwatts and one that reports it in watts send
+    # the same bytes, and the only thing that tells them apart is the
+    # divisor the plug itself declares.
+    READS = {
+        "meter": (ELECTRICAL_CLUSTER, (
+            0x0505,   # RMSVoltage
+            0x0508,   # RMSCurrent
+            0x050B,   # ActivePower -- what is being used now
+            0x0600, 0x0601,   # voltage multiplier and divisor
+            0x0602, 0x0603,   # current
+            0x0604, 0x0605,   # power
+        )),
+        "energy": (METERING_CLUSTER, (
+            0x0000,   # CurrentSummationDelivered -- the total since made
+            0x0300,   # UnitOfMeasure
+            0x0301, 0x0302,   # multiplier and divisor
+        )),
+    }
+
+    # Both of them, because a plug that declares one and not the other
+    # has half a meter and the page would have half an answer.
+    METERING_CLUSTERS = frozenset({ELECTRICAL_CLUSTER, METERING_CLUSTER})
+
+    @classmethod
+    def cluster_for(cls, command: str) -> int:
+        """Where the question goes. A meter does not live on On/Off."""
+        read = cls.READS.get(command.strip().lower())
+        return read[0] if read else cls.cluster
+
     @classmethod
     def payload_for(cls, command: str) -> bytes:
         word = command.strip().lower()
@@ -315,17 +361,105 @@ class PlugDriver:
             # OnOff. Asking is the only way to know: a plug switched at its
             # own button changes without telling anyone it was not bound to.
             return bytes([0x00, next(_SEQUENCE) & 0xFF, 0x00, 0x00, 0x00])
+        if word in cls.READS:
+            frame = bytearray([0x00, next(_SEQUENCE) & 0xFF, 0x00])
+            for attribute in cls.READS[word][1]:
+                frame += attribute.to_bytes(2, "little")
+            return bytes(frame)
         if word not in cls.COMMANDS:
-            raise ValueError(f"a plug understands on, off, toggle or state, not {command!r}")
+            raise ValueError("a plug understands on, off, toggle, state, "
+                             f"meter or energy, not {command!r}")
         return bytes([cls._FRAME_CONTROL, next(_SEQUENCE) & 0xFF, cls.COMMANDS[word]])
 
     @staticmethod
     def decode(cluster: int, payload: bytes) -> Optional[Dict[str, object]]:
-        """Whether the switch is closed, from a report or an answer."""
+        """What the plug said, on whichever of its clusters said it."""
         attributes = zcl_attributes(payload)
-        if not attributes or 0x0000 not in attributes:
+        if not attributes:
             return None
-        return {"on": bool(attributes[0x0000])}
+        if cluster == ON_OFF_CLUSTER:
+            if 0x0000 not in attributes:
+                return None
+            return {"on": bool(attributes[0x0000])}
+        if cluster == ELECTRICAL_CLUSTER:
+            return _electrical(attributes)
+        if cluster == METERING_CLUSTER:
+            return _metering(attributes)
+        return None
+
+
+def _scaled(attributes: Dict[int, int], value: int,
+            multiplier: int, divisor: int) -> Optional[float]:
+    """A raw word in the units the plug declared, or nothing.
+
+    The scale has to come in the same frame as the number. The
+    specification says an absent divisor means one, and taking it at
+    its word turns a plug's own voltage report -- 1199, meaning 119.9 V
+    with the divisor of 10 it declares elsewhere -- into 1199 volts.
+
+    Nor is a scale something to remember from an earlier frame and
+    apply to this one: these plugs disagree by a factor of 3600 about
+    what a unit of energy is (one counts joules, the other watt hours),
+    so a remembered divisor used on the wrong device is not a rounding
+    error. The hub asks for the scales with every reading, which is the
+    same one frame and one answer, and a reading that arrives without
+    them is let go rather than guessed at.
+    """
+    top = attributes.get(multiplier)
+    bottom = attributes.get(divisor)
+    if not top or not bottom:
+        return None
+    return value * top / bottom
+
+
+def _electrical(attributes: Dict[int, int]) -> Optional[Dict[str, object]]:
+    """Volts, amps and watts, as they are flowing right now."""
+    values: Dict[str, object] = {}
+    # 0xFFFF is the specification's "I do not know", and a plug that
+    # does not measure one of these says so rather than staying silent.
+    for attribute, name, places, scale in (
+            (0x0505, "volts", 1, (0x0600, 0x0601)),
+            (0x0508, "amps", 3, (0x0602, 0x0603)),
+            (0x050B, "watts", 1, (0x0604, 0x0605)),
+    ):
+        raw = attributes.get(attribute)
+        if raw is None or raw == 0xFFFF:
+            continue
+        if name == "watts":
+            raw = _signed16(raw)
+        value = _scaled(attributes, raw, *scale)
+        if value is not None:
+            values[name] = round(value, places)
+    return values or None
+
+
+def _metering(attributes: Dict[int, int]) -> Optional[Dict[str, object]]:
+    """The total that has passed through, in kilowatt hours.
+
+    The summation is a 48-bit count of whatever UnitOfMeasure says, and
+    every plug seen here says kilowatt hours. A plug that said something
+    else would need its unit read before the number meant anything, so
+    the unit is carried alongside rather than assumed away.
+    """
+    if attributes.get(0x0300, _KILOWATT_HOURS) != _KILOWATT_HOURS:
+        # A meter counting cubic feet of gas is not a plug's power bill,
+        # and scaling its number into kWh would be a sentence about the
+        # wrong thing. Nothing here has ever said anything else.
+        return None
+    total = attributes.get(0x0000)
+    if total is None:
+        return None
+    scaled = _scaled(attributes, total, 0x0301, 0x0302)
+    return {"kwh": round(scaled, 3)} if scaled is not None else None
+
+
+# UnitOfMeasure 0: kilowatt hours, which is what every plug here says.
+_KILOWATT_HOURS = 0
+
+
+def _signed16(word: int) -> int:
+    """ActivePower is signed: a plug can measure power going the other way."""
+    return word - 0x10000 if word >= 0x8000 else word
 
 
 class ThermometerDriver:

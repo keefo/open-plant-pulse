@@ -19,7 +19,7 @@ from ..weights import WeightKeeper
 from .drivers import (DRIVERS, HUMIDITY_CLUSTER, IAS_ZONE_CLUSTER, ON_OFF_CLUSTER,
                       SOIL_POINT_NAMES, TEMPERATURE_CLUSTER,
                       TUYA_CLUSTER, ZCL_HOUSEKEEPING, tuya_datapoints, zcl_command,
-                      ScaleDriver,
+                      PlugDriver, ScaleDriver,
                       battery_percent, battery_volts, decode_frame, subject_of)
 from .network import SCALE_CLUSTER, Delivery, Device, Reading
 
@@ -33,6 +33,12 @@ FRESH_READING_SECONDS = 20.0
 # seven-day window needs, and it means a hub left running for months never
 # accumulates a backlog to clear.
 PRUNE_SECONDS = 3600.0
+# How often a metering plug is asked what it is drawing, and the pause
+# between one question and the next. The gap is the mesh's protection:
+# eight frames in the same instant is a burst, and the answers have
+# nowhere to be until the next pass anyway.
+METER_SECONDS = 300.0
+METER_GAP_SECONDS = 0.4
 
 
 @dataclass
@@ -83,6 +89,8 @@ class ZigbeeService:
         self._health: Dict[str, DeviceHealth] = {}
         self._pending: Dict[int, str] = {}
         self._lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._meters: Optional[threading.Thread] = None
         # Devices already written to the store, so one that talks constantly
         # is not written on every reading.
         # What has been written down for each device, so a write is
@@ -133,10 +141,62 @@ class ZigbeeService:
 
     def start(self) -> None:
         self._network.start()
-
+        self._stopping.clear()
+        self._meters = threading.Thread(target=self._read_meters,
+                                        name="zigbee-meters", daemon=True)
+        self._meters.start()
 
     def stop(self) -> None:
+        self._stopping.set()
+        meters, self._meters = self._meters, None
+        if meters is not None:
+            meters.join(timeout=5.0)
         self._network.stop()
+
+    # ---- the meters ----
+
+    def metering_plugs(self) -> List[str]:
+        """The plugs that can say what is flowing through them.
+
+        By what each device declares, not by its make. Two brands are
+        plugged in here and a third would be read the same way; a list of
+        models would mean every new plug arriving with its figures
+        missing until somebody noticed.
+        """
+        found = []
+        for device in self._network.devices():
+            clusters = set(device.clusters or ())
+            if clusters.issuperset(PlugDriver.METERING_CLUSTERS):
+                found.append(device.eui)
+        return found
+
+    def _read_meters(self) -> None:
+        """Ask each metering plug what it is drawing, now and then.
+
+        Asking rather than binding, because the answer has to carry its
+        own scale: these plugs disagree by a factor of 3600 about what a
+        unit of energy is, and an unsolicited report of attribute 0x0505
+        is the number 1199 with nothing to say whether that is 1199 volts
+        or 119.9. The read asks for the divisors in the same frame, so
+        every answer means something on its own.
+
+        One pass is two frames per plug, every few minutes. Little
+        enough for a mesh, and it is the only way any of this is ever
+        known: a plug volunteers its voltage once in a blue moon and
+        never mentions its watts at all.
+        """
+        while not self._stopping.wait(METER_SECONDS):
+            for eui in self.metering_plugs():
+                for question in ("meter", "energy"):
+                    if self._stopping.is_set():
+                        return
+                    try:
+                        self.command(eui, question, kind="plug")
+                    except Exception:
+                        # One plug that will not answer must not stop the
+                        # others being asked.
+                        LOG.debug("could not ask %s for its %s", eui, question)
+                    self._stopping.wait(METER_GAP_SECONDS)
 
     # ---- what the control panel needs ----
 

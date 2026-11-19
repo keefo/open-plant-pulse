@@ -1655,6 +1655,17 @@ main.arranging [data-section].dragging { border-color: var(--brand); background:
    device in use that happens to sit lower down the page. */
 .zigbee-waiting { border-color: #e4cf92; background: var(--warn-wash); }
 
+/* A plug's meter: a few labelled numbers, as wide as they need. The
+   same shape as the light window above, because they are the same kind
+   of thing -- a handful of small facts read at a glance. */
+.zigbee-meter-figures { display: grid; gap: 10px; margin-top: 4px;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+.zigbee-meter-figure { min-width: 0; padding: 12px; border-radius: var(--r-ctl);
+  background: var(--n100); display: flex; flex-direction: column; gap: 2px; }
+.zigbee-meter-figure span { color: var(--dim); font-size: var(--t-xs);
+  font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.zigbee-meter-figure strong { font-size: var(--t-lg); font-variant-numeric: tabular-nums; }
+
 /* The plug's switch. Big enough to be the point of the page, because
    for a device whose whole job is to be on or off, the control is the
    reading. */

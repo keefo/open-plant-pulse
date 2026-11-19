@@ -1390,6 +1390,20 @@
         button on the plug itself shows up here too.</p>
     </section>
 
+    <!-- What is flowing through the plug, for a plug that measures it.
+         Not keyed to the make: it appears because figures were recorded,
+         so a plug of a brand nobody has drawn yet arrives with its meter
+         read, and one with no meter in it has no section rather than a
+         section full of dashes. -->
+    <section class="sensor-settings" data-page="zigbee-device" data-own-visibility="true"
+             id="zigbee-meter" aria-labelledby="zigbee-meter-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">METER</p><h2 id="zigbee-meter-title">What it is drawing</h2></div>
+      </div>
+      <div class="zigbee-meter-figures" id="zigbee-meter-figures"></div>
+      <p id="zigbee-meter-note" class="ph-explainer"></p>
+    </section>
+
     <section class="sensor-settings" data-page="zigbee-device" data-device-kind="unknown" id="zigbee-unknown-controls" aria-labelledby="zigbee-unknown-title" hidden>
       <div class="section-heading">
         <div><p class="eyebrow">DEVICE</p><h2 id="zigbee-unknown-title">No controls yet</h2></div>

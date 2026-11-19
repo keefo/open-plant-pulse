@@ -1083,6 +1083,7 @@ function renderZigbeeDevicePage() {
   renderZigbeeReporting(device);
 
   if (kind === "plug") renderZigbeePlug(device);
+  renderZigbeeMeter(device);
   if (kind === "leak") renderZigbeeLeak(device);
   if (kind === "soil") renderZigbeeSoil(device);
   if (kind === "thermometer") renderZigbeeAir(device);
@@ -1281,6 +1282,18 @@ const CELSIUS = { symbol: "\u00b0C", spoken: "degrees Celsius", pad: 0.5 };
 const PERCENT = { symbol: "%", spoken: "percent", pad: 2, lowest: 0, highest: 100 };
 // A weight has no ceiling and moves in whole grams.
 const GRAMS = { symbol: " g", spoken: "grams", pad: 2 };
+// What a metering plug measures. Nothing here can be negative from a
+// lamp's point of view, so none of the axes are allowed below zero: a
+// light drawing 37 W padded into "-3 W" would be reading a fact that
+// cannot happen.
+const WATTS = { symbol: " W", spoken: "watts", pad: 2, lowest: 0 };
+const VOLTS = { symbol: " V", spoken: "volts", pad: 1, lowest: 0 };
+const AMPS = { symbol: " A", spoken: "amps", pad: 0.05, lowest: 0 };
+// A total only ever climbs, so the axis wants almost no padding: the
+// interesting thing is the slope, and a flat stretch is a light that
+// was off.
+const KILOWATT_HOURS = { symbol: " kWh", spoken: "kilowatt hours",
+                         pad: 0.01, lowest: 0 };
 
 const ZIGBEE_MEASUREMENTS = [
   { key: "moisture_percent", label: "Moisture", decimals: 0,
@@ -1291,6 +1304,15 @@ const ZIGBEE_MEASUREMENTS = [
   { key: "rh_pct", label: "Relative humidity", decimals: 0,
     unit: { ...PERCENT, spoken: "percent relative humidity" } },
   { key: "grams", label: "Weight", decimals: 0, unit: GRAMS },
+  // A metering plug's figures. Keyed on what was recorded, like every
+  // other line here, so a plug of a make nobody has yet drawn gets its
+  // charts without this list being touched -- and a plug with no meter
+  // in it simply has nothing to draw, which is not an empty chart but
+  // no chart.
+  { key: "watts", label: "Power", decimals: 1, unit: WATTS },
+  { key: "kwh", label: "Energy used", decimals: 3, unit: KILOWATT_HOURS },
+  { key: "volts", label: "Voltage", decimals: 1, unit: VOLTS },
+  { key: "amps", label: "Current", decimals: 3, unit: AMPS },
 ];
 
 let zigbeeMeasureHours = 24;
@@ -1389,6 +1411,57 @@ function seriesFromReports(items, key) {
  * noise: a tenth of a degree across a day is a still room, and an axis
  * fitted tightly to it says the opposite.
  */
+/* What a plug is drawing, for anything that measures it.
+ *
+ * Not gated on the device being a plug: a meter is something a device
+ * has, and asking what kind it is to decide whether to draw its
+ * readings means the next thing with a meter in it arrives with the
+ * section missing until somebody notices. Gated on figures having been
+ * recorded, which is the fact that makes the section true.
+ *
+ * Each figure is drawn only when the plug sent it. A plug that measures
+ * watts but not current has no current, and "--" there reads as a
+ * measurement that failed rather than one that was never going to
+ * exist. */
+const METER_FIGURES = [
+  { key: "watts", label: "Power", decimals: 1, unit: " W" },
+  { key: "volts", label: "Voltage", decimals: 1, unit: " V" },
+  { key: "amps", label: "Current", decimals: 3, unit: " A" },
+  { key: "kwh", label: "Total used", decimals: 3, unit: " kWh" },
+];
+
+function renderZigbeeMeter(device) {
+  const section = document.getElementById("zigbee-meter");
+  const figures = document.getElementById("zigbee-meter-figures");
+  const note = document.getElementById("zigbee-meter-note");
+  if (!section || !figures) return;
+  const last = (device && device.last) || {};
+  const shown = METER_FIGURES
+    .filter((figure) => Number.isFinite(Number(last[figure.key])));
+  setHidden(section, shown.length === 0);
+  if (!shown.length) return;
+  if (!renderKeyChanged(figures, shown.map((f) => [f.key, last[f.key]]))) return;
+  figures.replaceChildren();
+  for (const figure of shown) {
+    const cell = document.createElement("div");
+    cell.className = "zigbee-meter-figure";
+    const label = document.createElement("span");
+    setText(label, figure.label);
+    const value = document.createElement("strong");
+    setText(value, Number(last[figure.key]).toFixed(figure.decimals) + figure.unit);
+    cell.append(label, value);
+    figures.append(cell);
+  }
+  /* The total is since the plug was made, not since it was plugged in
+     here: a plug bought second hand starts at whatever its predecessor
+     spent, and calling that "used" without saying since when would be
+     a number nobody could act on. */
+  setText(note, Number.isFinite(Number(last.kwh))
+    ? "Asked every few minutes. The total is what the plug has counted since "
+      + "it was manufactured, so what matters is how fast it climbs."
+    : "Asked every few minutes.");
+}
+
 function renderZigbeeLeak(device) {
   const state = document.getElementById("zigbee-leak-state");
   const detail = document.getElementById("zigbee-leak-detail");

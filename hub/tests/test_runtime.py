@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from threading import Thread
+import threading
 import time
 import unittest
 from urllib.request import Request, urlopen
@@ -14,7 +15,8 @@ from urllib.parse import urlencode
 from open_plant_pulse_hub.application import ReadingStore
 from open_plant_pulse_hub.domain import SensorReading
 from open_plant_pulse_hub.application.migrations import DATABASE_SCHEMA_VERSION
-from open_plant_pulse_hub.application.zigbee.drivers import ScaleDriver, decode_frame
+from open_plant_pulse_hub.application.zigbee.drivers import (PlugDriver, ScaleDriver,
+                                                            decode_frame)
 from open_plant_pulse_hub.application.zigbee.network import Device
 from open_plant_pulse_hub.application.zigbee.network import Reading
 from open_plant_pulse_hub.application.zigbee.service import (ZigbeeService,
@@ -1474,3 +1476,172 @@ class AStepThatHeldInterruptsTheScheduleTests(unittest.TestCase):
         # The keeper only ever sees a scale's own readings, and says so
         # rather than leaning on the default.
         self.assertIn('self._store.refill_threshold(previous, "scale")', source)
+
+
+class APlugWithAMeterInItTests(unittest.TestCase):
+    """What a metering plug says, in frames captured from these plugs.
+
+    Four Third Reality 3RSP02028BZ and a SONOFF S61SZBTPB, all of which
+    answer Electrical Measurement (0x0B04) and Metering (0x0702). The
+    bytes below are what they actually sent, not what the specification
+    says they should have.
+    """
+
+    # Third Reality, answering a read of nine attributes at once.
+    THIRD_REALITY_METER = bytes.fromhex(
+        "18040105050021a4040805002143030b0500297d02"
+        "000600210100010600210a0002060021010003060021e803"
+        "040600210100050600210a00")
+    THIRD_REALITY_ENERGY = bytes.fromhex(
+        "18060100000025ef4c000000000003003000010300220100000203002280ee36")
+    SONOFF_ENERGY = bytes.fromhex(
+        "180a01000000251f730000000000030030000103002201000002030022e80300")
+    # What a plug volunteers unasked: one attribute, no scale with it.
+    VOLUNTEERED_VOLTAGE = bytes.fromhex("18ce0a050521af04")
+    VOLUNTEERED_FREQUENCY = bytes.fromhex("18d00a0003213c00")
+
+    def test_volts_amps_and_watts_come_out_in_their_units(self) -> None:
+        values = PlugDriver.decode(0x0B04, self.THIRD_REALITY_METER)
+        # Raw 1188, 835 and 637, with the divisors the plug declared in
+        # the same frame: 10, 1000 and 10.
+        self.assertEqual(values, {"volts": 118.8, "amps": 0.835, "watts": 63.7})
+
+    def test_two_makes_count_energy_in_different_units(self) -> None:
+        """The reason a scale cannot be remembered and reused.
+
+        Third Reality counts joules and divides by 3,600,000. SONOFF
+        counts watt hours and divides by 1,000. Using one plug's divisor
+        on the other is wrong by a factor of 3600.
+        """
+        self.assertEqual(PlugDriver.decode(0x0702, self.THIRD_REALITY_ENERGY),
+                         {"kwh": 0.005})
+        self.assertEqual(PlugDriver.decode(0x0702, self.SONOFF_ENERGY),
+                         {"kwh": 29.471})
+
+    def test_a_reading_with_no_scale_in_it_is_let_go(self) -> None:
+        """This drew 1199 volts on a 120 volt supply.
+
+        The specification says an absent divisor means one. Taking it at
+        its word turned the plug's own voltage report -- the number 1199,
+        meaning 119.9 V -- into a reading no mains has ever produced,
+        and nine of them reached the database before this was caught.
+        """
+        self.assertIsNone(PlugDriver.decode(0x0B04, self.VOLUNTEERED_VOLTAGE))
+
+    def test_an_attribute_nothing_asked_for_is_not_a_reading(self) -> None:
+        """A plug volunteering 60 Hz is not volunteering a measurement."""
+        self.assertIsNone(PlugDriver.decode(0x0B04, self.VOLUNTEERED_FREQUENCY))
+
+    def test_the_switch_still_answers_on_its_own_cluster(self) -> None:
+        """Adding two clusters must not cost the one that was there."""
+        self.assertEqual(PlugDriver.decode(0x0006, bytes.fromhex("180a010000001001")),
+                         {"on": True})
+        self.assertEqual(PlugDriver.cluster_for("on"), 0x0006)
+        self.assertEqual(PlugDriver.cluster_for("meter"), 0x0B04)
+        self.assertEqual(PlugDriver.cluster_for("energy"), 0x0702)
+
+    def test_a_meter_is_asked_for_its_scales_with_every_reading(self) -> None:
+        """Because that is the only thing that makes an answer mean something."""
+        frame = PlugDriver.payload_for("meter")
+        asked = {frame[i] | frame[i + 1] << 8 for i in range(3, len(frame), 2)}
+        for divisor in (0x0601, 0x0603, 0x0605):
+            self.assertIn(divisor, asked)
+
+    def test_a_plug_with_no_meter_is_not_asked(self) -> None:
+        """A plug that declares neither cluster has nothing to say here."""
+        self.assertTrue(PlugDriver.METERING_CLUSTERS.issubset({0x0B04, 0x0702}))
+        self.assertFalse(PlugDriver.METERING_CLUSTERS.issubset({0x0006, 0x0000}))
+
+
+class AskingTheMetersTests(unittest.TestCase):
+    """The hub asks, rather than waiting to be told.
+
+    A plug volunteers its voltage once in a blue moon and never
+    mentions its watts, so nothing is known unless somebody asks. The
+    answer has to carry its own divisors, which is why this is a read
+    and not a binding.
+    """
+
+    class Network:
+        connected = True
+
+        def __init__(self, devices):
+            self._devices = devices
+            self.sent = []
+
+        def devices(self):
+            return self._devices
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def on_reading(self, callback):
+            pass
+
+        def on_joined(self, callback):
+            pass
+
+        def on_delivery(self, callback):
+            pass
+
+        def send(self, eui, cluster, endpoint, payload):
+            self.sent.append((eui, cluster))
+            return len(self.sent)
+
+    def setUp(self) -> None:
+        from open_plant_pulse_hub.application.zigbee import service as module
+        self.module = module
+        self.was = (module.METER_SECONDS, module.METER_GAP_SECONDS)
+        module.METER_SECONDS = 0.05
+        module.METER_GAP_SECONDS = 0.0
+        self.metering = Device(eui="ffffb40e0608a82a", model="3RSP02028BZ",
+                               clusters=(0x0000, 0x0006, 0x0702, 0x0B04))
+        self.plain = Device(eui="aaaaaaaaaaaaaaaa", model="PlainPlug",
+                            clusters=(0x0000, 0x0006))
+        self.network = self.Network([self.metering, self.plain])
+        self.service = ZigbeeService(None, self.network)
+        self.service._kind_for = lambda eui: "plug"
+
+    def tearDown(self) -> None:
+        self.module.METER_SECONDS, self.module.METER_GAP_SECONDS = self.was
+
+    def test_a_plug_is_found_by_what_it_declares(self) -> None:
+        """Not by its make.
+
+        A list of models would mean every new plug arriving with its
+        figures missing until somebody noticed.
+        """
+        self.assertEqual(self.service.metering_plugs(), [self.metering.eui])
+
+    def test_both_clusters_are_asked(self) -> None:
+        self.service.start()
+        try:
+            deadline = time.time() + 3.0
+            while time.time() < deadline:
+                clusters = {c for e, c in self.network.sent if e == self.metering.eui}
+                if clusters >= {0x0702, 0x0B04}:
+                    break
+                time.sleep(0.02)
+        finally:
+            self.service.stop()
+        clusters = {c for e, c in self.network.sent if e == self.metering.eui}
+        self.assertEqual(clusters, {0x0702, 0x0B04})
+
+    def test_a_plug_with_no_meter_is_left_alone(self) -> None:
+        """Asking it would be two frames a pass for an answer it cannot give."""
+        self.service.start()
+        try:
+            time.sleep(0.4)
+        finally:
+            self.service.stop()
+        self.assertFalse([e for e, _ in self.network.sent if e == self.plain.eui])
+
+    def test_stopping_the_service_stops_asking(self) -> None:
+        self.service.start()
+        time.sleep(0.2)
+        self.service.stop()
+        self.assertFalse(any(thread.name == "zigbee-meters" and thread.is_alive()
+                             for thread in threading.enumerate()))
