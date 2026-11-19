@@ -83,9 +83,21 @@ function describeLightPlant(light) {
   const under = (light.plants || []).filter((plant) => !plant.archived);
   const shelved = (light.plants || []).filter((plant) => plant.archived);
   if (!under.length) {
+    /* A lamp over nothing living is left alone, but it keeps its hours,
+       and saying only "switched by hand" denied they existed. The list
+       read "switched by hand only" while the light's own page showed
+       08:30 to 21:30 filled in and switched on, and the two pages
+       cannot both be describing the same light.
+
+       The hours are not what is missing here -- a plant is -- so that
+       is what the sentence says. */
+    const kept = light.schedule && light.schedule.enabled
+      ? ` · ${light.schedule.on} to ${light.schedule.off} saved, not run `
+        + "until a plant uses it"
+      : " · switched by hand only";
     return shelved.length
-      ? `Only lights ${listNames(shelved)} (archived) · not scheduled`
-      : "Not used by any plant · switched by hand only";
+      ? `Only lights ${listNames(shelved)} (archived)${kept}`
+      : `Not used by any plant${kept}`;
   }
   const names = `Lights ${listNames(under)}`;
   if (!light.schedule) return `${names} · no schedule`;

@@ -38,6 +38,9 @@ PRUNE_SECONDS = 3600.0
 # eight frames in the same instant is a burst, and the answers have
 # nowhere to be until the next pass anyway.
 METER_SECONDS = 300.0
+# The first pass, which is mostly about plugs whose state is unknown
+# after a restart rather than about meters.
+FIRST_METER_SECONDS = 8.0
 METER_GAP_SECONDS = 0.4
 
 
@@ -155,6 +158,32 @@ class ZigbeeService:
 
     # ---- the meters ----
 
+    def plugs_that_have_not_said(self) -> List[str]:
+        """Plugs the hub has no on/off state for.
+
+        A plug reports when it is switched and says nothing in between,
+        so a restart leaves the hub with no idea what any of them are
+        doing -- and there is no way to find out except to ask. The
+        lights page showed "State unknown" under a lamp that was plainly
+        on, and the scheduler, seeing a state that did not match the
+        hours, commanded the plug again and again.
+
+        Self-limiting: a plug drops out of this list the moment it
+        answers, so it is one frame per plug per restart rather than a
+        poll. That is why it is keyed on not knowing rather than on a
+        timer -- a question already answered is not asked again.
+        """
+        waiting = []
+        for device in self._network.devices():
+            if ON_OFF_CLUSTER not in set(device.clusters or ()):
+                continue
+            with self._lock:
+                health = self._health.get(device.eui)
+            values = dict(health.last_values) if health else {}
+            if not isinstance(values.get("on"), bool):
+                waiting.append(device.eui)
+        return waiting
+
     def metering_plugs(self) -> List[str]:
         """The plugs that can say what is flowing through them.
 
@@ -185,18 +214,28 @@ class ZigbeeService:
         known: a plug volunteers its voltage once in a blue moon and
         never mentions its watts at all.
         """
-        while not self._stopping.wait(METER_SECONDS):
+        # The first pass comes soon after start, not a full interval
+        # later: a plug's state is unknown for exactly as long as nobody
+        # asks, and five minutes of "State unknown" under a lit lamp is
+        # five minutes of the page being wrong.
+        wait = FIRST_METER_SECONDS
+        while not self._stopping.wait(wait):
+            wait = METER_SECONDS
+            asked = []
+            for eui in self.plugs_that_have_not_said():
+                asked.append((eui, "state"))
             for eui in self.metering_plugs():
-                for question in ("meter", "energy"):
-                    if self._stopping.is_set():
-                        return
-                    try:
-                        self.command(eui, question, kind="plug")
-                    except Exception:
-                        # One plug that will not answer must not stop the
-                        # others being asked.
-                        LOG.debug("could not ask %s for its %s", eui, question)
-                    self._stopping.wait(METER_GAP_SECONDS)
+                asked.extend([(eui, "meter"), (eui, "energy")])
+            for eui, question in asked:
+                if self._stopping.is_set():
+                    return
+                try:
+                    self.command(eui, question, kind="plug")
+                except Exception:
+                    # One plug that will not answer must not stop the
+                    # others being asked.
+                    LOG.debug("could not ask %s for its %s", eui, question)
+                self._stopping.wait(METER_GAP_SECONDS)
 
     # ---- what the control panel needs ----
 

@@ -1594,9 +1594,11 @@ class AskingTheMetersTests(unittest.TestCase):
     def setUp(self) -> None:
         from open_plant_pulse_hub.application.zigbee import service as module
         self.module = module
-        self.was = (module.METER_SECONDS, module.METER_GAP_SECONDS)
+        self.was = (module.METER_SECONDS, module.METER_GAP_SECONDS,
+                    module.FIRST_METER_SECONDS)
         module.METER_SECONDS = 0.05
         module.METER_GAP_SECONDS = 0.0
+        module.FIRST_METER_SECONDS = 0.02
         self.metering = Device(eui="ffffb40e0608a82a", model="3RSP02028BZ",
                                clusters=(0x0000, 0x0006, 0x0702, 0x0B04))
         self.plain = Device(eui="aaaaaaaaaaaaaaaa", model="PlainPlug",
@@ -1606,7 +1608,8 @@ class AskingTheMetersTests(unittest.TestCase):
         self.service._kind_for = lambda eui: "plug"
 
     def tearDown(self) -> None:
-        self.module.METER_SECONDS, self.module.METER_GAP_SECONDS = self.was
+        (self.module.METER_SECONDS, self.module.METER_GAP_SECONDS,
+         self.module.FIRST_METER_SECONDS) = self.was
 
     def test_a_plug_is_found_by_what_it_declares(self) -> None:
         """Not by its make.
@@ -1628,16 +1631,60 @@ class AskingTheMetersTests(unittest.TestCase):
         finally:
             self.service.stop()
         clusters = {c for e, c in self.network.sent if e == self.metering.eui}
-        self.assertEqual(clusters, {0x0702, 0x0B04})
+        # A superset: this plug is also asked what state it is in, on
+        # On/Off, until it has said. Both questions ride the same pass.
+        self.assertTrue(clusters.issuperset({0x0702, 0x0B04}), clusters)
 
-    def test_a_plug_with_no_meter_is_left_alone(self) -> None:
-        """Asking it would be two frames a pass for an answer it cannot give."""
+    def test_a_plug_that_has_not_said_is_asked_what_it_is_doing(self) -> None:
+        """A restart leaves the hub with no idea what any plug is doing.
+
+        A plug reports when it is switched and says nothing in between,
+        so after a restart the lights page showed "State unknown" under
+        a lamp that was plainly on -- and the scheduler, seeing a state
+        that did not match the hours, commanded the plug again and
+        again. Nothing asked, because nothing was written to ask.
+        """
+        self.assertIn(self.metering.eui, self.service.plugs_that_have_not_said())
+        self.service.start()
+        try:
+            deadline = time.time() + 3.0
+            while time.time() < deadline and not self.network.sent:
+                time.sleep(0.02)
+        finally:
+            self.service.stop()
+        self.assertTrue([e for e, c in self.network.sent
+                         if e == self.metering.eui and c == 0x0006],
+                        "nobody asked the plug what state it was in")
+
+    def test_a_plug_that_has_answered_is_not_asked_again(self) -> None:
+        """Self-limiting, which is what makes this an ask and not a poll."""
+        from open_plant_pulse_hub.application.zigbee.service import DeviceHealth
+        health = DeviceHealth(eui=self.metering.eui)
+        health.last_values = {"on": True}
+        self.service._health[self.metering.eui] = health
+        self.assertNotIn(self.metering.eui, self.service.plugs_that_have_not_said())
+
+    def test_a_device_with_no_switch_in_it_is_never_asked(self) -> None:
+        """A thermometer has no On/Off cluster and no state to report."""
+        thermometer = Device(eui="cccccccccccccccc", model="TH01",
+                             clusters=(0x0000, 0x0402, 0x0405))
+        service = ZigbeeService(None, self.Network([thermometer]))
+        self.assertEqual(service.plugs_that_have_not_said(), [])
+
+    def test_a_plug_with_no_meter_is_asked_nothing_about_meters(self) -> None:
+        """Asking would be two frames a pass for an answer it cannot give.
+
+        It is still asked what state it is in, on its own On/Off
+        cluster: having no meter does not mean having no switch.
+        """
         self.service.start()
         try:
             time.sleep(0.4)
         finally:
             self.service.stop()
-        self.assertFalse([e for e, _ in self.network.sent if e == self.plain.eui])
+        metering = [c for e, c in self.network.sent
+                    if e == self.plain.eui and c in (0x0702, 0x0B04)]
+        self.assertFalse(metering)
 
     def test_stopping_the_service_stops_asking(self) -> None:
         self.service.start()
