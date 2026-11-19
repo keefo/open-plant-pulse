@@ -210,8 +210,7 @@
       <div class="settings-tabs" role="tablist">
         <a id="settings-tab-rooms" class="settings-tab" href="/settings/rooms" role="tab">Rooms</a>
         <a id="settings-tab-lights" class="settings-tab" href="/settings/lights" role="tab">Lights</a>
-        <a id="settings-tab-wifi" class="settings-tab" href="/settings/wifi" role="tab">Wi-Fi</a>
-        <a id="settings-tab-time" class="settings-tab" href="/settings/time" role="tab">Time</a>
+        <a id="settings-tab-system" class="settings-tab" href="/settings/system" role="tab">System</a>
         <a id="settings-tab-zigbee" class="settings-tab" href="/settings/zigbee" role="tab">Zigbee</a>
         <a id="settings-tab-alerts" class="settings-tab" href="/settings/alerts" role="tab">Alerts</a>
         <a id="settings-tab-box" class="settings-tab" href="/settings/box" role="tab">Box</a>
@@ -493,7 +492,11 @@
         </form>
       </div>
 
-      <div id="settings-time-panel" class="settings-panel-group" hidden>
+      <!-- The hub's own settings, as opposed to the household's. Two tabs
+           once, holding one form each: a tab called "Wi-Fi" whose page was a
+           single network name, and a tab called "Time" whose page was a single
+           dropdown. Neither was enough of a place to be worth going to. -->
+      <div id="settings-system-panel" class="settings-panel-group" hidden>
         <form id="hub-timezone-form" class="settings-panel">
           <h2>Time zone</h2>
           <p>Where this hub keeps time. Readings are stored in UTC whatever this says; what it decides is every hour of the day the hub reasons about &mdash; the hour a scale writes the day&rsquo;s weight, and which day an evening&rsquo;s watering is filed under.</p>
@@ -507,9 +510,6 @@
           </div>
           <small id="hub-timezone-now"></small>
         </form>
-      </div>
-
-      <div id="settings-wifi-panel" class="settings-panel-group" hidden>
         <form id="household-network-form" class="settings-panel" hidden>
           <h2>Household network</h2>
           <p>Entered once here. Any sensor whose console you switch on is given these details over its encrypted link.</p>

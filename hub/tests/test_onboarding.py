@@ -336,7 +336,7 @@ class OnboardingWebTests(unittest.TestCase):
         return f"/api/sensors/{quote(self.sensor_id, safe='')}{suffix}"
 
     def test_settings_and_onboarding_pages_are_served(self):
-        for path in ("/settings", "/settings/wifi"):
+        for path in ("/settings", "/settings/system"):
             with self.request(path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertIn(b"<title>", response.read())

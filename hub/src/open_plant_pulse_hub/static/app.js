@@ -2883,7 +2883,7 @@ function pageFromLocation() {
   return "fleet";
 }
 
-const SETTINGS_TABS = ["rooms", "lights", "wifi", "time",
+const SETTINGS_TABS = ["rooms", "lights", "system",
                        "zigbee", "alerts", "box"];
 const SETTINGS_TAB_KEY = "opp.settings.tab";
 
@@ -5835,7 +5835,7 @@ async function refresh() {
     if (page === "settings") {
       if (settingsTabFromLocation() === "lights") await refreshLights();
       if (settingsTabFromLocation() === "zigbee") await refreshZigbee();
-      if (settingsTabFromLocation() === "time") await refreshHubTimezone();
+      if (settingsTabFromLocation() === "system") await refreshHubTimezone();
       return;
     }
     if (page === "zigbee-device") {

@@ -757,7 +757,7 @@ class BrowserSmokeTests(unittest.TestCase):
             tools.call("Emulation.setDeviceMetricsOverride", width=width, height=844,
                        deviceScaleFactor=3, mobile=True)
             for page in ("/", "/plants", "/sensors", "/settings", "/settings/rooms",
-                         "/settings/lights", "/settings/wifi", "/settings/time",
+                         "/settings/lights", "/settings/system",
                          "/settings/firmware", "/settings/zigbee"):
                 with self.subTest(width=width, page=page):
                     self.open_page(tools, self.base_url + page)
@@ -916,8 +916,8 @@ class BrowserSmokeTests(unittest.TestCase):
         is moved away first, because the old guards held while a field
         had focus, which is how this survived being looked at.
         """
-        pages = ("/settings/box", "/settings/wifi", "/settings/lights",
-                 "/settings/alerts", "/settings/time",
+        pages = ("/settings/box", "/settings/system", "/settings/lights",
+                 "/settings/alerts",
                  f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config")
         # The fan's gains only show while it is on automatic, and a
         # page that hides half its fields proves half as much.
@@ -1090,8 +1090,8 @@ class BrowserSmokeTests(unittest.TestCase):
         tools = self.devtools()
         tools.call("Page.addScriptToEvaluateOnNewDocument", source=watch)
         pages = ("/", f"/plants/{self.plant_id}", f"/plants/{self.plant_id}/config",
-                 "/rooms", "/settings", "/settings/box", "/settings/wifi",
-                 "/settings/time", "/settings/alerts", "/settings/lights",
+                 "/rooms", "/settings", "/settings/box", "/settings/system",
+                 "/settings/alerts", "/settings/lights",
                  "/settings/rooms")
         for path in pages:
             with self.subTest(page=path):
@@ -1410,7 +1410,10 @@ class BrowserSmokeTests(unittest.TestCase):
               });
             })()""")["result"]["value"])
 
-        self.assertGreaterEqual(bar["tabs"], 7, "there are enough tabs to overflow")
+        # A count, so that removing tabs until they all fit turns this
+        # test vacuous loudly rather than quietly: scrolls below is the
+        # real assertion and it passes trivially once nothing overflows.
+        self.assertGreaterEqual(bar["tabs"], 6, "there are enough tabs to overflow")
         self.assertTrue(bar["fits"], "the bar itself is no wider than the screen")
         self.assertTrue(bar["scrolls"], "the tabs that do not fit are scrollable to")
         # "Wi-Fi" broke onto two lines rather than the bar admitting it was

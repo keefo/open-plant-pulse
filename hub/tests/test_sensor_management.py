@@ -370,7 +370,7 @@ class SensorManagementWebTests(unittest.TestCase):
 
         page = self.request("/").read().decode("utf-8")
         self.assertIn('id="hub-timezone"', page)
-        self.assertIn('href="/settings/time"', page)
+        self.assertIn('href="/settings/system"', page)
         app = self.request("/app.js").read().decode("utf-8")
         # Filled once: six hundred options rebuilt on a poll would be six
         # hundred nodes replaced under somebody choosing from them.
