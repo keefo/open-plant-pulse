@@ -3637,3 +3637,91 @@ class TheCardReadsAsOneSentenceTests(unittest.TestCase):
         self.assertAlmostEqual(
             forecast["grams_to_go"] / listed["daily_grams"],
             forecast["days"], delta=0.2)
+
+
+class WhereThePotProbablyIsNowTests(unittest.TestCase):
+    """A pot weighed on Tuesday has not been standing still since.
+
+    The card showed the last weighing as though it were this morning's.
+    An alocasia weighed 34 hours earlier read 72 % beside a forecast
+    that had already spent a day and a half of it.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("alocasia")["plant_id"]
+        # A pot holding 100 g of water between dry and full.
+        self.store.record_plant_weight(self.plant, 1_000, "dry", observed=False)
+        self.store.record_plant_weight(self.plant, 1_100, "full", observed=False)
+        self.store.record_plant_weight(self.plant, 1_020, "thirsty", observed=False)
+
+    def _status(self):
+        return self.store.plant_weight_status(self.plant)
+
+    def test_a_fresh_weighing_is_not_second_guessed(self) -> None:
+        """Nothing has been assumed about a pot read ten minutes ago."""
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(0.2 / 24))
+        status = self._status()
+        self.assertEqual(self.store.projected_percent(status, 10),
+                         status["remaining_percent"])
+
+    def test_two_days_of_drinking_comes_off(self) -> None:
+        """Ten grams a day out of a pot that holds a hundred."""
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(2))
+        status = self._status()
+        self.assertEqual(status["remaining_percent"], 60)
+        # Two days at 10 g/day is 20 g, which is 20 % of this pot's 100.
+        self.assertEqual(self.store.projected_percent(status, 10), 40)
+
+    def test_it_never_goes_below_empty(self) -> None:
+        """A pot cannot hold less than none."""
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(30))
+        self.assertEqual(self.store.projected_percent(self._status(), 10), 0)
+
+    def test_nothing_is_projected_through_a_watering(self) -> None:
+        """The pot is heavier than the reading, not lighter.
+
+        By an amount nobody measured, so projecting down from the old
+        weight would not be an estimate but a fabrication. Through the
+        card rather than the helper, because a watering logged without a
+        weight is only visible from there -- and that is the case this
+        guards: watered by hand on Tuesday and not put back on the
+        scale.
+        """
+        self.store.record_plant_weight(self.plant, 1_090, at=ago(8))
+        self.store.record_plant_weight(self.plant, 1_020, at=ago(3))
+        card = next(p for p in self.store.plants()
+                    if p["plant_id"] == self.plant)
+        self.assertIsNotNone(card["projected_percent"],
+                             "a dry pot nobody has watered is still projected")
+
+        self.store.record_plant_care(self.plant, "watering")
+        card = next(p for p in self.store.plants()
+                    if p["plant_id"] == self.plant)
+        self.assertIsNone(card["projected_percent"])
+
+    def test_a_watering_before_the_weighing_changes_nothing(self) -> None:
+        """A pot weighed after it was watered is a pot that was measured."""
+        self.store.record_plant_care(self.plant, "watering", at=ago(4))
+        self.store.record_plant_weight(self.plant, 1_090, at=ago(3))
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(1))
+        card = next(p for p in self.store.plants()
+                    if p["plant_id"] == self.plant)
+        self.assertIsNotNone(card["projected_percent"])
+
+    def test_nothing_is_projected_without_a_rate(self) -> None:
+        """A pot whose drinking nobody has measured is left as it was read."""
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(2))
+        self.assertIsNone(self.store.projected_percent(self._status(), None))
+        self.assertIsNone(self.store.projected_percent(self._status(), 0))
+
+    def test_the_card_carries_it(self) -> None:
+        """And off the same forecast the days beside it came from."""
+        self.store.record_plant_weight(self.plant, 1_090, at=ago(8))
+        self.store.record_plant_weight(self.plant, 1_060, at=ago(2))
+        card = next(p for p in self.store.plants()
+                    if p["plant_id"] == self.plant)
+        self.assertIn("projected_percent", card)
+        self.assertIsNotNone(card["projected_percent"])
+        self.assertLessEqual(card["projected_percent"],
+                             card["weight"]["remaining_percent"])

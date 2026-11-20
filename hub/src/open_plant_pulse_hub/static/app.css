@@ -230,11 +230,18 @@ body {
  * plant, and one bar should not be made to say both. It turns yellow
  * at the plant's own thirsty mark, which differs by pot. */
 .fleet-card-water { display: flex; align-items: center; gap: 9px; }
-.water-track { display: block; flex: 1; height: 8px; border-radius: var(--r-pill); background: var(--n200); overflow: hidden; }
-.water-fill { display: block; height: 100%; min-width: 8px; border-radius: var(--r-pill); background: var(--fill-water); transition: width 400ms ease; }
+.water-track { position: relative; display: block; flex: 1; height: 8px; border-radius: var(--r-pill); background: var(--n200); overflow: hidden; }
+/* Two lengths in one track: what the pot held when it was weighed, and
+   where it probably is now. The pale one is the same colour faded
+   rather than a colour of its own, so it stays the same measurement in
+   both themes and when the bar turns to its low colour. */
+.water-measured, .water-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--r-pill); background: var(--fill-water); transition: width 400ms ease; }
+.water-measured { opacity: .32; }
+.water-fill { min-width: 8px; }
+.fleet-card-water[data-state="low"] .water-measured,
 .fleet-card-water[data-state="low"] .water-fill { background: var(--fill-low); }
 .water-pct { font-size: var(--t-sm); font-weight: 680; color: var(--text); min-width: 36px; text-align: right; }
-@media (prefers-reduced-motion: reduce) { .water-fill { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .water-measured, .water-fill { transition: none; } }
 .care-mark { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; white-space: nowrap; }
 .care-mark svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #3f5a64; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .care-mark svg.filled { fill: #3f5a64; stroke: none; }

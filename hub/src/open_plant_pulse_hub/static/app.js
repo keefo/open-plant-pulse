@@ -3421,7 +3421,8 @@ function createHouseholdCard(key) {
      * read one card at a time. Seventeen bars sort themselves without
      * any of them being read. */
     + '<div class="fleet-card-water" hidden>'
-    + '<span class="water-track"><span class="water-fill"></span></span>'
+    + '<span class="water-track"><span class="water-measured"></span>'
+      + '<span class="water-fill"></span></span>'
     + '<b class="water-pct"></b></div>'
     // When it needs water first: that is what the list is scanned for.
     + '<div class="fleet-card-tags"><small class="fleet-card-due"></small>'
@@ -3598,11 +3599,37 @@ function updateHouseholdCard(card, plant, sensor) {
      * reads exactly as it should. */
     const thirsty = weight.thirsty_percent ?? 15;
     const dueNow = plant?.thirsty_now === true;
-    setStyle(water.querySelector(".water-fill"), "width",
-             `${Math.max(0, Math.min(100, left))}%`);
+    /* Two lengths, because a pot weighed on Tuesday has not been
+     * standing still since. The pale part is what it held when somebody
+     * put it on the scale; the solid part is where it probably is now,
+     * off the same rate the days beside it were worked out from. A pot
+     * read this morning has the two at the same place and the pale part
+     * never shows, which is the honest picture: nothing has been
+     * assumed about it.
+     *
+     * The colour still comes from the measured figure. It was made to
+     * come from the forecast once and that made the bar stop meaning
+     * what its length meant; there are two lengths now, and the chip
+     * beside them already says when. */
+    const estimate = plant?.projected_percent;
+    const now = estimate == null ? left : estimate;
+    const clamp = (value) => Math.max(0, Math.min(100, value));
+    setStyle(water.querySelector(".water-measured"), "width", `${clamp(left)}%`);
+    setStyle(water.querySelector(".water-fill"), "width", `${clamp(now)}%`);
     setData(water, "state", left <= thirsty || dueNow ? "low" : "ok");
-    setText(water.querySelector(".water-pct"), `${Math.round(left)}%`);
-    setAttr(water, "title", `${Math.round(left)}% of this pot's water left`);
+    // One number where there is one number to give: "52%/52%" on a pot
+    // weighed ten minutes ago is arithmetic shown for its own sake.
+    const guessed = Math.round(now) !== Math.round(left);
+    setText(water.querySelector(".water-pct"),
+            guessed ? `${Math.round(now)}%/${Math.round(left)}%`
+                    : `${Math.round(left)}%`);
+    const weighed = weight.latest?.at ? Date.parse(weight.latest.at) : NaN;
+    const ago = Number.isFinite(weighed)
+      ? describeAge((Date.now() - weighed) / 1000) : null;
+    setAttr(water, "title", guessed
+      ? `About ${Math.round(now)}% left now, estimated. It held `
+        + `${Math.round(left)}% when weighed ${ago} ago.`
+      : `${Math.round(left)}% of this pot's water left`);
   }
 
   const badge = card.querySelector("small:not(.fleet-card-rate):not(.fleet-card-due)");

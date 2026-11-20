@@ -4890,6 +4890,52 @@ class ReadingStore:
                 status["latest"]["grams"], "manual")
         return status
 
+    def projected_percent(self, status: Dict[str, Any],
+                          grams_per_day: Optional[float],
+                          watered_at: Optional[str] = None) -> Optional[int]:
+        """Where a pot weighed days ago probably is now.
+
+        A pot on a kitchen scale is read when somebody remembers, so the
+        figure beside it can be two days old and the card showed it as
+        though it were this morning's. A plant drinking 8 ml a day out of
+        a pot that holds 33 has lost half of what it had in those two
+        days, and "52 %" was the answer to a question nobody asked.
+
+        In percent rather than grams, because the scale from dry to full
+        is already worked out here and this way there is one of it.
+
+        Nothing is projected where the pot has been watered since it was
+        weighed: it is heavier than the reading rather than lighter, and
+        by an amount nobody measured. Projecting down from there would
+        not be an estimate, it would be a fabrication.
+        """
+        left = status.get("remaining_percent")
+        held = status.get("held_grams")
+        latest = status.get("latest")
+        if left is None or not held or not latest or not grams_per_day:
+            return None
+        # Two ways a pot can have been watered since it was weighed, and
+        # the second is the one that matters here: a weighing marked
+        # "watered", and a watering logged with no weight at all. Only
+        # the first was checked, so a pot watered by hand on Tuesday and
+        # not put back on the scale went on being projected downwards
+        # from Monday's reading -- the one case where the estimate is
+        # not merely stale but pointing the wrong way.
+        watered = status.get("watered")
+        if watered and watered["at"] > latest["at"]:
+            return None
+        if watered_at and watered_at > latest["at"]:
+            return None
+        try:
+            weighed = datetime.fromisoformat(latest["at"].replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            return None
+        days = (datetime.now(timezone.utc) - weighed).total_seconds() / 86400
+        if days <= 0:
+            return int(left)
+        gone = grams_per_day * days / held * 100
+        return int(round(min(100.0, max(0.0, left - gone))))
+
     def _drying_rate(self, weighings: List[Tuple[Any, float]],
                      now: datetime) -> Optional[float]:
         """Grams a day lost, from the gaps that were drying.
@@ -5878,43 +5924,53 @@ class ReadingStore:
         # has tens of plants, not thousands.
         return [
             {
-                **self._plant_payload(row),
-                "weight": self.plant_weight_status(row[0]),
-                # The rate the forecast beside it used, not the window's
-                # mean.
-                #
-                # Those are different figures and the card was showing one
-                # against the other's days: a mini orchid read "7 ml/d"
-                # and "Water in 1d" with 28 g to go, and 28 over 7 is four
-                # days. Two true numbers that cannot be read as one
-                # sentence, which is worse than either being wrong -- so
-                # the card quotes the rate its own forecast divided by.
-                # The plant's page still shows the window's mean, under
-                # water use, where it is about the plant's habit rather
-                # than about when to fetch a can.
-                "daily_grams": self.watering_forecast(
-                    row[0], with_air=True)["grams_per_day"],
-                # Both, because they are different facts. The days are a
-                # forecast; thirsty_now is the pot already at or past the
-                # weight this plant asks for water at, and a card that
-                # cannot tell them apart says "Water now" to a plant with a
-                # day in hand and to one that has been dry since Tuesday.
-                # One forecast, three fields off it. Asking twice doubles
-                # the cost of the whole household list for a figure it has
-                # already worked out.
-                **(lambda f: {
-                    "water_in_days": f["days"],
-                    "thirsty_now": f["thirsty_now"],
-                    # Having been told it is still too wet, the card stops
-                    # saying otherwise until the pot has moved on -- and
-                    # says when it will ask again rather than only that it
-                    # was told.
-                    "water_in_days_if_still_wet": f.get("days_if_still_wet"),
-                })(self.watering_forecast(row[0], with_air=True)),
+                **payload,
+                **self._plant_water(row[0], payload.get("last_watered_at")),
                 "watering_deferred": self.watering_deferred_at(row[0]),
             }
-            for row in rows
+            for row, payload in ((row, self._plant_payload(row)) for row in rows)
         ]
+
+    def _plant_water(self, plant_id: int,
+                     watered_at: Optional[str] = None) -> Dict[str, Any]:
+        """What one card says about water, off one status and one forecast.
+
+        Both used to be asked for twice over -- the forecast for the rate
+        and again for the days -- which on a household list polled every
+        second is the whole calculation run twice for every plant.
+        """
+        status = self.plant_weight_status(plant_id)
+        forecast = self.watering_forecast(plant_id, with_air=True)
+        return {
+            "weight": status,
+            # The rate the forecast beside it used, not the window's mean.
+            #
+            # Those are different figures and the card was showing one
+            # against the other's days: a mini orchid read "7 ml/d" and
+            # "Water in 1d" with 28 g to go, and 28 over 7 is four days.
+            # Two true numbers that cannot be read as one sentence, which
+            # is worse than either being wrong -- so the card quotes the
+            # rate its own forecast divided by. The plant's page still
+            # shows the window's mean, under water use, where it is about
+            # the plant's habit rather than about when to fetch a can.
+            "daily_grams": forecast["grams_per_day"],
+            # Where the pot probably is now, as opposed to where it was
+            # when somebody last put it on the scale. Off the same rate,
+            # so the bar and the days cannot disagree.
+            "projected_percent": self.projected_percent(
+                status, forecast["grams_per_day"], watered_at),
+            # Both, because they are different facts. The days are a
+            # forecast; thirsty_now is the pot already at or past the
+            # weight this plant asks for water at, and a card that cannot
+            # tell them apart says "Water now" to a plant with a day in
+            # hand and to one that has been dry since Tuesday.
+            "water_in_days": forecast["days"],
+            "thirsty_now": forecast["thirsty_now"],
+            # Having been told it is still too wet, the card stops saying
+            # otherwise until the pot has moved on -- and says when it
+            # will ask again rather than only that it was told.
+            "water_in_days_if_still_wet": forecast.get("days_if_still_wet"),
+        }
 
     def plant(self, plant_id: int) -> Optional[Dict[str, Any]]:
         with self._condition:
