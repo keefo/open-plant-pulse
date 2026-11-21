@@ -3725,3 +3725,94 @@ class WhereThePotProbablyIsNowTests(unittest.TestCase):
         self.assertIsNotNone(card["projected_percent"])
         self.assertLessEqual(card["projected_percent"],
                              card["weight"]["remaining_percent"])
+
+
+class ChoosingTheArithmeticTests(unittest.TestCase):
+    """Which rule turns weighings into a rate, and who decides.
+
+    Not a switch for a decision already made: the decision depends on
+    how often the pot is weighed, and this house has both regimes at
+    once. Nineteen pots read by hand about once a day, where the two
+    agree within the noise; one pot on a scale reporting hourly, where
+    averaging the gaps gives 258 % error against Theil-Sen's 67 %.
+    """
+
+    def setUp(self) -> None:
+        self.store = ReadingStore(database_path=":memory:")
+        self.plant = self.store.create_plant("pot")["plant_id"]
+
+    def _weigh(self, every_hours, count, per_day=100.0, wobble=()):
+        """A pot losing a steady rate, weighed every so often."""
+        self.store.record_plant_weight(self.plant, 5_000, "dry", observed=False)
+        self.store.record_plant_weight(self.plant, 9_000, "full", observed=False)
+        self.store.record_plant_weight(self.plant, 6_000, "thirsty", observed=False)
+        grams = 9_000.0
+        for step in range(count):
+            hours = every_hours * (count - step)
+            grams_now = grams - per_day * (every_hours * step) / 24
+            if step in dict(wobble):
+                grams_now += dict(wobble)[step]
+            self.store.record_plant_weight(
+                self.plant, int(round(grams_now)), at=ago(hours / 24))
+
+    def test_it_defaults_to_choosing_for_itself(self) -> None:
+        self.assertEqual(self.store.hub_settings()["water_rate_method"], "auto")
+
+    def test_a_pot_on_a_scale_gets_the_robust_rule(self) -> None:
+        self._weigh(every_hours=1, count=40)
+        status = self.store.plant_weight_status(self.plant)
+        self.assertLess(status["weighing_gap_hours"],
+                        self.store.DENSE_WEIGHING_HOURS)
+
+    def test_a_pot_weighed_by_hand_gets_the_plain_one(self) -> None:
+        self._weigh(every_hours=24, count=8)
+        status = self.store.plant_weight_status(self.plant)
+        self.assertGreater(status["weighing_gap_hours"],
+                           self.store.DENSE_WEIGHING_HOURS)
+
+    def test_the_gap_is_read_off_the_weighings(self) -> None:
+        """Not off the spans, which cannot tell the two apart.
+
+        Everything closer together than MIN_WATER_USE_SPAN has already
+        been collapsed out of the spans, so an hourly pot and a daily
+        pot both look like a pot weighed every eight hours there. The
+        first version of this rule read the spans and could never fire.
+        """
+        self._weigh(every_hours=1, count=40)
+        status = self.store.plant_weight_status(self.plant)
+        self.assertAlmostEqual(status["weighing_gap_hours"], 1.0, places=1)
+
+    def test_naming_a_method_overrides_the_choice(self) -> None:
+        self._weigh(every_hours=24, count=8)
+        spans = self.store.water_use(self.plant)["intervals"]
+        self.assertTrue(spans)
+        # Told to, it uses the robust rule on a pot it would not have
+        # chosen it for.
+        plain = self.store.rate_from_spans(spans, "mean")
+        robust = self.store.rate_from_spans(spans, "theil-sen")
+        self.assertIsNotNone(plain)
+        self.assertIsNotNone(robust)
+        self.store.set_water_rate_method("theil-sen")
+        self.assertEqual(self.store.water_rate_method(), "theil-sen")
+
+    def test_one_wild_reading_moves_one_rule_and_not_the_other(self) -> None:
+        """Which is the whole reason for having the second."""
+        self._weigh(every_hours=24, count=8, wobble=((4, 900),))
+        spans = self.store.water_use(self.plant)["intervals"]
+        plain = self.store.rate_from_spans(spans, "mean")
+        robust = self.store.rate_from_spans(spans, "theil-sen")
+        self.assertIsNotNone(plain)
+        self.assertIsNotNone(robust)
+        # The pot really loses 100 g a day; one reading 900 g out should
+        # not be allowed to say otherwise.
+        self.assertLess(abs(robust - 100), abs(plain - 100))
+
+    def test_only_the_methods_that_exist_are_accepted(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.set_water_rate_method("kalman")
+
+    def test_auto_is_stored_as_nothing_chosen(self) -> None:
+        """So "I have not chosen" and "let the hub choose" are one state."""
+        self.store.set_water_rate_method("theil-sen")
+        self.store.set_water_rate_method("auto")
+        self.assertEqual(self.store.hub_settings()["water_rate_method"], "auto")

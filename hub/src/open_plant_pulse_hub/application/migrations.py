@@ -1,7 +1,7 @@
 import sqlite3
 from typing import Dict
 
-DATABASE_SCHEMA_VERSION = 66
+DATABASE_SCHEMA_VERSION = 67
 
 MIGRATIONS: Dict[int, str] = {
     1: """
@@ -1615,6 +1615,22 @@ MIGRATIONS: Dict[int, str] = {
         ALTER TABLE sensors DROP COLUMN firmware_update_percent;
         ALTER TABLE sensors DROP COLUMN firmware_update_error;
         ALTER TABLE sensors DROP COLUMN firmware_update_started_at;
+    """,
+    67: """
+        -- Which arithmetic turns a run of weighings into a rate.
+        --
+        -- Not a switch for a decision already made: the decision depends
+        -- on how often the pot is weighed, and this house has both
+        -- regimes at once. Nineteen pots are read by hand about once a
+        -- day, where averaging the gaps is as good as anything measured.
+        -- One pot sits on a scale reporting hourly, where an hour of
+        -- real drinking is 7 g inside 137 g of noise and averaging the
+        -- gaps gives 258 % error against Theil-Sen's 67 %.
+        --
+        -- NULL means auto, which is the default and picks by how often
+        -- the pot is actually weighed. Anyone who would rather name one
+        -- can.
+        ALTER TABLE hub_settings ADD COLUMN water_rate_method TEXT;
     """,
     66: """
         /* Whether this plant sits in a pot that gets weighed.

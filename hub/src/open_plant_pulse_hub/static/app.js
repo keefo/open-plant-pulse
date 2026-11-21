@@ -5862,7 +5862,9 @@ async function refresh() {
     if (page === "settings") {
       if (settingsTabFromLocation() === "lights") await refreshLights();
       if (settingsTabFromLocation() === "zigbee") await refreshZigbee();
-      if (settingsTabFromLocation() === "system") await refreshHubTimezone();
+      if (settingsTabFromLocation() === "system") {
+        await Promise.all([refreshHubTimezone(), refreshWaterRate()]);
+      }
       return;
     }
     if (page === "zigbee-device") {
@@ -9265,6 +9267,58 @@ async function refreshHubTimezone() {
   }
 }
 
+/* Which arithmetic turns weighings into a rate.
+ *
+ * The two agree on a pot weighed by hand about once a day and do not
+ * agree at all on one that sits on a scale, so the note says which
+ * case this house is in rather than leaving somebody to guess which
+ * of three lines in a menu applies to them. */
+const WATER_RATE_NOTES = {
+  auto: "Pots weighed every few hours get the median slope, which is "
+      + "steadier when most of what a short gap measures is the scale. "
+      + "Pots weighed about once a day get the average, which on this "
+      + "house's own readings is as good and simpler.",
+  mean: "Each gap between weighings gives a rate, and those are averaged. "
+      + "Simple, and on a pot weighed about once a day nothing measured "
+      + "beats it. On a pot weighed hourly it follows the scale's noise.",
+  "theil-sen": "The median slope through every pair of weighings. Ignores "
+      + "the odd wild reading, needs no minimum gap, and is the same "
+      + "arithmetic whether a pot is weighed four times or four hundred.",
+};
+
+async function refreshWaterRate() {
+  const field = document.getElementById("water-rate-method");
+  if (field === null || field.dataset.edited) return;
+  const response = await fetch("/api/settings");
+  if (!response.ok) return;
+  const settings = await response.json();
+  const chosen = settings.water_rate_method || "auto";
+  if (field.value !== chosen) field.value = chosen;
+  setText(document.getElementById("water-rate-note"),
+          WATER_RATE_NOTES[chosen] || "");
+}
+
+async function saveWaterRate(event) {
+  event.preventDefault();
+  const field = document.getElementById("water-rate-method");
+  const message = document.getElementById("water-rate-message");
+  const response = await fetch("/api/settings/water-rate", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ water_rate_method: field.value }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    setText(message, body.error || "That could not be saved.");
+    return;
+  }
+  delete field.dataset.edited;
+  setText(message, field.value === "auto"
+    ? "Saved. The hub chooses per pot."
+    : "Saved. Every forecast uses it from now on.");
+  await refreshWaterRate();
+}
+
 async function saveHubTimezone(event) {
   event.preventDefault();
   const field = document.getElementById("hub-timezone");
@@ -9290,6 +9344,15 @@ document.getElementById("hub-timezone").addEventListener("change", (event) => {
   event.currentTarget.dataset.edited = "true";
 });
 document.getElementById("hub-timezone-form").addEventListener("submit", saveHubTimezone);
+document.getElementById("water-rate-form").addEventListener("submit", saveWaterRate);
+// Marked as being edited so the poll does not take the menu back from
+// somebody half way through choosing from it.
+document.getElementById("water-rate-method").addEventListener("change", (event) => {
+  event.currentTarget.dataset.edited = "true";
+  setText(document.getElementById("water-rate-note"),
+          WATER_RATE_NOTES[event.currentTarget.value] || "");
+  setText(document.getElementById("water-rate-message"), "");
+});
 document.getElementById("household-network-form").addEventListener("submit", saveHouseholdNetwork);
 document.getElementById("wifi-ssid").addEventListener("input", () => {
   householdNetworkDraft = true;

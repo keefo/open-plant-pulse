@@ -317,6 +317,7 @@ def create_server(
                 not in ("/api/sensors/profile", "/api/settings", "/api/settings/wifi",
                         "/api/settings/sections", "/api/settings/care-log",
                         "/api/settings/timezone", "/api/settings/zigbee-reports",
+                        "/api/settings/water-rate",
                         "/api/settings/alerts", "/api/fan")
                 and not path.startswith("/api/alert-rules/")
                 and not path.startswith("/api/sensors/")
@@ -466,6 +467,11 @@ def create_server(
                         str(payload.get("sensor_id", "")),
                         str(payload.get("profile_id", "")),
                     )
+                elif path == "/api/settings/water-rate":
+                    chosen = payload.get("water_rate_method")
+                    if chosen is not None and not isinstance(chosen, str):
+                        raise ValueError("the method must be a name, or nothing")
+                    result = store.set_water_rate_method(chosen)
                 elif path == "/api/settings/timezone":
                     chosen = payload.get("timezone")
                     if chosen is not None and not isinstance(chosen, str):

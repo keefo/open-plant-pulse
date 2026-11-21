@@ -510,6 +510,24 @@
           </div>
           <small id="hub-timezone-now"></small>
         </form>
+        <form id="water-rate-form" class="settings-panel">
+          <h2>Water use estimate</h2>
+          <p>How a run of weighings becomes a rate, which is what every
+            &ldquo;water in <i>n</i> days&rdquo; is divided by. The two differ only
+            where a pot is weighed often: on pots read by hand about once a day they
+            agree to within the noise of the measurement.</p>
+          <label for="water-rate-method">Method</label>
+          <select id="water-rate-method">
+            <option value="auto">Let the hub choose, by how often each pot is weighed</option>
+            <option value="mean">Average the gaps</option>
+            <option value="theil-sen">Theil&ndash;Sen, the median slope</option>
+          </select>
+          <small id="water-rate-note"></small>
+          <div class="inline-control">
+            <button id="save-water-rate" type="submit">Save</button>
+            <output id="water-rate-message" aria-live="polite"></output>
+          </div>
+        </form>
         <form id="household-network-form" class="settings-panel" hidden>
           <h2>Household network</h2>
           <p>Entered once here. Any sensor whose console you switch on is given these details over its encrypted link.</p>

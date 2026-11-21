@@ -886,7 +886,7 @@ class ReadingStore:
                 """
                 SELECT reporting_interval_minutes, plant_section_order,
                        care_log_hidden_kinds, timezone, zigbee_report_keep_days,
-                       ntfy_url
+                       ntfy_url, water_rate_method
                 FROM hub_settings WHERE singleton_id = 1
                 """
             ).fetchone()
@@ -907,6 +907,11 @@ class ReadingStore:
             # field that shows it is a text box, and "None" is a word
             # somebody would have to delete before typing.
             "ntfy_url": row[5] or "",
+            # Nothing chosen means auto, which picks by how often each
+            # pot is weighed. Stored as NULL rather than the word so
+            # that "I have not chosen" and "I chose auto" are the same
+            # thing, which they are.
+            "water_rate_method": row[6] or "auto",
         }
 
     # The sounds macOS ships. A rule naming anything else would be a
@@ -1173,6 +1178,25 @@ class ReadingStore:
             self._database.execute(
                 "UPDATE hub_settings SET ntfy_url = ? WHERE singleton_id = 1",
                 (address or None,),
+            )
+        return self.hub_settings()
+
+    def set_water_rate_method(self, method: Optional[str]) -> Dict[str, Any]:
+        """Choose the arithmetic, or hand the choice back to the hub.
+
+        Stored as NULL for auto, so that "I have not chosen" and "let
+        the hub choose" are one state rather than two that have to be
+        kept in step.
+        """
+        chosen = (method or "auto").strip().lower()
+        if chosen not in self.WATER_RATE_METHODS:
+            raise ValueError(
+                "the method must be one of: "
+                + ", ".join(self.WATER_RATE_METHODS))
+        with self._condition, self._database:
+            self._database.execute(
+                "UPDATE hub_settings SET water_rate_method = ? WHERE singleton_id = 1",
+                (None if chosen == "auto" else chosen,),
             )
         return self.hub_settings()
 
@@ -4765,6 +4789,9 @@ class ReadingStore:
             # page had, so it filed the watering and never asked. One
             # method decides; everybody else is told.
             "watering_gain_grams": None,
+            # The usual gap between weighings, which is what tells a pot
+            # on a scale from a pot on a kitchen worktop.
+            "weighing_gap_hours": None,
         }
         if not rows:
             return status
@@ -4888,6 +4915,21 @@ class ReadingStore:
         if status["latest"]:
             status["watering_gain_grams"] = self.refill_threshold(
                 status["latest"]["grams"], "manual")
+        # How often this pot is actually weighed.
+        #
+        # From the weighings themselves rather than from the spans the
+        # forecast uses, because those have already had everything
+        # closer together than MIN_WATER_USE_SPAN collapsed out of them:
+        # measured there, a pot read hourly and a pot read daily both
+        # look like a pot read every eight hours, and a rule meant to
+        # tell them apart could never fire.
+        gaps = sorted(
+            (datetime.fromisoformat(a[0].replace("Z", "+00:00"))
+             - datetime.fromisoformat(b[0].replace("Z", "+00:00"))).total_seconds() / 3600
+            for a, b in zip(weighings, weighings[1:])
+        )
+        if gaps:
+            status["weighing_gap_hours"] = round(gaps[len(gaps) // 2], 1)
         return status
 
     def projected_percent(self, status: Dict[str, Any],
@@ -4935,6 +4977,98 @@ class ReadingStore:
             return int(left)
         gone = grams_per_day * days / held * 100
         return int(round(min(100.0, max(0.0, left - gone))))
+
+    # How a run of weighings becomes one rate.
+    #
+    # Two, because the right answer depends on how often the pot is
+    # weighed and this house has both at once. Measured over 415
+    # walk-forward predictions on pots read by hand about once a day,
+    # the two are the same within noise: 22.0 % against 22.6 % median
+    # error, and a 95 % interval on the difference of -0.29 to +0.58
+    # points. On the one pot that sits on a scale reporting hourly they
+    # are not close at all, because an hour of real drinking is 7 g
+    # inside 137 g of scale noise:
+    #
+    #     consecutive differences    258 % median, 2084 % mean
+    #     Theil-Sen                   67 % median,   73 % mean
+    #
+    # Averaging the gaps needs a minimum span to survive that, which is
+    # a constant that has to be right. Theil-Sen does not.
+    WATER_RATE_METHODS = ("auto", "mean", "theil-sen")
+    # Below this many hours between weighings, differencing is mostly
+    # measuring the scale. It is the gap the pots themselves fall into:
+    # by hand is about a day, on a scale is about an hour.
+    DENSE_WEIGHING_HOURS = 6.0
+
+    def water_rate_method(self) -> str:
+        """Which arithmetic the forecast should use. Never 'auto'."""
+        chosen = self.hub_settings().get("water_rate_method")
+        return chosen if chosen in ("mean", "theil-sen") else "auto"
+
+    @staticmethod
+    def rate_from_spans(spans: List[Dict[str, Any]], method: str,
+                        gap_hours: Optional[float] = None) -> Optional[float]:
+        """One rate out of the spans that count.
+
+        "auto" is not a third arithmetic, it is a way of choosing
+        between the two: a pot weighed every few hours gets the robust
+        one and a pot weighed daily gets the plain one, because that is
+        what the measurement says and not what anyone would rather.
+
+        The gap comes from the weighings, not from these spans. Measured
+        here it would be useless -- everything closer together than
+        MIN_WATER_USE_SPAN has already been collapsed out, so every pot
+        looks like a pot weighed every eight hours.
+        """
+        rates = [i["grams_per_day"] for i in spans if i["grams_per_day"] > 0]
+        if not rates:
+            return None
+        if method == "auto":
+            method = ("theil-sen"
+                      if gap_hours is not None
+                      and gap_hours < ReadingStore.DENSE_WEIGHING_HOURS
+                      else "mean")
+        if method != "theil-sen":
+            return sum(rates) / len(rates)
+        # Theil-Sen: the median slope through every pair of weighings.
+        #
+        # A cumulative total rebuilds the points the spans were measured
+        # between, without reading the weights again -- but only within
+        # a run of spans that actually touch. Where one was left out,
+        # because the pot gained weight or was watered, the pot is not
+        # where the running total says it is, and a pair drawn across
+        # that gap is a slope through two different pots. The first
+        # version of this did draw them, and one wild reading moved it
+        # further than the plain average it was meant to resist.
+        slopes = []
+        for run in ReadingStore._touching(spans):
+            points, elapsed, lost = [(0.0, 0.0)], 0.0, 0.0
+            for span in run:
+                elapsed += span["days"]
+                lost += span["grams"]
+                points.append((elapsed, lost))
+            for i in range(len(points)):
+                for j in range(i + 1, len(points)):
+                    gap = points[j][0] - points[i][0]
+                    if gap > 0:
+                        slopes.append((points[j][1] - points[i][1]) / gap)
+        if not slopes:
+            return sum(rates) / len(rates)
+        slopes.sort()
+        half = len(slopes) // 2
+        return (slopes[half] if len(slopes) % 2
+                else (slopes[half - 1] + slopes[half]) / 2)
+
+    @staticmethod
+    def _touching(spans: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        """The spans, split into runs that share a weighing end to end."""
+        runs: List[List[Dict[str, Any]]] = []
+        for span in spans:
+            if runs and runs[-1][-1]["to"] == span["from"]:
+                runs[-1].append(span)
+            else:
+                runs.append([span])
+        return runs
 
     def _drying_rate(self, weighings: List[Tuple[Any, float]],
                      now: datetime) -> Optional[float]:
@@ -5714,7 +5848,10 @@ class ReadingStore:
             }]
             return forecast
 
-        typical = sum(rates) / len(rates)
+        typical = self.rate_from_spans(spans, self.water_rate_method(),
+                                       status.get("weighing_gap_hours"))
+        if not typical:
+            typical = sum(rates) / len(rates)
         rate_from = "this cycle" if cycle else f"the last {use['window_days']} days"
 
         # What the air was doing while it drank, divided out.
