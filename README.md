@@ -1,162 +1,148 @@
 # Open Plant Pulse
 
-Open Plant Pulse is a local-first plant monitoring system with two products:
+**Know when to water, without guessing and without the cloud.**
 
-- A battery-powered **sensor node** reads a seven-parameter NPKPHCTH-S RS485 soil
-  probe and an SHT45 ambient sensor, then broadcasts each wake-cycle sample using
-  BTHome v2 over BLE.
-- An always-on **desktop hub** subscribes to nearby BTHome sensors on macOS or
-  Linux, stores history, derives plant-state insights, and hosts a local HTTP web
-  application for household management and monitoring.
+Open Plant Pulse runs on a Mac or a Linux box in your home. You tell it about
+your plants; it learns how fast each one drinks and tells you which pot needs
+water today — and which one you can leave alone for another five days.
 
-The sensor can still be discovered directly by Home Assistant. The hub is for
-users who want durable local history, analysis, native notifications, APIs, and
-multi-system forwarding without putting those responsibilities on the battery
-device.
+Nothing leaves the house. There is no account, no app store, no subscription,
+and no company that can switch it off.
 
-> [!IMPORTANT]
-> This repository is in the prototype stage. SQLite persistence, internal
-> browser endpoints, dashboard, and BTHome encode/decode logic are tested, but
-> continuous BLE collection, target hardware, predictions, and packaging have
-> not been validated end to end.
+## The idea: a pot is a water tank
 
-## What it looks like
+A plant in a pot is the easiest thing in the house to measure, because **water
+is heavy**. A pot that weighed 1,912 g after watering and weighs 1,760 g today
+has given up 152 ml, and a plant that does that every day will be thirsty on a
+day you can work out in advance.
 
-Small previews; click one for the whole page.
+That is the whole trick. No probe can tell you what a kitchen scale can.
 
 <table>
 <tr>
 <td width="33%" valign="top">
-<a href="docs/images/hub-plant-page.jpg"><img src="docs/images/previews/hub-plant-page.jpg" alt="A plant's page on the hub"></a>
-<br><b>A plant's page</b>
-<br><sub>Readings against the plant's own profile, air history, the conclusions
-drawn from them, a year of care, its lights, and the log of what happened.</sub>
+<a href="docs/images/hub-plant-page.jpg"><img src="docs/images/previews/hub-plant-page.jpg" alt="A plant's page"></a>
+<br><b>Each plant gets a page</b>
+<br><sub>How much water is left in the pot, when it will run out, what the air
+around it has been doing, and everything you have ever done to it.</sub>
 </td>
 <td width="33%" valign="top">
-<a href="docs/images/hub-sensor-configuration.jpg"><img src="docs/images/previews/hub-sensor-configuration.jpg" alt="A sensor's configuration page"></a>
-<br><b>A sensor's configuration</b>
-<br><sub>What is the device's rather than the plant's: what the hub asks of it,
-the lights it drives, and the firmware it runs — installed from here, over the
-air.</sub>
+<a href="docs/images/hub-lights.jpg"><img src="docs/images/previews/hub-lights.jpg" alt="Grow lights"></a>
+<br><b>Grow lights on a timer</b>
+<br><sub>Give a lamp to a plant and it keeps that plant's hours. The hub checks
+the light really came on, and says so when it did not.</sub>
 </td>
 <td width="33%" valign="top">
-<a href="docs/images/hub-lights.jpg"><img src="docs/images/previews/hub-lights.jpg" alt="Managing grow lights"></a>
-<br><b>Grow lights</b>
-<br><sub>Each light is added once and given to a plant, which owns the daily
-window they follow.</sub>
+<a href="docs/images/hub-sensor-configuration.jpg"><img src="docs/images/previews/hub-sensor-configuration.jpg" alt="A device's page"></a>
+<br><b>Devices, if you add any</b>
+<br><sub>Everything a sensor has ever measured, drawn over time — including
+what your plugs are drawing in watts.</sub>
 </td>
 </tr>
 </table>
 
-A sensor also serves its own console on the household network, for looking at
-the device rather than the plant.
+## You do not need to buy anything
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<a href="docs/images/sensor-console.jpg"><img src="docs/images/previews/sensor-console.jpg" alt="The sensor's own console"></a>
-<br><b>The sensor's console</b>
-<br><sub>What each part of the device reads, what the battery is doing, and the
-firmware log as it happens.</sub>
-</td>
-<td width="50%" valign="top">
-<a href="docs/images/sensor-maintenance.jpg"><img src="docs/images/previews/sensor-maintenance.jpg" alt="The sensor's maintenance page"></a>
-<br><b>Maintenance</b>
-<br><sub>Interface settings kept on the device, a forced report, and a restart.</sub>
-</td>
-</tr>
-</table>
+The simplest way to use this is a **kitchen scale you already own**.
 
-The Wi-Fi name and hardware addresses in these screenshots are replaced; the
-readings are a real sensor's.
+1. Put the pot on the scale after you water it. Type the number in.
+2. Do it again when you next walk past. Any day will do.
+3. After two or three weighings the hub knows the plant's rate and starts
+   telling you when it will be thirsty.
 
-## Repository layout
+That is it. Most of the plants in the house this was built for are looked after
+exactly that way — weighed by hand, about once a day, no electronics in the pot
+at all.
 
-```text
-open-plant-pulse/
-├── sensor/                  Battery sensor product
-│   ├── firmware/            ESP-IDF application and components
-│   ├── hardware/            Assembly BOM, wiring, and future CAD/PCB assets
-│   └── tests/               Host-side sensor protocol tests
-├── hub/                     Installable Python desktop/server product
-│   ├── src/                 Domain and adapter packages
-│   └── tests/               Hub unit and integration tests
-├── protocol/                Versioned sensor-to-hub contract and fixtures
-├── deploy/                  macOS LaunchAgent; systemd and packaging to come
-├── docs/                    System architecture, setup, roadmap, and proposals
-├── examples/                Downstream integration examples
-└── scripts/                 Repository-wide validation commands
-```
+## If you want it to do the weighing itself
 
-Product code stays inside `sensor/` or `hub/`. Data exchanged between them is
-specified in `protocol/`; neither product may privately redefine that contract.
+The hub talks to ordinary **Zigbee** devices — the kind sold in any shop. It
+runs the radio itself, so you do not need Home Assistant, a bridge, a broker,
+or a hub from whoever made the sensor. Plug a Zigbee USB stick into the
+computer and pair devices to it directly.
 
-## Run the hub
+Known to work, because they are the ones in daily use here:
 
-Start the local hub from the repository root:
+| What | Gives you |
+| --- | --- |
+| Zigbee soil probes | Moisture and soil temperature, without touching the pot |
+| Zigbee thermometers | Room air, which is most of why a plant drinks faster some weeks |
+| Zigbee smart plugs | Grow lights on a schedule, plus what each one costs in watts |
+| Zigbee leak sensors | A puddle under a pot, before it reaches the floor |
+
+There is also a **weighing scale of our own** in `sensors/hx711-scale` — an
+ESP32 and a load cell that sits under one pot and reports its weight over
+Zigbee, so that plant never needs lifting. Build it if you like; nothing else
+depends on it.
+
+## What it works out for you
+
+- **When to water.** Measured from the pot's own weight, against the rate this
+  particular plant has been drinking at — not a fixed number of days.
+- **How confident it is.** "In 3 days" and "somewhere between 2 and 8 days" are
+  different sentences, and you get the honest one.
+- **Whether the room explains it.** A plant drinking twice as much in dry air
+  has not changed; the air has. The hub divides that out before it concludes
+  anything about the plant.
+- **When you disagree.** If you look at a pot the hub called thirsty and it is
+  plainly still wet, say so. It takes that as evidence and adjusts.
+- **Light.** Daily light against what the species actually wants, and what too
+  little or too much looks like on that kind of leaf.
+
+Twelve plant profiles ship with it — pothos, monstera, alocasia, begonia,
+dracaena, orchid, spider plant, strelitzia, jasmine, anthurium, tillandsia, and
+a general one for anything leafy.
+
+## Try it
+
+You need Python 3.9 or newer. Nothing else.
 
 ```sh
+git clone https://github.com/keefo/open-plant-pulse.git
+cd open-plant-pulse
 PYTHONPATH=hub/src python3 -m open_plant_pulse_hub
 ```
 
-Open <http://localhost/>. The hub listens for BTHome advertisements from
-sensors in range; add one from Settings, and its soil, air, and nutrient readings
-appear as they arrive.
+Then open <http://localhost/>, add a plant, and weigh it.
 
-## Start here
+## Going deeper
 
-1. Read [the system architecture](docs/architecture.md) and
-   [shared protocol](protocol/README.md).
-2. For hardware work, use the [sensor guide](sensors/soil-probe/hardware/README.md),
-   [BOM](sensors/soil-probe/hardware/BOM.md), [enclosure workspace](sensors/soil-probe/hardware/enclosure/README.md),
-   and [bring-up checklist](docs/bring-up.md).
-3. To start with a XIAO ESP32-C3 and SHT45 only, follow the
-   [first sensor-node guide](docs/sht45-first-node.md). For broader embedded
-   development, use [the sensor firmware guide](docs/firmware.md).
-4. For desktop development, follow [the hub guide](docs/hub.md).
-5. Choose a direct or hub-mediated Home Assistant path in
-   [the integration guide](docs/home-assistant.md).
+- [The hub guide](docs/hub.md) — running it as a background service
+- [Architecture](docs/architecture.md) — how the pieces fit together
+- [Firmware](docs/firmware.md) — building and flashing our own hardware
+- [Roadmap](docs/roadmap.md) and [design proposals](docs/proposals/)
 
-## Repository checks
+> [!NOTE]
+> These guides are older than the rest of the project. They were written when
+> sensors broadcast over Bluetooth, and most of them still describe it that
+> way. The hub speaks Zigbee now; where a guide and the code disagree, the
+> code is right. Rewriting them is on the list.
 
-These checks require only a C compiler and Python 3.9 or newer:
+## Where things are
 
-```sh
-sh scripts/check.sh
+```text
+open-plant-pulse/
+├── hub/         The thing you run. Python, three dependencies, SQLite.
+│   ├── src/     The hub itself
+│   └── tests/   Its tests
+├── sensors/     Hardware of our own: the weighing scale, and an older soil probe
+├── docs/        Guides, architecture, and design proposals
+├── deploy/      Running it as a background service
+└── scripts/     Repository checks
 ```
 
-## Sensor firmware
+Run the checks with `sh scripts/check.sh`, or the hub's own suite with
+`python3 hub/tests/run.py`.
 
-Use the repository scripts for ESP32-C3 work. They locate and activate ESP-IDF,
-select the correct project directory, and keep the commands reproducible:
+## Honest status
 
-```sh
-sensors/soil-probe/firmware/build.sh
-sensors/soil-probe/firmware/flush.sh
-```
+This is one household's system, used every day, and it is rough in places.
 
-`flush.sh` builds, auto-detects a single USB serial device, flashes it, and opens
-the monitor. Exit the monitor with `Ctrl-]`. Use `--no-monitor` for flash only or
-`--port /dev/DEVICE` when multiple serial devices are connected. Future tooling
-and automation should call these scripts instead of duplicating raw `idf.py`
-commands.
-
-## Current status
-
-| Area | Status |
+| Works well | Still rough |
 | --- | --- |
-| Sensor Modbus parser and BTHome encoder | Host tested |
-| Simulated sensor to hub to web dashboard | Runnable and integration tested |
-| Hub SQLite persistence and current HTTP dashboard | Runnable and integration tested |
-| Hub BLE subscriber and multi-sensor storage | Implemented and replay tested; macOS physical reception verified, Linux pending |
-| Direct BTHome Home Assistant path | Encoder/decoder host tested; hardware pending |
-| ESP-IDF target application | Firmware 0.5.0 adds a tracked manual report with exact Hub acknowledgment to the always-awake bench UI; build/flash/live results are recorded in the worklog, while production sleep/power/soak validation remains pending |
-| Grow light control (Neewer GL1C, Wemo-switched light) | Running on the hub: both lights confirmed on and off, schedule edge and restart checked; GL1C colour and off edge unverified |
-| Multi-plant management UI | Fleet-to-detail navigation, enrollment, per-sensor configuration delivery state, rename/delete, and sensor-specific freshness are host tested |
-| Public HTTP API, sensor Wi-Fi/HTTP, MQTT, notifications | Lower priority |
-| Electrical design and enclosure | Needs prototype validation |
+| Manual weighing, watering forecasts, care history | Packaging — you run it from a checkout |
+| Zigbee soil probes, thermometers, plugs, leak sensors | Only the devices listed above are known to work |
+| Grow light schedules, with the switch confirmed | Our own soil-probe hardware is older than the rest |
+| Power metering on plugs that support it | No public API yet, and no mobile app |
 
-See [the roadmap](docs/roadmap.md) for acceptance criteria. The original Chinese
-[sensor](docs/proposals/sensor-node.zh-CN.md) and
-[hub](docs/proposals/desktop-hub.zh-CN.md) brainstorms are retained as proposals,
-not specifications. The project is licensed under the [MIT License](LICENSE).
+The project is licensed under the [MIT License](LICENSE).
