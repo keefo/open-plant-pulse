@@ -14,7 +14,7 @@ things matter. **Light. Water. Air. Food.**
 Everybody knows this. The trouble is that knowing it has never helped, because
 you cannot see any of them. You cannot see light the way a leaf sees it. You
 cannot see how much water is left in a pot. You cannot see the pull the air is
-making on a leaf. You cannot see what is left in the soil after six weeks.
+making on a leaf. You cannot see what is left to eat after six weeks.
 
 So we guess. We water on Sundays. We move a plant toward the window and hope.
 We buy a moisture meter that reads *moist* in dry soil and *dry* in wet soil.
@@ -60,12 +60,40 @@ completely different places to be a plant.
 And where there is a fan, the hub holds the humidity where you asked — a proper
 control loop, not a thermostat that slams on and off.
 
-### Food — logged, and read in the soil
+### Food — logged, and checked against the soil
 
-Every feed, recorded against the plant that got it. And for pots with a probe:
-conductivity, pH, and nitrogen, phosphorus and potassium against the range that
-species wants. So "when did I last feed it" and "does it still need feeding"
-stop being the same question with no answer.
+Every feed, recorded against the plant that got it, so "when did I last feed
+this" has an answer that is not your memory.
+
+And for pots with a probe, nitrogen, phosphorus and potassium against what the
+species wants — so the harder question, *does it still need feeding*, has one
+too.
+
+### And the place three of them happen
+
+Water, food and half the air a root gets are all in the pot, and a pot is the
+one part of a plant nobody ever looks at. Almost everything that kills a
+houseplant happens down there.
+
+**Root temperature**, which is not room temperature. An alocasia wants its
+roots between 18 and 26 °C; a pot on a cold windowsill in a warm room is a
+plant that has stopped growing for reasons nobody can find.
+
+**Salt.** Every feed leaves something behind. A probe reads bulk EC, which is
+not what the roots actually experience, so the hub converts it to pore-water
+EC and holds *that* against the range for the species. When it climbs past the
+top, the plant is not hungry — it is over-fed, and it wants flushing.
+
+**pH**, against what that species can actually absorb at.
+
+**Drainage.** Each profile says what the mix should do — *"chunky aroid mix,
+bark and perlite; water should run through, not sit"* — and how long a pot of
+it should take to settle after watering. On a pot that sits on a scale, the
+hub watches that settling happen and says when it took too long.
+
+And every repotting is on record, because new soil weighs what it weighs:
+after a repot the hub knows its old reference weights describe a pot that no
+longer exists, and says so rather than quietly forecasting from them.
 
 ---
 
