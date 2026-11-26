@@ -347,13 +347,33 @@ class SoundSpeedTests(unittest.TestCase):
         self.assertIn("isPlaying()", self.helper)
 
 
+def _has_appkit() -> bool:
+    """Whether this interpreter can reach AppKit at all.
+
+    PyObjC is not in the hub's dependencies and does not need to be:
+    where it is missing the helper says so and the hub plays sounds
+    with afplay instead. So the interpreter decides which half of that
+    is testable here, and the repository check runs under whichever
+    python3 is on the path.
+    """
+    import importlib.util
+    try:
+        return importlib.util.find_spec("AppKit") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+SOUND_HELPER = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
+                / "application" / "_sound_helper.py")
+
+
 class SoundHelperTests(unittest.TestCase):
     """The helper itself, started the way the hub starts it."""
 
+    @unittest.skipUnless(_has_appkit(), "PyObjC is not installed for this python")
     def test_it_comes_up_and_plays_on_request(self) -> None:
         import subprocess
-        script = (Path(__file__).parents[1] / "src" / "open_plant_pulse_hub"
-                  / "application" / "_sound_helper.py")
+        script = SOUND_HELPER
         helper = subprocess.Popen([sys.executable, str(script)],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1)
@@ -369,6 +389,30 @@ class SoundHelperTests(unittest.TestCase):
         finally:
             helper.stdin.close()
             helper.wait(timeout=5)
+
+    def test_it_says_so_rather_than_dying_quietly_without_appkit(self) -> None:
+        """The other half, and the one that runs everywhere.
+
+        This used to be untested and the test above failed instead: the
+        repository check runs under whichever python3 is on the path,
+        which on a clean machine has no PyObjC, so a working hub showed
+        a red suite. Missing AppKit is not a fault -- the hub reads the
+        first line, does not see "ready", and plays sounds with afplay
+        -- so what is worth testing is that the helper says which it is.
+        """
+        import subprocess, tempfile, os
+        with tempfile.TemporaryDirectory() as blind:
+            # A module that refuses to import, ahead of the real one.
+            Path(blind, "AppKit.py").write_text(
+                'raise ImportError("no AppKit on this machine")\n')
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = blind
+            helper = subprocess.run(
+                [sys.executable, str(SOUND_HELPER)],
+                input="", capture_output=True, text=True, timeout=20,
+                env=environment)
+        self.assertEqual(helper.stdout.strip(), "no appkit")
+        self.assertEqual(helper.returncode, 1)
 
 
 class TestingARuleTests(unittest.TestCase):
